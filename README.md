@@ -32,13 +32,25 @@ classifier needs per-frame logo presence as its primary signal.
 Blackframe + silence alone don't separate ad/show reliably on
 private DE-TV content.
 
+## Requirements
+
+- **Go 1.22+** to build.
+- **`ffmpeg` and `ffprobe` on `$PATH` at runtime** — tv-detect itself
+  is a thin orchestrator that shells out for video decode (`ffmpeg`
+  raw rgb24 pipe), audio analysis (`ffmpeg` `silencedetect` filter),
+  and metadata (`ffprobe`). No CGO, no libav linkage; the trade-off is
+  that ffmpeg must be installed on every box you deploy to.
+
+  Already present on every target host this binary expects (Mac via
+  brew, the linuxserver/tvheadend image on the Pi, etc.).
+
 ## Build
 
 ```bash
-go build -o build/tv-detect ./cmd/tv-detect
-
-# Cross-compile for Pi container deployment (Phase 6):
-GOOS=linux GOARCH=arm64 go build -o build/tv-detect-linux-arm64 ./cmd/tv-detect
+make build              # native binary at build/tv-detect
+make build-all          # cross-compiles darwin-arm64, linux-arm64, linux-amd64
+make test               # unit tests across all packages
+make install            # symlink build/tv-detect into /usr/local/bin
 ```
 
 ## Usage
@@ -84,16 +96,18 @@ training tool).
 
 27-min MPEG-2 recording, 720x576, 25 fps, 41 034 frames, M5 Pro:
 
-| Configuration | Wall time | fps |
-|---|---|---|
-| `comskip` (reference) | ~75 s | ~550 |
-| tv-detect, workers=1 | 27.2 s | 1 510 |
-| tv-detect, workers=4 | 10.0 s | 4 109 |
-| tv-detect, workers=8 | 9.2 s | 4 464 |
+| Host | Configuration | Wall time | fps |
+|---|---|---|---|
+| M5 Pro Mac | `comskip` (reference) | ~75 s | ~550 |
+| M5 Pro Mac | tv-detect, workers=1 | 27.2 s | 1 510 |
+| M5 Pro Mac | tv-detect, workers=4 | 10.0 s | 4 109 |
+| M5 Pro Mac | tv-detect, workers=8 |  9.2 s | 4 464 |
+| Pi 5 (4-core) | tv-detect, workers=4 | 221 s | 197 |
 
-Diminishing returns past 4 workers because efficiency cores on Apple
-silicon don't help video decode much. Pi 5 (4 performance cores) will
-likely scale linearly to 4.
+Diminishing returns past 4 workers on Apple silicon because the
+efficiency cores don't help video decode much. The Pi 5 is CPU-bound
+even at workers=4 (197 fps vs Mac's 4109 fps), but still lands ~1.4×
+faster than comskip on the same box.
 
 ## Testing
 

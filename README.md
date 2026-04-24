@@ -27,8 +27,8 @@ parsers consume it unchanged.
 | 4 | Block-formation state machine | ✅ logo-gated cutlist output |
 | 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 |
 | 5 | Validation suite | ✅ 7/19 frame-perfect, 5/19 close, see [VALIDATION.md](VALIDATION.md) |
-| 6a | Python shadow mode (tv-comskip.sh) | ✅ runs alongside comskip on every completed recording, see [PHASE6.md](PHASE6.md) |
-| 6b | Python integration (hls-gateway service.py) | ⏳ |
+| 6a | Mac launchd agent swap (tv-comskip.sh → tv-detect) | ✅ full swap, comskip not invoked, see [PHASE6.md](PHASE6.md) |
+| 6b | Pi container swap (hls-gateway/_rec_cskip_spawn) | ⏳ |
 
 End-to-end output works once a per-channel template has been trained
 by `tv-detect-train-logo`. The cached comskip templates don't align

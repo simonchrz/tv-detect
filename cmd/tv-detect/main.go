@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,10 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"encoding/json"
-
 	"github.com/simonchrz/tv-detect/internal/blocks"
 	"github.com/simonchrz/tv-detect/internal/decode"
+	"github.com/simonchrz/tv-detect/internal/pipeline"
 	"github.com/simonchrz/tv-detect/internal/signals"
 	"github.com/simonchrz/tv-detect/pkg/logotemplate"
 )
@@ -22,8 +22,8 @@ import (
 func main() {
 	var (
 		logoPath       = flag.String("logo", "", "path to comskip .logo.txt template")
-		workers        = flag.Int("workers", runtime.NumCPU(), "parallel chunk workers")
-		output         = flag.String("output", "summary", "output format: summary | jsonlines | csv")
+		workers        = flag.Int("workers", runtime.NumCPU(), "parallel chunk workers (1 = single pipeline)")
+		output         = flag.String("output", "summary", "output format: summary | cutlist")
 		minBlockSec    = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
 		maxBlockSec    = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
 		minShowSegSec  = flag.Float64("min-show-segment", 120, "min show between blocks before merging")
@@ -31,40 +31,23 @@ func main() {
 		blackframeDur  = flag.Float64("blackframe-d", 0.10, "min duration for blackframe (seconds)")
 		silenceNoiseDB = flag.Float64("silence-noise-db", -30, "silence noise floor (dB)")
 		silenceDur     = flag.Float64("silence-d", 0.50, "min silence duration (seconds)")
+		sceneThreshold = flag.Float64("scene-threshold", 0.40, "histogram distance above which a frame pair is a scene cut")
 		quiet          = flag.Bool("quiet", false, "suppress progress output to stderr")
-		// Phase 1/2 sanity flags — will fold into pipeline orchestration later.
-		probeOnly       = flag.Bool("probe", false, "only print stream metadata and exit")
-		decodeWidth     = flag.Int("decode-width", 0, "scale frames to width (0 = native)")
-		decodeHeight    = flag.Int("decode-height", 0, "scale frames to height (0 = native)")
-		emitBlackframes = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout (one per line)")
-		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print logo confidence per second to stdout (idx,t,conf)")
-		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout (one per line)")
-		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout (one per line)")
-		sceneThreshold  = flag.Float64("scene-threshold", 0.40, "histogram bhattacharyya distance above which a frame pair is a scene cut")
+		probeOnly      = flag.Bool("probe", false, "only print stream metadata and exit")
+		decodeWidth    = flag.Int("decode-width", 0, "scale frames to width (0 = native)")
+		decodeHeight   = flag.Int("decode-height", 0, "scale frames to height (0 = native)")
+		emitBlackframes = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout")
+		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
+		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
+		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
 	)
 	flag.Parse()
-
 	if flag.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: tv-detect [flags] <input.ts | input.m3u8>")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
 	input := flag.Arg(0)
-
-	// TODO Phase 2: signal extractors (logo, blackframe, silence, scenecut)
-	// TODO Phase 3: chunk-parallel pipeline
-	// TODO Phase 4: block-formation state machine
-	// TODO Phase 5: output formatter
-	_ = logoPath
-	_ = workers
-	_ = output
-	_ = minBlockSec
-	_ = maxBlockSec
-	_ = minShowSegSec
-	_ = logoThreshold
-	_ = blackframeDur
-	_ = silenceNoiseDB
-	_ = silenceDur
 
 	info, err := decode.Probe(input)
 	if err != nil {
@@ -83,46 +66,10 @@ func main() {
 	ctx, cancel := signalContext()
 	defer cancel()
 
-	d, err := decode.NewDecoder(ctx, decode.DecodeOpts{
-		Input:  input,
-		Width:  *decodeWidth,
-		Height: *decodeHeight,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "decode:", err)
-		os.Exit(1)
-	}
-	defer d.Close()
-
-	// Silence runs in its own ffmpeg subprocess that reads only the
-	// audio stream — no contention with the video decoder. Kick it off
-	// in a goroutine; join after the video pipeline completes.
-	type silenceResult struct {
-		events []signals.SilenceEvent
-		err    error
-	}
-	silenceCh := make(chan silenceResult, 1)
-	go func() {
-		ev, err := signals.DetectSilence(ctx, signals.SilenceOpts{
-			Input:   input,
-			NoiseDB: *silenceNoiseDB,
-			MinDurS: *silenceDur,
-		})
-		silenceCh <- silenceResult{events: ev, err: err}
-	}()
-
-	black := signals.NewBlackDetector(d.FPS, *blackframeDur, 0, 0)
-	scene := signals.NewSceneDetector(d.FPS, *sceneThreshold)
-
-	var logo *signals.LogoDetector
-	var logoConfs []float64 // per-frame confidences when logo is enabled
+	// Optional logo template. Shared read-only across all chunk workers.
+	var tmpl *logotemplate.Template
 	if *logoPath != "" {
-		tmpl, err := logotemplate.Load(*logoPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "logo:", err)
-			os.Exit(1)
-		}
-		logo, err = signals.NewLogoDetector(tmpl, d.Width, d.Height, 0)
+		tmpl, err = logotemplate.Load(*logoPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "logo:", err)
 			os.Exit(1)
@@ -134,96 +81,103 @@ func main() {
 		}
 	}
 
-	t0 := time.Now()
-	count := 0
-	logoSum, logoCount := 0.0, 0
-	progressEvery := 1000
-	for f := range d.Frames() {
-		black.Push(f.Index, f.Pixels)
-		scene.Push(f.Index, f.Pixels)
-		if logo != nil {
-			c := logo.Confidence(f.Pixels)
-			logoSum += c
-			logoCount++
-			logoConfs = append(logoConfs, c)
-		}
-		count++
-		if !*quiet && count%progressEvery == 0 {
-			elapsed := time.Since(t0).Seconds()
-			fmt.Fprintf(os.Stderr,
-				"\rdecode: %d frames  %.1f fps", count, float64(count)/elapsed)
-		}
+	// Silence runs as a single parallel ffmpeg subprocess on the audio
+	// stream — no benefit from chunking it further (low CPU).
+	type silenceResult struct {
+		events []signals.SilenceEvent
+		err    error
 	}
-	black.Finish()
-	if err := d.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "\ndecode error:", err)
+	silenceCh := make(chan silenceResult, 1)
+	go func() {
+		ev, err := signals.DetectSilence(ctx, signals.SilenceOpts{
+			Input: input, NoiseDB: *silenceNoiseDB, MinDurS: *silenceDur,
+		})
+		silenceCh <- silenceResult{events: ev, err: err}
+	}()
+
+	// Video decode + per-frame signal extraction, split across N chunks.
+	t0 := time.Now()
+	res, err := pipeline.Run(ctx, pipeline.Opts{
+		Input:          input,
+		Workers:        *workers,
+		DecodeWidth:    *decodeWidth,
+		DecodeHeight:   *decodeHeight,
+		BlackframeDurS: *blackframeDur,
+		SceneThreshold: *sceneThreshold,
+		LogoTemplate:   tmpl,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pipeline:", err)
 		os.Exit(1)
 	}
-	silenceRes := <-silenceCh
-	if silenceRes.err != nil {
-		fmt.Fprintln(os.Stderr, "silence:", silenceRes.err)
+	sil := <-silenceCh
+	if sil.err != nil {
+		fmt.Fprintln(os.Stderr, "silence:", sil.err)
 		os.Exit(1)
 	}
 	elapsed := time.Since(t0).Seconds()
 	if !*quiet {
 		fmt.Fprintf(os.Stderr,
-			"\rdecode: %d frames in %.1fs (%.0f fps avg)  blackframes=%d  silences=%d  scenes=%d",
-			count, elapsed, float64(count)/elapsed,
-			len(black.Events()), len(silenceRes.events), len(scene.Cuts()))
-		if logo != nil && logoCount > 0 {
-			fmt.Fprintf(os.Stderr, "  logo_avg=%.3f", logoSum/float64(logoCount))
+			"pipeline: %d frames in %.1fs (%.0f fps) workers=%d  blackframes=%d  silences=%d  scenes=%d",
+			res.FrameCount, elapsed, float64(res.FrameCount)/elapsed, *workers,
+			len(res.Blackframes), len(sil.events), len(res.SceneCuts))
+		if res.LogoConfs != nil {
+			sum := 0.0
+			for _, c := range res.LogoConfs {
+				sum += c
+			}
+			fmt.Fprintf(os.Stderr, "  logo_avg=%.3f", sum/float64(len(res.LogoConfs)))
 		}
 		fmt.Fprintln(os.Stderr)
 	}
+
+	// Debug emitters — write to stdout independent of --output format.
 	if *emitBlackframes {
-		for _, e := range black.Events() {
+		for _, e := range res.Blackframes {
 			fmt.Printf("blackframe start=%.3f end=%.3f duration=%.3f\n",
 				e.StartS, e.EndS, e.DurationS)
 		}
 	}
 	if *emitSilences {
-		for _, e := range silenceRes.events {
+		for _, e := range sil.events {
 			fmt.Printf("silence start=%.3f end=%.3f duration=%.3f\n",
 				e.StartS, e.EndS, e.DurationS)
 		}
 	}
 	if *emitScenes {
-		for _, c := range scene.Cuts() {
+		for _, c := range res.SceneCuts {
 			fmt.Printf("scene frame=%d t=%.3f dist=%.3f\n", c.Frame, c.TimeS, c.Distance)
 		}
 	}
 	if *emitLogoCSV {
 		fmt.Println("idx,time_s,confidence")
-		for i, c := range logoConfs {
-			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/d.FPS, c)
+		for i, c := range res.LogoConfs {
+			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
 		}
 	}
 
-	// Block formation + final output. Requires logo confidences; without
-	// logo we emit an empty block list (blackframe/silence alone don't
-	// classify ad vs show reliably enough).
+	// Block formation + final output. Without logo confidences the
+	// classifier has no primary signal and returns an empty list.
 	blockList := blocks.Form(blocks.Opts{
-		FPS:             d.FPS,
+		FPS:             res.FPS,
 		MinBlockS:       *minBlockSec,
 		MaxBlockS:       *maxBlockSec,
 		MinShowSegmentS: *minShowSegSec,
 		LogoThreshold:   *logoThreshold,
-	}, logoConfs, black.Events(), silenceRes.events, count)
+	}, res.LogoConfs, res.Blackframes, sil.events, res.FrameCount)
 
 	switch *output {
 	case "summary":
-		writeSummary(d, count, elapsed, blockList)
+		writeSummary(res, elapsed, blockList)
 	case "cutlist":
-		writeCutlist(d.FPS, count, blockList)
-	case "jsonlines", "csv":
-		fmt.Fprintf(os.Stderr, "output format %q not yet implemented\n", *output)
+		writeCutlist(res.FPS, res.FrameCount, blockList)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown output format: %q\n", *output)
 		os.Exit(2)
 	}
 }
 
-func writeSummary(d *decode.Decoder, frames int, elapsedS float64, bl []blocks.Block) {
+func writeSummary(res *pipeline.Result, elapsedS float64, bl []blocks.Block) {
 	type summaryOut struct {
 		FPS        float64        `json:"fps"`
 		Width      int            `json:"width"`
@@ -234,15 +188,15 @@ func writeSummary(d *decode.Decoder, frames int, elapsedS float64, bl []blocks.B
 		Stats      map[string]any `json:"stats"`
 	}
 	out := summaryOut{
-		FPS:        d.FPS,
-		Width:      d.Width,
-		Height:     d.Height,
-		FrameCount: frames,
-		DurationS:  float64(frames) / d.FPS,
+		FPS:        res.FPS,
+		Width:      res.Width,
+		Height:     res.Height,
+		FrameCount: res.FrameCount,
+		DurationS:  float64(res.FrameCount) / res.FPS,
 		Blocks:     make([][2]float64, len(bl)),
 		Stats: map[string]any{
 			"elapsed_s": elapsedS,
-			"fps_proc":  float64(frames) / elapsedS,
+			"fps_proc":  float64(res.FrameCount) / elapsedS,
 		},
 	}
 	for i, b := range bl {

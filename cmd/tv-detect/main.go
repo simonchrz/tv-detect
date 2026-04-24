@@ -306,10 +306,25 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 		return nil, fmt.Errorf("no pixel met %.0f%% persistence over %d sampled frames",
 			persist*100, read/stride)
 	}
+	// Try to persist next to source; if that fails (e.g. recordings
+	// dir is mounted read-only in a container), fall back to /tmp so
+	// at least the in-memory template can be loaded back. Either way
+	// the caller gets a usable template.
+	cachedTo := trainedPath
 	if err := tr.SaveTemplate(trainedPath); err != nil {
-		return nil, fmt.Errorf("save template: %w", err)
+		alt := filepath.Join(os.TempDir(),
+			"tvd-"+strings.ReplaceAll(filepath.Base(trainedPath), " ", "_"))
+		if err2 := tr.SaveTemplate(alt); err2 != nil {
+			return nil, fmt.Errorf("save template: %w (also tried %s: %v)",
+				err, alt, err2)
+		}
+		if !quiet {
+			fmt.Fprintf(os.Stderr,
+				"auto-train: source dir read-only (%v) — cached to %s\n", err, alt)
+		}
+		cachedTo = alt
 	}
-	tmpl, err := logotemplate.Load(trainedPath)
+	tmpl, err := logotemplate.Load(cachedTo)
 	if err != nil {
 		return nil, fmt.Errorf("reload trained template: %w", err)
 	}
@@ -318,7 +333,7 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 			"auto-train: bbox (%d,%d)-(%d,%d) %dx%d %d edges → %s\n",
 			res.MinX, res.MinY, res.MaxX, res.MaxY,
 			res.MaxX-res.MinX+1, res.MaxY-res.MinY+1, res.EdgePixels,
-			trainedPath)
+			cachedTo)
 	}
 	return tmpl, nil
 }

@@ -1,6 +1,6 @@
 # tv-detect build + cross-compile
 
-BINARIES := tv-detect tv-detect-train-logo
+BINARIES := tv-detect tv-detect-train-logo tv-detect-nn-smoke
 BUILD_DIR := build
 
 LDFLAGS := -s -w  # strip debug + symbol tables — smaller binary

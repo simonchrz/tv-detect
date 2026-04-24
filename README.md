@@ -28,7 +28,8 @@ parsers consume it unchanged.
 | 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 |
 | 5 | Validation suite | ✅ 7/19 frame-perfect, 5/19 close, see [VALIDATION.md](VALIDATION.md) |
 | 6a | Mac launchd agent swap (tv-comskip.sh → tv-detect) | ✅ full swap, comskip not invoked, see [PHASE6.md](PHASE6.md) |
-| 6b | Pi container swap (hls-gateway/_rec_cskip_spawn) | ⏳ |
+| 6b | Pi container swap (hls-gateway/_rec_cskip_spawn) | ✅ |
+| 7  | NN evidence source via ONNX (`signals.NNDetector`) | 🟡 in progress, see [PHASE7.md](PHASE7.md) |
 
 End-to-end output works once a per-channel template has been trained
 by `tv-detect-train-logo`. The cached comskip templates don't align

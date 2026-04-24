@@ -1,8 +1,7 @@
 # tv-detect build + cross-compile
 
-BINARY := tv-detect
+BINARIES := tv-detect tv-detect-train-logo
 BUILD_DIR := build
-PKG := ./cmd/tv-detect
 
 LDFLAGS := -s -w  # strip debug + symbol tables — smaller binary
 GOFLAGS := -trimpath
@@ -12,22 +11,31 @@ GOFLAGS := -trimpath
 all: build
 
 build:
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/$(BINARY) $(PKG)
+	@for b in $(BINARIES); do \
+		echo "go build $$b (native)"; \
+		go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/$$b ./cmd/$$b || exit 1; \
+	done
 
 # Cross-compile every target tv-detect actually deploys to.
 build-all: darwin-arm64 linux-arm64 linux-amd64
 
 darwin-arm64:
-	GOOS=darwin GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
-		-o $(BUILD_DIR)/$(BINARY)-darwin-arm64 $(PKG)
+	@for b in $(BINARIES); do \
+		GOOS=darwin GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
+			-o $(BUILD_DIR)/$$b-darwin-arm64 ./cmd/$$b || exit 1; \
+	done
 
 linux-arm64:
-	GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
-		-o $(BUILD_DIR)/$(BINARY)-linux-arm64 $(PKG)
+	@for b in $(BINARIES); do \
+		GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
+			-o $(BUILD_DIR)/$$b-linux-arm64 ./cmd/$$b || exit 1; \
+	done
 
 linux-amd64:
-	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
-		-o $(BUILD_DIR)/$(BINARY)-linux-amd64 $(PKG)
+	@for b in $(BINARIES); do \
+		GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' \
+			-o $(BUILD_DIR)/$$b-linux-amd64 ./cmd/$$b || exit 1; \
+	done
 
 test:
 	go test ./...
@@ -35,6 +43,8 @@ test:
 clean:
 	rm -rf $(BUILD_DIR)
 
-# Symlink the dev binary into PATH (assumes /usr/local/bin is writable).
+# Symlink the dev binaries into PATH (assumes /usr/local/bin is writable).
 install: build
-	ln -sf "$(PWD)/$(BUILD_DIR)/$(BINARY)" /usr/local/bin/$(BINARY)
+	@for b in $(BINARIES); do \
+		ln -sf "$(PWD)/$(BUILD_DIR)/$$b" /usr/local/bin/$$b; \
+	done

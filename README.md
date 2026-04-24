@@ -21,16 +21,19 @@ parsers consume it unchanged.
 | 2 | Blackframe detector | ✅ matches `ffmpeg blackdetect` |
 | 2 | Silence detector | ✅ parallel ffmpeg subprocess |
 | 2 | Scene-cut detector | ✅ luma histogram Bhattacharyya |
-| 2 | Logo detector | ⚠️ skeleton in place; matching quality broken |
+| 2 | Logo detector | ✅ Sobel edge correlation vs trained template |
+| 2 | Logo trainer (`tv-detect-train-logo`) | ✅ comskip-format template from N min of content |
 | 3 | Multi-thread chunk pipeline | ✅ ~8× speedup vs comskip |
 | 4 | Block-formation state machine | ✅ logo-gated cutlist output |
 | 5 | Cross-compile + validation suite | ⏳ |
 | 6 | Python integration (hls-gateway, tv-live-comskip) | ⏳ |
 
-End-to-end output is empty until logo detection is fixed — the block
-classifier needs per-frame logo presence as its primary signal.
-Blackframe + silence alone don't separate ad/show reliably on
-private DE-TV content.
+End-to-end output works once a per-channel template has been trained
+by `tv-detect-train-logo`. The cached comskip templates don't align
+with tv-detect's decode coordinates (see `CLAUDE.md` for the
+investigation), but training an own template from 5-25 min of show
+content produces a working detector: on a 50-min VOX CSI recording we
+find the same 2 ad blocks comskip finds, boundaries within ~60 s.
 
 ## Requirements
 
@@ -56,20 +59,26 @@ make install            # symlink build/tv-detect into /usr/local/bin
 ## Usage
 
 ```bash
+# Train a per-channel logo template from any recording of that channel.
+# 5-25 min of show content is enough; lowers persistence threshold if
+# the recording has mid-roll ad breaks (default 0.85 assumes show-only).
+tv-detect-train-logo --edge-threshold 40 \
+  --output vox.logo.txt recording.ts
+
 # Probe input metadata only.
 tv-detect --probe path/to/recording.ts
 
-# Full pipeline, summary JSON to stdout.
-tv-detect --workers 4 --logo /path/to/.logos/vox.logo.txt input.ts
+# Full pipeline with a trained template, summary JSON to stdout.
+tv-detect --workers 4 --logo vox.logo.txt recording.ts
 
 # Cutlist output (comskip-compatible, line-delimited frame pairs).
-tv-detect --workers 4 --output cutlist input.ts > cutlist.txt
+tv-detect --workers 4 --output cutlist --logo vox.logo.txt recording.ts
 
 # Per-signal debug output (each independent of --output).
 tv-detect --emit-blackframes input.ts
 tv-detect --emit-silences input.ts
 tv-detect --emit-scenes input.ts
-tv-detect --emit-logo-csv --logo template.logo.txt input.ts
+tv-detect --emit-logo-csv --logo vox.logo.txt input.ts
 ```
 
 ## Layout

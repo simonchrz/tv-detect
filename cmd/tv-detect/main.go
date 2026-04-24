@@ -12,8 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"path/filepath"
+	"strings"
+
 	"github.com/simonchrz/tv-detect/internal/blocks"
 	"github.com/simonchrz/tv-detect/internal/decode"
+	"github.com/simonchrz/tv-detect/internal/logotrain"
 	"github.com/simonchrz/tv-detect/internal/pipeline"
 	"github.com/simonchrz/tv-detect/internal/signals"
 	"github.com/simonchrz/tv-detect/pkg/logotemplate"
@@ -42,6 +46,9 @@ func main() {
 		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
 		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
+		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
+		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
+		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 	)
 	flag.Parse()
 	if flag.NArg() != 1 {
@@ -68,7 +75,11 @@ func main() {
 	ctx, cancel := signalContext()
 	defer cancel()
 
-	// Optional logo template. Shared read-only across all chunk workers.
+	// Optional logo template. Resolved in order:
+	//   1. --logo <path>                           — explicit
+	//   2. --auto-train + cached <basename>.trained.logo.txt
+	//   3. --auto-train + (train from first N min, cache, then use)
+	// Shared read-only across all chunk workers.
 	var tmpl *logotemplate.Template
 	if *logoPath != "" {
 		tmpl, err = logotemplate.Load(*logoPath)
@@ -80,6 +91,31 @@ func main() {
 			fmt.Fprintf(os.Stderr,
 				"logo: %dx%d bbox at (%d,%d) — %d edge positions\n",
 				tmpl.Width(), tmpl.Height(), tmpl.MinX, tmpl.MinY, tmpl.EdgePositions)
+		}
+	} else if *autoTrain > 0 {
+		base := strings.TrimSuffix(filepath.Base(input), filepath.Ext(input))
+		trainedPath := filepath.Join(filepath.Dir(input), base+".trained.logo.txt")
+		if _, err := os.Stat(trainedPath); err == nil {
+			tmpl, err = logotemplate.Load(trainedPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "logo (cached %s): %v\n", trainedPath, err)
+				os.Exit(1)
+			}
+			if !*quiet {
+				fmt.Fprintf(os.Stderr,
+					"logo (cached): %s — %dx%d %d edges\n",
+					trainedPath, tmpl.Width(), tmpl.Height(), tmpl.EdgePositions)
+			}
+		} else {
+			tmpl, err = autoTrainLogo(ctx, input, info, trainedPath, *autoTrain,
+				*autoTrainEdge, *autoTrainPersist, *quiet)
+			if err != nil {
+				if !*quiet {
+					fmt.Fprintf(os.Stderr,
+						"auto-train: %v — proceeding without logo (empty cutlist)\n", err)
+				}
+				tmpl = nil
+			}
 		}
 	}
 
@@ -223,6 +259,68 @@ func writeCutlist(fps float64, frameCount int, bl []blocks.Block) {
 		ef := int(b.EndS*fps + 0.5)
 		fmt.Printf("%d\t%d\n", sf, ef)
 	}
+}
+
+// autoTrainLogo runs a one-pass training over the first minutes of
+// input, samples 1 frame per second, and writes the result to
+// trainedPath. Returns the loaded template ready for the detector.
+// On failure (no consistently-edged pixels), returns an error and
+// the caller proceeds without a logo (empty cutlist).
+func autoTrainLogo(ctx context.Context, input string, info decode.Info,
+	trainedPath string, minutes float64, edgeThresh int,
+	persist float64, quiet bool) (*logotemplate.Template, error) {
+
+	if !quiet {
+		fmt.Fprintf(os.Stderr,
+			"auto-train: sampling first %.0f min @ 1 fps from %s\n",
+			minutes, filepath.Base(input))
+	}
+	d, err := decode.NewDecoder(ctx, decode.DecodeOpts{
+		Input: input, StartS: 30, DurS: minutes * 60,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	defer d.Close()
+
+	tr := logotrain.New(logotrain.Opts{
+		FrameW: d.Width, FrameH: d.Height,
+		EdgeThresh: edgeThresh, Persistence: persist,
+	})
+	stride := int(d.FPS + 0.5) // 1 frame per second
+	if stride < 1 {
+		stride = 1
+	}
+	read := 0
+	for f := range d.Frames() {
+		if read%stride == 0 {
+			tr.Push(f.Pixels)
+		}
+		read++
+	}
+	if err := d.Err(); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	res := tr.Compute()
+	if !res.HasLogo {
+		return nil, fmt.Errorf("no pixel met %.0f%% persistence over %d sampled frames",
+			persist*100, read/stride)
+	}
+	if err := tr.SaveTemplate(trainedPath); err != nil {
+		return nil, fmt.Errorf("save template: %w", err)
+	}
+	tmpl, err := logotemplate.Load(trainedPath)
+	if err != nil {
+		return nil, fmt.Errorf("reload trained template: %w", err)
+	}
+	if !quiet {
+		fmt.Fprintf(os.Stderr,
+			"auto-train: bbox (%d,%d)-(%d,%d) %dx%d %d edges → %s\n",
+			res.MinX, res.MinY, res.MaxX, res.MaxY,
+			res.MaxX-res.MinX+1, res.MaxY-res.MinY+1, res.EdgePixels,
+			trainedPath)
+	}
+	return tmpl, nil
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

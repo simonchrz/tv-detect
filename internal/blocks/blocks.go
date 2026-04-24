@@ -22,9 +22,10 @@ type Opts struct {
 	FPS              float64
 	MinBlockS        float64 // ignore blocks shorter than this (default 60)
 	MaxBlockS        float64 // split blocks longer than this (default 900)
-	MinShowSegmentS  float64 // merge ad blocks separated by less show than this (default 120)
+	MinShowSegmentS  float64 // merge ad blocks separated by less show than this (default 60)
+	MinAbsentToOpenS float64 // require this many seconds of continuous logo-absent to open a block (default 5)
 	LogoThreshold    float64 // per-frame logo confidence < this counts as "absent" (default 0.10)
-	RefineWindowS    float64 // search radius for blackframe/silence snap (default 10)
+	RefineWindowS    float64 // search radius for blackframe/silence snap (default 90)
 }
 
 // Form combines per-frame logo confidences (one entry per frame, len
@@ -46,29 +47,48 @@ func Form(opts Opts, logoConf []float64, black []signals.BlackEvent,
 		present[i] = c >= opts.LogoThreshold
 	}
 
-	// Step 2: collapse to runs of "absent" (potential ad) longer than
-	// MinBlockS. The state machine demands MinBlockS of continuous
-	// absence to start a block; once started, it ends as soon as the
-	// logo returns for MinShowSegmentS continuously.
-	minAbsentFrames := int(opts.MinBlockS * opts.FPS)
+	// Step 2: state machine over per-frame present/absent.
+	//
+	// Two hysteresis thresholds:
+	//   minOpenFrames    — N consecutive absent frames needed to OPEN
+	//                      a candidate block (filters single-frame
+	//                      logo-flickers in the middle of a show)
+	//   minPresentFrames — M consecutive present frames needed to CLOSE
+	//                      the block (so brief logo-back moments inside
+	//                      an ad break — e.g. station promo with logo —
+	//                      don't prematurely terminate the block)
+	//
+	// minBlockFrames filters the closed block by total absence span.
+	minOpenFrames := int(opts.MinAbsentToOpenS * opts.FPS)
 	minPresentFrames := int(opts.MinShowSegmentS * opts.FPS)
+	minBlockFrames := int(opts.MinBlockS * opts.FPS)
 
 	type run struct {
 		startF, endF int
 	}
 	var raw []run
-	var openStart = -1
+	openStart := -1                  // first absent frame of the candidate run, -1 = closed
+	pendingStart := -1               // first absent frame of an unconfirmed run
+	consecutiveAbsent := 0
 	consecutivePresent := 0
 	for i := 0; i < len(present); i++ {
 		if !present[i] {
-			if openStart < 0 {
-				// scan ahead to confirm we'll have minAbsentFrames absent in the next window
-				openStart = i
-			}
 			consecutivePresent = 0
+			if openStart >= 0 {
+				continue // already inside a confirmed open block
+			}
+			if pendingStart < 0 {
+				pendingStart = i
+			}
+			consecutiveAbsent++
+			if consecutiveAbsent >= minOpenFrames {
+				openStart = pendingStart
+			}
 			continue
 		}
 		// logo present
+		consecutiveAbsent = 0
+		pendingStart = -1
 		if openStart < 0 {
 			continue
 		}
@@ -76,16 +96,15 @@ func Form(opts Opts, logoConf []float64, black []signals.BlackEvent,
 		if consecutivePresent < minPresentFrames {
 			continue
 		}
-		// closed: openStart .. (i - consecutivePresent + 1) is the absence run.
 		end := i - consecutivePresent + 1
-		if end-openStart >= minAbsentFrames {
+		if end-openStart >= minBlockFrames {
 			raw = append(raw, run{openStart, end})
 		}
 		openStart = -1
 		consecutivePresent = 0
 	}
 	// Trailing absent run that runs to EOF still counts.
-	if openStart >= 0 && len(present)-openStart >= minAbsentFrames {
+	if openStart >= 0 && len(present)-openStart >= minBlockFrames {
 		raw = append(raw, run{openStart, len(present)})
 	}
 
@@ -253,6 +272,9 @@ func defaults(o *Opts) {
 	}
 	if o.MinShowSegmentS <= 0 {
 		o.MinShowSegmentS = 60
+	}
+	if o.MinAbsentToOpenS <= 0 {
+		o.MinAbsentToOpenS = 5
 	}
 	if o.LogoThreshold <= 0 {
 		o.LogoThreshold = 0.10

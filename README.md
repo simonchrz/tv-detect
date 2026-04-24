@@ -25,7 +25,8 @@ parsers consume it unchanged.
 | 2 | Logo trainer (`tv-detect-train-logo`) | ✅ comskip-format template from N min of content |
 | 3 | Multi-thread chunk pipeline | ✅ ~8× speedup vs comskip |
 | 4 | Block-formation state machine | ✅ logo-gated cutlist output |
-| 5 | Cross-compile + validation suite | ⏳ |
+| 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 |
+| 5 | Validation suite | ✅ 7/19 frame-perfect, 5/19 close, see [VALIDATION.md](VALIDATION.md) |
 | 6 | Python integration (hls-gateway, tv-live-comskip) | ⏳ |
 
 End-to-end output works once a per-channel template has been trained

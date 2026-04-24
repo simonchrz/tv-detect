@@ -301,20 +301,23 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 	if err := d.Err(); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-	res := tr.Compute()
+	// Adaptive sweep: bump persistence upward until the bbox fits in
+	// 5000 px² (typical real-logo size) or we run out of room. Same
+	// behaviour as tv-detect-train-logo's default --max-bbox-area=5000.
+	res, finalPersist := tr.ComputeAdaptive(5000, persist)
 	if !res.HasLogo {
-		return nil, fmt.Errorf("no pixel met %.0f%% persistence over %d sampled frames",
-			persist*100, read/stride)
+		return nil, fmt.Errorf("no pixel met persistence (sampled %d frames)",
+			read/stride)
 	}
 	// Try to persist next to source; if that fails (e.g. recordings
 	// dir is mounted read-only in a container), fall back to /tmp so
 	// at least the in-memory template can be loaded back. Either way
 	// the caller gets a usable template.
 	cachedTo := trainedPath
-	if err := tr.SaveTemplate(trainedPath); err != nil {
+	if err := tr.SaveTemplateAt(trainedPath, finalPersist); err != nil {
 		alt := filepath.Join(os.TempDir(),
 			"tvd-"+strings.ReplaceAll(filepath.Base(trainedPath), " ", "_"))
-		if err2 := tr.SaveTemplate(alt); err2 != nil {
+		if err2 := tr.SaveTemplateAt(alt, finalPersist); err2 != nil {
 			return nil, fmt.Errorf("save template: %w (also tried %s: %v)",
 				err, alt, err2)
 		}
@@ -329,11 +332,15 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 		return nil, fmt.Errorf("reload trained template: %w", err)
 	}
 	if !quiet {
+		note := ""
+		if finalPersist > persist+1e-6 {
+			note = fmt.Sprintf(" (persistence bumped %.2f → %.2f)", persist, finalPersist)
+		}
 		fmt.Fprintf(os.Stderr,
-			"auto-train: bbox (%d,%d)-(%d,%d) %dx%d %d edges → %s\n",
+			"auto-train: bbox (%d,%d)-(%d,%d) %dx%d %d edges%s → %s\n",
 			res.MinX, res.MinY, res.MaxX, res.MaxY,
 			res.MaxX-res.MinX+1, res.MaxY-res.MinY+1, res.EdgePixels,
-			cachedTo)
+			note, cachedTo)
 	}
 	return tmpl, nil
 }

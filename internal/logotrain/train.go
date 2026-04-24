@@ -112,14 +112,22 @@ type RawCounts struct {
 
 func (t *Trainer) RawCounts() RawCounts { return RawCounts{H: t.hCount, V: t.vCount} }
 
-// Compute scans the accumulated counts, finds the logo bounding box,
-// and returns a Result (without writing anything to disk).
+// Compute scans the accumulated counts at the trainer's configured
+// persistence threshold and returns the resulting bbox + Result.
 func (t *Trainer) Compute() Result {
+	return t.ComputeAt(t.opts.Persistence)
+}
+
+// ComputeAt is like Compute but takes an explicit persistence (0..1)
+// override. Useful for adaptive sweeps that want to find the smallest
+// viable mask without re-training (the per-pixel histograms already
+// contain everything needed; only the threshold changes).
+func (t *Trainer) ComputeAt(persistence float64) Result {
 	if t.frameCount == 0 {
 		return Result{}
 	}
 	w, h := t.opts.FrameW, t.opts.FrameH
-	threshold := uint32(float64(t.frameCount) * t.opts.Persistence)
+	threshold := uint32(float64(t.frameCount) * persistence)
 	minX, minY := w, h
 	maxX, maxY := -1, -1
 	edgePixels := 0
@@ -162,7 +170,51 @@ func (t *Trainer) Compute() Result {
 	}
 }
 
-// WriteTemplate emits the trained mask in comskip's .logo.txt format.
+// ComputeAdaptive sweeps persistence upward from a starting value
+// until the resulting bbox area is at most maxArea pixels², or the
+// sweep runs out of room. Useful for channels where the broadcast
+// has large persistent overlays (news ticker, kitchen-set
+// background) that bloat the mask at default 0.85 — bumping
+// persistence shrinks it down to the actual logo. Returns the chosen
+// Result and the exact persistence value that produced it (so the
+// caller can pass that same value to WriteTemplateAt).
+//
+// Stops at the largest persistence < 1.0 that still produces a
+// HasLogo=true result. If the maxArea constraint is never satisfied,
+// returns the last viable (largest-persistence) result so the caller
+// at least gets a usable mask. maxArea <= 0 disables the sweep
+// (returns first result).
+func (t *Trainer) ComputeAdaptive(maxArea int, startPersist float64) (Result, float64) {
+	const step = 0.02
+	if startPersist <= 0 {
+		startPersist = t.opts.Persistence
+	}
+	last := Result{}
+	lastPersist := startPersist
+	for persist := startPersist; persist < 1.0; persist += step {
+		r := t.ComputeAt(persist)
+		if !r.HasLogo {
+			// Persistence is now too high — every additional step
+			// would also fail. Return the last viable result.
+			break
+		}
+		last = r
+		lastPersist = persist
+		area := (r.MaxX - r.MinX + 1) * (r.MaxY - r.MinY + 1)
+		if maxArea <= 0 || area <= maxArea {
+			return r, persist
+		}
+	}
+	return last, lastPersist
+}
+
+// WriteTemplate emits the trained mask at the trainer's configured
+// persistence in comskip's .logo.txt format.
+func (t *Trainer) WriteTemplate(w io.Writer) error {
+	return t.WriteTemplateAt(w, t.opts.Persistence)
+}
+
+// WriteTemplateAt emits the mask at an explicit persistence override.
 // File layout:
 //
 //	logoMinX/MaxX/MinY/MaxY  (bbox in source pixel coords, inclusive)
@@ -171,14 +223,14 @@ func (t *Trainer) Compute() Result {
 //	0x82 \n                  (single binary byte the format demands)
 //	one row per Y in [MinY..MaxY], MaxX-MinX+1 chars per row
 //
-// Returns an error if no logo was found.
-func (t *Trainer) WriteTemplate(w io.Writer) error {
-	r := t.Compute()
+// Returns an error if no logo was found at the given persistence.
+func (t *Trainer) WriteTemplateAt(w io.Writer, persistence float64) error {
+	r := t.ComputeAt(persistence)
 	if !r.HasLogo {
 		return fmt.Errorf("no pixels met %.0f%% persistence over %d frames",
-			t.opts.Persistence*100, t.frameCount)
+			persistence*100, t.frameCount)
 	}
-	threshold := uint32(float64(t.frameCount) * t.opts.Persistence)
+	threshold := uint32(float64(t.frameCount) * persistence)
 	fmt.Fprintf(w, "logoMinX=%d\n", r.MinX)
 	fmt.Fprintf(w, "logoMaxX=%d\n", r.MaxX)
 	fmt.Fprintf(w, "logoMinY=%d\n", r.MinY)
@@ -214,12 +266,17 @@ func (t *Trainer) WriteTemplate(w io.Writer) error {
 // SaveTemplate is a convenience wrapper that opens a file and writes
 // the template to it.
 func (t *Trainer) SaveTemplate(path string) error {
+	return t.SaveTemplateAt(path, t.opts.Persistence)
+}
+
+// SaveTemplateAt opens path and writes the mask at the given persistence.
+func (t *Trainer) SaveTemplateAt(path string, persistence float64) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return t.WriteTemplate(f)
+	return t.WriteTemplateAt(f, persistence)
 }
 
 func defaults(o *Opts) {

@@ -6,86 +6,75 @@ import (
 	"github.com/simonchrz/tv-detect/pkg/logotemplate"
 )
 
-// Default edge-detection threshold (sum of |dx|+|dy| on luma in 0..255*2).
-// Tuned empirically against comskip output; can be overridden.
-const defaultEdgeThresh = 30
+// Default Sobel edge-magnitude threshold (|Gx| + |Gy| on luma in
+// 0..2040). Comskip's effective threshold is in the same ballpark
+// once you account for kernel scaling. Tuned empirically against
+// known logo-present recordings; configurable via NewLogoDetector.
+const defaultEdgeThresh = 80
 
 // LogoDetector matches a comskip-trained logo template against per-frame
 // pixels. Returns 0..1 confidence per frame: fraction of template's
-// "edge expected" positions that actually have an edge in the frame.
+// "edge expected" positions that have an actual Sobel edge in the
+// frame at the same position.
+//
+// The template's bounding box (logoMinX..MaxX, logoMinY..MaxY) is used
+// directly as the source ROI. Comskip pads its working frame to a
+// multiple of 16 columns (so PAL 720 → 736 in templates), but the
+// padding goes on the RIGHT, so the bounding-box X coordinates are
+// equally valid in the native 720-wide frame as long as logoMaxX
+// stays within frameW. We range-check rather than fail outright so a
+// trimmed/cropped frame just under-counts gracefully.
 type LogoDetector struct {
 	tmpl   *logotemplate.Template
 	frameW int
 	frameH int
 	edgeTh int
-	stride int // bytes per row in source frame = 3*frameW
-	// Per-detection scratch — reused across calls to avoid allocation.
-	edgeBuf []bool
+	stride int
 }
 
-// NewLogoDetector validates that the template's training resolution
-// matches the decode resolution and prepares scratch buffers.
-// edgeThresh of 0 selects the default (30).
+// NewLogoDetector creates a detector for the given template + frame
+// dimensions. edgeThresh of 0 selects the default. Returns an error
+// only if the bounding box can't fit in the frame at all.
 func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh int) (*LogoDetector, error) {
-	if tmpl.PicWidth != frameW || tmpl.PicHeight != frameH {
+	if tmpl.MaxX > frameW || tmpl.MaxY > frameH {
 		return nil, fmt.Errorf(
-			"logo template trained at %dx%d but frames are %dx%d — re-train or scale",
-			tmpl.PicWidth, tmpl.PicHeight, frameW, frameH)
+			"logo bbox (%d,%d)-(%d,%d) doesn't fit in %dx%d frame",
+			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, frameW, frameH)
 	}
 	if edgeThresh <= 0 {
 		edgeThresh = defaultEdgeThresh
 	}
 	return &LogoDetector{
-		tmpl:    tmpl,
-		frameW:  frameW,
-		frameH:  frameH,
-		edgeTh:  edgeThresh,
-		stride:  3 * frameW,
-		edgeBuf: make([]bool, tmpl.Width()*tmpl.Height()),
+		tmpl:   tmpl,
+		frameW: frameW,
+		frameH: frameH,
+		edgeTh: edgeThresh,
+		stride: 3 * frameW,
 	}, nil
 }
 
 // Confidence returns the fraction of expected-edge positions in the
-// template that have an actual edge in this frame's ROI. 0..1.
-//
-// Pixels is row-major rgb24, length 3*frameW*frameH. The ROI is
-// extracted at the template's bounding box. Edge presence at each
-// pixel = (|dx_luma| + |dy_luma|) > edgeThresh, where dx and dy are
-// 1-pixel forward differences on BT.601 luma.
+// template that have a Sobel edge in this frame's ROI (range 0..1).
+// pixels is row-major rgb24, length 3*frameW*frameH.
 func (d *LogoDetector) Confidence(pixels []byte) float64 {
 	w, h := d.tmpl.Width(), d.tmpl.Height()
-	matches := 0
-	// Walk ROI pixels. We need the luma at (x, y), (x+1, y), (x, y+1)
-	// to compute the gradient; clip to bbox so we don't read past the
-	// last column/row.
 	x0, y0 := d.tmpl.MinX, d.tmpl.MinY
+	matches := 0
 	for ry := 0; ry < h; ry++ {
 		fy := y0 + ry
-		if fy+1 >= d.frameH {
-			break
+		if fy <= 0 || fy >= d.frameH-1 {
+			continue // need fy-1 and fy+1 for the Sobel kernel
 		}
 		row := d.tmpl.Mask[ry]
 		for rx := 0; rx < w; rx++ {
 			if !row[rx] {
-				continue // template doesn't expect an edge here
-			}
-			fx := x0 + rx
-			if fx+1 >= d.frameW {
 				continue
 			}
-			i := fy*d.stride + 3*fx
-			yC := luma(pixels[i], pixels[i+1], pixels[i+2])
-			yX := luma(pixels[i+3], pixels[i+4], pixels[i+5])
-			yY := luma(pixels[i+d.stride], pixels[i+d.stride+1], pixels[i+d.stride+2])
-			dx := yX - yC
-			if dx < 0 {
-				dx = -dx
+			fx := x0 + rx
+			if fx <= 0 || fx >= d.frameW-1 {
+				continue
 			}
-			dy := yY - yC
-			if dy < 0 {
-				dy = -dy
-			}
-			if dx+dy > d.edgeTh {
+			if sobelMag(pixels, d.stride, fx, fy) > d.edgeTh {
 				matches++
 			}
 		}
@@ -93,7 +82,34 @@ func (d *LogoDetector) Confidence(pixels []byte) float64 {
 	return float64(matches) / float64(d.tmpl.EdgePositions)
 }
 
-// luma returns BT.601 8-bit luma from R,G,B (integer-approx, sums to 256).
-func luma(r, g, b byte) int {
-	return (77*int(r) + 150*int(g) + 29*int(b)) >> 8
+// sobelMag returns |Gx| + |Gy| of BT.601 luma for the 3x3 neighbourhood
+// centred on (x,y). Caller must ensure x and y are at least 1 away from
+// the frame edges.
+//
+//	Gx = [-1 0 +1; -2 0 +2; -1 0 +1]   (detects vertical edges)
+//	Gy = [-1 -2 -1;  0 0 0; +1 +2 +1]  (detects horizontal edges)
+func sobelMag(pixels []byte, stride, x, y int) int {
+	c := y*stride + 3*x
+	tl := lumaAt(pixels, c-stride-3)
+	t := lumaAt(pixels, c-stride)
+	tr := lumaAt(pixels, c-stride+3)
+	l := lumaAt(pixels, c-3)
+	r := lumaAt(pixels, c+3)
+	bl := lumaAt(pixels, c+stride-3)
+	b := lumaAt(pixels, c+stride)
+	br := lumaAt(pixels, c+stride+3)
+
+	gx := -tl + tr - 2*l + 2*r - bl + br
+	gy := -tl - 2*t - tr + bl + 2*b + br
+	if gx < 0 {
+		gx = -gx
+	}
+	if gy < 0 {
+		gy = -gy
+	}
+	return gx + gy
+}
+
+func lumaAt(p []byte, i int) int {
+	return (77*int(p[i]) + 150*int(p[i+1]) + 29*int(p[i+2])) >> 8
 }

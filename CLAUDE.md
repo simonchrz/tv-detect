@@ -57,11 +57,39 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
 
 ## Where the bodies are buried
 
-- **Logo detection currently broken.** The naive `|dx|+|dy|` edge
-  detector doesn't match comskip's directional Sobel convention.
-  Plus the `picWidth=736` vs native 720 padding mismatch needs
-  reverse-engineering. Block formation is gated on logo, so the
-  end-to-end output is empty until this is fixed.
+- **Logo detection currently produces no usable confidences.** The
+  edge detector uses Sobel 3x3 (correct convention), the template
+  parser handles comskip's `.logo.txt` format including the binary
+  marker byte and the `-`/`|`/`+`/space mask glyphs. Despite that,
+  matching the cached comskip templates against decoded frames
+  produces a bimodal 0/1 distribution with the logo "hit" frames
+  scattered randomly — clearly NOT the actual logo positions.
+
+  Investigated:
+  - Padding-offset hypothesis (`picWidth=736` vs decoded 720): tried
+    fixed dx in [-48..+48], no consistent best offset across frames.
+  - Edge-magnitude threshold sweep (10..200): bimodal stays bimodal,
+    just shifts how many frames hit "all 28 expected edges by chance".
+  - The template's "edge expected" positions are heavily concentrated
+    in a single row (e.g. row 25 of 34 for the VOX template), making
+    even a 100% match a low-information signal.
+
+  Likely root cause: comskip's training-time `width` variable (used
+  for both edge buffer addressing and template coordinates) doesn't
+  match the live-decode width. Source-side aspect-ratio handling,
+  pillarboxing, or comskip's internal aspect normalization shifts
+  logo position vs. the cached template by a non-constant amount.
+
+  Path forward when this matters: train logos in tv-detect itself
+  rather than parse comskip's cache. A `tv-detect train-logo`
+  subcommand that processes 25 min of show content and emits its own
+  edge mask in tv-detect's own coordinate space sidesteps the
+  reverse-engineering problem entirely.
+
+  Today's consequence: the block-formation state machine emits an
+  empty list because it has no usable per-frame logo signal. Phases
+  5b (validation against comskip cutlists) and 6 (Python integration)
+  are blocked on either fixing this or shipping a logo-trainer.
 
 - **`-ss X -t Y` seek is approximate.** ffmpeg seeks to the nearest
   I-frame ≤ X. On a 30-min recording with 8 chunks we observe

@@ -51,26 +51,29 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 }
 
 func TestFormBoundaryRefineToBlackframe(t *testing.T) {
-	// Logo says ad runs 600..900 but a blackframe at 597.0 says the real
-	// hard-cut into the ad happened earlier. Refiner should snap.
+	// Logo says ad runs 600..900. The real hard-cut blackframes are at
+	// 603 (just after the rough start — typical: logo fades a few seconds
+	// before the actual cut) and 897 (just before the rough end — typical:
+	// we wait MinShowSegmentS of confirmed-present before declaring end).
+	// Refiner should snap to both.
 	fps := 25.0
 	nFrames := 25 * 1800
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 900, nFrames}})
 	black := []signals.BlackEvent{
-		{StartS: 596.5, EndS: 597.0, DurationS: 0.5},
-		{StartS: 902.0, EndS: 902.6, DurationS: 0.6},
+		{StartS: 602.5, EndS: 603.0, DurationS: 0.5},
+		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 5}, logo, black, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, black, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}
-	if !near(blocks[0].StartS, 597.0, 0.001) {
-		t.Errorf("start should snap to black end 597.0, got %f", blocks[0].StartS)
+	if !near(blocks[0].StartS, 603.0, 0.001) {
+		t.Errorf("start should snap forward to black end 603.0, got %f", blocks[0].StartS)
 	}
-	if !near(blocks[0].EndS, 902.0, 0.001) {
-		t.Errorf("end should snap to black start 902.0, got %f", blocks[0].EndS)
+	if !near(blocks[0].EndS, 897.0, 0.001) {
+		t.Errorf("end should snap backward to black start 897.0, got %f", blocks[0].EndS)
 	}
 }
 

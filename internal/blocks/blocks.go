@@ -114,12 +114,25 @@ func Form(opts Opts, logoConf []float64, black []signals.BlackEvent,
 	return blocks
 }
 
-// refineBoundary snaps a rough boundary timestamp to the nearest
-// blackframe within radiusS, preferring blackframes over silences.
-// isStart picks the END of the blackframe (= start of the new content);
-// the inverse for ad-end.
+// refineBoundary snaps a rough boundary timestamp to the best matching
+// blackframe within radiusS, falling back to silence if no blackframe
+// fits. The snap is directional:
+//
+//   - isStart=true: logo confidence drops EARLY (logo fades out before
+//     the actual hard cut). The real ad-start blackframe is therefore
+//     LATER than the rough boundary. Prefer blackframes at or after
+//     roughS, but allow a small backward window in case the cut
+//     happened a few seconds before logo-loss (rare).
+//   - isStart=false: logo confidence rises LATE (we wait minPresent
+//     frames of "logo present" before declaring ad-end). The real
+//     ad-end blackframe is therefore EARLIER than the rough boundary.
+//     Prefer blackframes at or before roughS.
+//
+// Within the preferred direction, take the closest blackframe.
 func refineBoundary(roughS, radiusS float64, black []signals.BlackEvent,
 	silence []signals.SilenceEvent, isStart bool) float64 {
+	const backTolerance = 5.0 // small slack into the "wrong" direction
+
 	best := roughS
 	bestDist := radiusS + 1
 	for _, e := range black {
@@ -129,10 +142,30 @@ func refineBoundary(roughS, radiusS float64, black []signals.BlackEvent,
 		} else {
 			anchor = e.StartS // ad ends where the black started
 		}
-		d := abs(anchor - roughS)
-		if d <= radiusS && d < bestDist {
+		d := anchor - roughS
+		var dist float64
+		if isStart {
+			// Prefer anchor >= roughS (forward); allow small backward.
+			if d >= 0 {
+				dist = d
+			} else if -d <= backTolerance {
+				dist = -d * 2 // backward penalised
+			} else {
+				continue
+			}
+		} else {
+			// Prefer anchor <= roughS (backward); allow small forward.
+			if d <= 0 {
+				dist = -d
+			} else if d <= backTolerance {
+				dist = d * 2
+			} else {
+				continue
+			}
+		}
+		if dist <= radiusS && dist < bestDist {
 			best = anchor
-			bestDist = d
+			bestDist = dist
 		}
 	}
 	if bestDist <= radiusS {
@@ -146,10 +179,28 @@ func refineBoundary(roughS, radiusS float64, black []signals.BlackEvent,
 		} else {
 			anchor = e.StartS
 		}
-		d := abs(anchor - roughS)
-		if d <= radiusS && d < bestDist {
+		d := anchor - roughS
+		var dist float64
+		if isStart {
+			if d >= 0 {
+				dist = d
+			} else if -d <= backTolerance {
+				dist = -d * 2
+			} else {
+				continue
+			}
+		} else {
+			if d <= 0 {
+				dist = -d
+			} else if d <= backTolerance {
+				dist = d * 2
+			} else {
+				continue
+			}
+		}
+		if dist <= radiusS && dist < bestDist {
 			best = anchor
-			bestDist = d
+			bestDist = dist
 		}
 	}
 	return best
@@ -201,13 +252,13 @@ func defaults(o *Opts) {
 		o.MaxBlockS = 900
 	}
 	if o.MinShowSegmentS <= 0 {
-		o.MinShowSegmentS = 120
+		o.MinShowSegmentS = 60
 	}
 	if o.LogoThreshold <= 0 {
 		o.LogoThreshold = 0.10
 	}
 	if o.RefineWindowS <= 0 {
-		o.RefineWindowS = 10
+		o.RefineWindowS = 90
 	}
 }
 

@@ -26,7 +26,8 @@ func main() {
 		output         = flag.String("output", "summary", "output format: summary | cutlist")
 		minBlockSec    = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
 		maxBlockSec    = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
-		minShowSegSec  = flag.Float64("min-show-segment", 120, "min show between blocks before merging")
+		minShowSegSec  = flag.Float64("min-show-segment", 60, "min show between blocks before merging — also sets how long logo-present is required to declare block end")
+		refineWindowS  = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
 		logoThreshold  = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
 		blackframeDur  = flag.Float64("blackframe-d", 0.10, "min duration for blackframe (seconds)")
 		silenceNoiseDB = flag.Float64("silence-noise-db", -30, "silence noise floor (dB)")
@@ -164,6 +165,7 @@ func main() {
 		MaxBlockS:       *maxBlockSec,
 		MinShowSegmentS: *minShowSegSec,
 		LogoThreshold:   *logoThreshold,
+		RefineWindowS:   *refineWindowS,
 	}, res.LogoConfs, res.Blackframes, sil.events, res.FrameCount)
 
 	switch *output {

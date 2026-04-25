@@ -46,6 +46,9 @@ func main() {
 		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
 		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
+		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
+		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
+		nnWeight        = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
@@ -133,6 +136,15 @@ func main() {
 		silenceCh <- silenceResult{events: ev, err: err}
 	}()
 
+	// Resolve NN head path if backbone is set but head wasn't passed.
+	if *nnBackbone != "" && *nnHead == "" {
+		*nnHead = filepath.Join(filepath.Dir(*nnBackbone), "head.bin")
+	}
+	if *nnBackbone != "" && !*quiet {
+		fmt.Fprintf(os.Stderr, "nn: backbone=%s  head=%s  weight=%.2f\n",
+			*nnBackbone, *nnHead, *nnWeight)
+	}
+
 	// Video decode + per-frame signal extraction, split across N chunks.
 	t0 := time.Now()
 	res, err := pipeline.Run(ctx, pipeline.Opts{
@@ -143,6 +155,8 @@ func main() {
 		BlackframeDurS: *blackframeDur,
 		SceneThreshold: *sceneThreshold,
 		LogoTemplate:   tmpl,
+		NNBackbonePath: *nnBackbone,
+		NNHeadPath:     *nnHead,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)
@@ -204,7 +218,8 @@ func main() {
 		MinAbsentToOpenS: *minAbsentS,
 		LogoThreshold:    *logoThreshold,
 		RefineWindowS:    *refineWindowS,
-	}, res.LogoConfs, res.Blackframes, sil.events, res.FrameCount)
+		NNWeight:         *nnWeight,
+	}, res.LogoConfs, res.NNConfs, res.Blackframes, sil.events, res.FrameCount)
 
 	switch *output {
 	case "summary":

@@ -24,6 +24,8 @@ type Opts struct {
 	BlackframeDurS float64
 	SceneThreshold float64
 	LogoTemplate   *logotemplate.Template // nil = skip logo
+	NNBackbonePath string                 // "" = skip NN
+	NNHeadPath     string                 // ignored if backbone is empty
 }
 
 // Result is the merged output across all chunks.
@@ -35,6 +37,7 @@ type Result struct {
 	Blackframes []signals.BlackEvent
 	SceneCuts   []signals.SceneCut
 	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
+	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
 }
 
 // chunkPlan describes one worker's time-range slice.
@@ -52,6 +55,7 @@ type chunkRes struct {
 	blackframes []signals.BlackEvent
 	sceneCuts   []signals.SceneCut
 	logoConfs   []float64
+	nnConfs     []float64
 	err         error
 }
 
@@ -96,7 +100,7 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
 
-	return merge(results, info, opts.LogoTemplate != nil), nil
+	return merge(results, info, opts.LogoTemplate != nil, opts.NNBackbonePath != ""), nil
 }
 
 func planChunks(totalS float64, workers int) []chunkPlan {
@@ -139,6 +143,15 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			return out
 		}
 	}
+	var nn *signals.NNDetector
+	if opts.NNBackbonePath != "" {
+		nn, err = signals.NewNNDetector(opts.NNBackbonePath, opts.NNHeadPath, d.Width, d.Height)
+		if err != nil {
+			out.err = err
+			return out
+		}
+		defer nn.Close()
+	}
 
 	count := 0
 	for f := range d.Frames() {
@@ -146,6 +159,9 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 		scene.Push(f.Index, f.Pixels)
 		if logo != nil {
 			out.logoConfs = append(out.logoConfs, logo.Confidence(f.Pixels))
+		}
+		if nn != nil {
+			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels))
 		}
 		count++
 	}
@@ -165,7 +181,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 // chunk boundary are reunited; suspicious scene-cuts at the very
 // first frame of chunks 2..N are dropped (they're artifacts of the
 // decoder starting fresh, not real content changes).
-func merge(chunks []chunkRes, info decode.Info, hasLogo bool) *Result {
+func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN bool) *Result {
 	r := &Result{
 		FPS:    info.FPS,
 		Width:  info.Width,
@@ -198,6 +214,9 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo bool) *Result {
 		}
 		if hasLogo {
 			r.LogoConfs = append(r.LogoConfs, c.logoConfs...)
+		}
+		if hasNN {
+			r.NNConfs = append(r.NNConfs, c.nnConfs...)
 		}
 	}
 	// Reunite adjacent blackframes split across a chunk boundary.

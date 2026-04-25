@@ -26,14 +26,25 @@ type Opts struct {
 	MinAbsentToOpenS float64 // require this many seconds of continuous logo-absent to open a block (default 5)
 	LogoThreshold    float64 // per-frame logo confidence < this counts as "absent" (default 0.10)
 	RefineWindowS    float64 // search radius for blackframe/silence snap (default 90)
+	NNWeight         float64 // 0..1 weight of NN evidence vs logo (default 0). When > 0 and NNConfs supplied to Form, the per-frame ad-likelihood is a weighted blend.
 }
 
-// Form combines per-frame logo confidences (one entry per frame, len
-// must equal NFrames) and the auxiliary event lists into a final block
-// list. logoConf may be nil — then the result is empty (no detection
-// possible without logo). Boundaries are refined to the nearest
-// blackframe within RefineWindowS, falling back to silence end.
-func Form(opts Opts, logoConf []float64, black []signals.BlackEvent,
+// Form combines per-frame logo confidences and (optionally) NN
+// confidences with the auxiliary event lists into a final block list.
+//
+// logoConf is the primary signal: high = logo present (= show). Pass
+// nil/empty to opt out of detection (returns no blocks).
+//
+// nnConf is the optional NN ad-confidence (high = ad). When supplied
+// and Opts.NNWeight > 0, the per-frame "show-likelihood" used by the
+// state machine is the weighted blend
+//
+//	show = (1 - NNWeight) * logoConf + NNWeight * (1 - nnConf)
+//
+// so NNWeight=0 reproduces the logo-only behaviour and NNWeight=1
+// makes the NN authoritative. Length of nnConf must match logoConf
+// (the pipeline guarantees this when both detectors run).
+func Form(opts Opts, logoConf, nnConf []float64, black []signals.BlackEvent,
 	silence []signals.SilenceEvent, nFrames int) []Block {
 
 	defaults(&opts)
@@ -41,10 +52,20 @@ func Form(opts Opts, logoConf []float64, black []signals.BlackEvent,
 		return nil
 	}
 
-	// Step 1: per-frame logo presence boolean.
+	// Step 1: per-frame "is the logo (or NN-equivalent show signal)
+	// present" boolean. Single threshold over the (optionally blended)
+	// confidence — keeps the downstream state machine identical
+	// regardless of whether NN is in play.
+	useNN := opts.NNWeight > 0 && len(nnConf) == len(logoConf)
+	wL := 1.0 - opts.NNWeight
+	wN := opts.NNWeight
 	present := make([]bool, len(logoConf))
 	for i, c := range logoConf {
-		present[i] = c >= opts.LogoThreshold
+		score := c
+		if useNN {
+			score = wL*c + wN*(1-nnConf[i])
+		}
+		present[i] = score >= opts.LogoThreshold
 	}
 
 	// Step 2: state machine over per-frame present/absent.

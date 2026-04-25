@@ -28,7 +28,7 @@ func TestFormBasicAdBlock(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 15000}, {22500, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
 	}
@@ -44,7 +44,7 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 630, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("30s gap should be filtered, got %+v", blocks)
 	}
@@ -65,7 +65,7 @@ func TestFormBoundaryRefineToBlackframe(t *testing.T) {
 		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, black, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, black, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}

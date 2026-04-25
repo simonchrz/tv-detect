@@ -96,9 +96,32 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int) (*NNDetect
 		inT.Destroy()
 		return nil, fmt.Errorf("output tensor: %w", err)
 	}
+	// Cap intra-op threads at 2 — without this, ORT's CoreML execution
+	// provider auto-grabs every core, which catastrophically over-
+	// subscribes when the caller already runs N parallel chunk workers
+	// (N × ~all-cores per session). Two threads keeps each session
+	// modestly parallel while N workers stack cleanly to ~workers ×
+	// 2 cores total.
+	opts, err := ort.NewSessionOptions()
+	if err != nil {
+		inT.Destroy()
+		outT.Destroy()
+		return nil, fmt.Errorf("session opts: %w", err)
+	}
+	defer opts.Destroy()
+	if err := opts.SetIntraOpNumThreads(2); err != nil {
+		inT.Destroy()
+		outT.Destroy()
+		return nil, fmt.Errorf("set intra-op threads: %w", err)
+	}
+	if err := opts.SetInterOpNumThreads(1); err != nil {
+		inT.Destroy()
+		outT.Destroy()
+		return nil, fmt.Errorf("set inter-op threads: %w", err)
+	}
 	sess, err := ort.NewAdvancedSession(backbonePath,
 		[]string{"frame"}, []string{"features"},
-		[]ort.Value{inT}, []ort.Value{outT}, nil)
+		[]ort.Value{inT}, []ort.Value{outT}, opts)
 	if err != nil {
 		inT.Destroy()
 		outT.Destroy()

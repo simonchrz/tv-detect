@@ -22,6 +22,7 @@ re-running on the same set is cheap (only new recordings get
 re-extracted).
 """
 import argparse
+import concurrent.futures as cf
 import json
 import os
 import re
@@ -111,6 +112,10 @@ def probe_dims(src):
 
 
 def featurize_recording(sess, src, fps_extract):
+    """Stream frames from ffmpeg, push each through the ONNX backbone.
+    Per-frame Run() — batching was tested and made things slower on
+    M5 Pro because the ffmpeg pipe (not the backbone) is the
+    bottleneck, and the np.stack copy adds overhead."""
     w, h = probe_dims(src)
     feats = []
     for buf in extract_frames_via_ffmpeg(src, w, h, fps_extract):
@@ -132,6 +137,23 @@ def labels_for(seconds, ad_blocks):
     return out
 
 
+# Per-worker ONNX session for ProcessPool. Each subprocess builds its
+# own session at startup; sharing across processes isn't safe.
+_WORKER_SESS = None
+
+def _worker_init(backbone_path):
+    global _WORKER_SESS
+    _WORKER_SESS = build_onnx_session(backbone_path)
+
+def _worker_extract(args):
+    """Subprocess entry: src, fps, cache_path. Returns (cache_path,
+    features). Caller persists to disk to avoid every worker writing
+    concurrently to shared state."""
+    src, fps_extract, cache_path = args
+    feats = featurize_recording(_WORKER_SESS, src, fps_extract)
+    return cache_path, feats
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backbone", default=os.path.expanduser(
@@ -146,6 +168,9 @@ def main():
     ap.add_argument("--prefer", choices=["user", "auto", "any"], default="any",
                     help="user = only ads_user.json; auto = only ads.json; "
                          "any = user where present, else auto")
+    ap.add_argument("--workers", type=int, default=4,
+                    help="parallel feature-extraction workers (each loads "
+                         "its own ONNX session, ~100 MB resident)")
     args = ap.parse_args()
 
     cache_dir = Path(args.feature_cache)
@@ -153,10 +178,12 @@ def main():
     sess = build_onnx_session(args.backbone)
     print(f"providers: {sess.get_providers()}")
 
-    X_all, y_all, n_recs = [], [], 0
+    # Pass 1 — discover labelled recordings, separate cached from
+    # uncached. Cached ones we just load synchronously; uncached
+    # ones go to the worker pool.
+    cached, todo = [], []  # cached: (rec_info, cache_path); todo: (rec_info, src, cache_path)
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
         uuid = rec_dir.name[5:]
-        # Find ads source
         user = rec_dir / "ads_user.json"
         auto = rec_dir / "ads.json"
         ads = None
@@ -170,14 +197,9 @@ def main():
         if ads is None:
             continue
 
-        # Find source file
         index = rec_dir / "index.m3u8"
         if not index.exists():
             continue
-        # Locate via tvheadend API or scan parent — simpler: assume the
-        # caller has /recordings mounted at HLS_ROOT/.. (same convention
-        # as tv-comskip.sh). We use the cskp.txt or current .txt
-        # filename to derive the source basename, then look it up.
         base_txts = [p for p in rec_dir.glob("*.txt") if not any(
             p.name.endswith(s) for s in (".logo.txt", ".cskp.txt",
                                           ".tvd.txt", ".trained.logo.txt"))]
@@ -186,26 +208,52 @@ def main():
         if not base_txts:
             continue
         base = base_txts[0].stem.replace(".cskp", "")
-        # The recording's source TS lives under <hls-root>/../<title>/<base>.ts
         title = base.split(" $")[0]
         src = Path(args.hls_root).parent / title / f"{base}.ts"
         if not src.exists():
             continue
 
-        # Cache key: uuid + src mtime
         src_mt = int(src.stat().st_mtime)
         cache_path = cache_dir / f"{uuid}-{src_mt}-fps{int(args.fps_extract*100)}.npy"
+        rec_info = (uuid, title, ads, which)
         if cache_path.exists():
-            feats = np.load(cache_path)
+            cached.append((rec_info, cache_path))
         else:
-            print(f"extract {uuid[:8]} {title[:40]} ({which})...", flush=True)
-            t0 = time.time()
-            feats = featurize_recording(sess, str(src), args.fps_extract)
-            print(f"  → {feats.shape} in {time.time()-t0:.1f}s")
-            np.save(cache_path, feats)
+            todo.append((rec_info, str(src), cache_path))
+
+    # Pass 2 — extract uncached features in parallel. Each worker loads
+    # its own ONNX session at init (~100 MB resident); 4 workers × that
+    # is fine on M5 Pro.
+    if todo:
+        print(f"extracting {len(todo)} new recording(s) on {args.workers} workers...")
+        t0 = time.time()
+        with cf.ProcessPoolExecutor(
+                max_workers=args.workers,
+                initializer=_worker_init,
+                initargs=(args.backbone,)) as ex:
+            future_map = {
+                ex.submit(_worker_extract, (src, args.fps_extract, str(cache_path))): rec_info
+                for rec_info, src, cache_path in todo
+            }
+            done = 0
+            for fut in cf.as_completed(future_map):
+                rec_info = future_map[fut]
+                cache_path_str, feats = fut.result()
+                np.save(cache_path_str, feats)
+                done += 1
+                print(f"  [{done}/{len(todo)}] {rec_info[0][:8]} {rec_info[1][:35]} → {feats.shape}",
+                      flush=True)
+        print(f"  parallel extract: {time.time()-t0:.1f}s for {len(todo)} recordings")
+
+    # Pass 3 — load all cached features + assemble training set.
+    X_all, y_all, n_recs = [], [], 0
+    for rec_info, cache_path in cached + [(ri, cp) for ri, _, cp in todo]:
+        if not Path(cache_path).exists():
+            continue
+        feats = np.load(cache_path)
         if feats.shape[0] == 0:
             continue
-
+        uuid, title, ads, which = rec_info
         seconds = [i / args.fps_extract for i in range(feats.shape[0])]
         labels = labels_for(seconds, ads)
         X_all.append(feats)

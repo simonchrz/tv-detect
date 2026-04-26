@@ -31,6 +31,12 @@ func main() {
 		minBlockSec    = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
 		maxBlockSec    = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
 		minShowSegSec  = flag.Float64("min-show-segment", 60, "min show between blocks before merging — also sets how long logo-present is required to declare block end")
+		maxAdGapSec    = flag.Float64("max-ad-gap", 30, "post-refine merge: glue adjacent ad blocks if the gap between them is shorter than this (catches promo slates between ad break halves; 0 disables)")
+		startExtendS   = flag.Float64("start-extend", 0, "pull each detected block's start back by N seconds (channel-specific systematic correction from user-feedback boundary drift; capped at the prior block's end)")
+		endExtendS     = flag.Float64("end-extend", 0, "push each detected block's end forward by N seconds (channel-specific sponsor-tail trim from user-feedback drift; capped at the next block's start)")
+		iframeSnapS    = flag.Float64("iframe-snap", 5, "post-refine snap each boundary to the nearest I-frame within ±N seconds. 0 = off. Real ad-inserts always align with encoder I-frames.")
+		logoCrossS     = flag.Float64("logo-cross-refine", 2, "post-refine snap each boundary to the precise frame where logoConf crosses --logo-threshold within ±N seconds. 0 = off. Sub-frame precision (40 ms) using the existing 25-fps logo signal — no extra decode.")
+		sceneCutSnapS  = flag.Float64("scene-cut-snap", 0, "post-refine snap each boundary to the nearest hard scene cut within ±N seconds. 0 = off (default — empirical test showed regressions on some shows when the I-frame snap was authoritative for those broadcasters). Set 1.5 to enable.")
 		minAbsentS     = flag.Float64("min-absent-open", 5, "seconds of continuous logo-absent before a candidate block opens (filters single-frame flickers in the show)")
 		refineWindowS  = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
 		logoThreshold  = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
@@ -48,7 +54,11 @@ func main() {
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
 		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
 		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
+		nnChannelSlug   = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
 		nnWeight        = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
+		nnGate          = flag.Float64("nn-gate", 0.3, "ignore NN where |conf - 0.5| < this (0 = always use NN, 0.3 = only when conf < 0.2 or > 0.8)")
+		nnSmoothS       = flag.Float64("nn-smooth", 10, "rolling-mean window (s, total) on NN confidences before blending. 0 = off. Single-frame backbone is noisy; 10s smoothing gives clean block boundaries.")
+		logoSmoothS     = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
@@ -136,6 +146,20 @@ func main() {
 		silenceCh <- silenceResult{events: ev, err: err}
 	}()
 
+	// I-frame timestamps: tiny ffprobe call, runs alongside the
+	// heavy decode so it costs zero wall-time. Used by the block-
+	// formation step to snap refined boundaries to actual encoder
+	// cuts (commercial inserts always align with I-frames).
+	type iframeResult struct {
+		times []float64
+		err   error
+	}
+	iframeCh := make(chan iframeResult, 1)
+	go func() {
+		t, err := signals.IFrameTimes(ctx, input)
+		iframeCh <- iframeResult{times: t, err: err}
+	}()
+
 	// Resolve NN head path if backbone is set but head wasn't passed.
 	if *nnBackbone != "" && *nnHead == "" {
 		*nnHead = filepath.Join(filepath.Dir(*nnBackbone), "head.bin")
@@ -157,6 +181,7 @@ func main() {
 		LogoTemplate:   tmpl,
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
+		NNChannelSlug:  *nnChannelSlug,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)
@@ -167,6 +192,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "silence:", sil.err)
 		os.Exit(1)
 	}
+	ifr := <-iframeCh
+	if ifr.err != nil && !*quiet {
+		// Soft failure: fall through with no I-frames; block formation
+		// just skips the I-frame snap step.
+		fmt.Fprintln(os.Stderr, "iframes:", ifr.err)
+	}
+	res.IFrames = ifr.times
 	elapsed := time.Since(t0).Seconds()
 	if !*quiet {
 		fmt.Fprintf(os.Stderr,
@@ -219,7 +251,17 @@ func main() {
 		LogoThreshold:    *logoThreshold,
 		RefineWindowS:    *refineWindowS,
 		NNWeight:         *nnWeight,
-	}, res.LogoConfs, res.NNConfs, res.Blackframes, sil.events, res.FrameCount)
+		NNGate:           *nnGate,
+		NNSmoothS:        *nnSmoothS,
+		LogoSmoothS:      *logoSmoothS,
+		MaxAdGapS:        *maxAdGapSec,
+		StartExtendS:     *startExtendS,
+		EndExtendS:       *endExtendS,
+		IFrameSnapS:      *iframeSnapS,
+		LogoCrossRefineS: *logoCrossS,
+		SceneCutSnapS:    *sceneCutSnapS,
+	}, res.LogoConfs, res.NNConfs, res.Blackframes, sil.events,
+		res.SceneCuts, res.IFrames, res.FrameCount)
 
 	switch *output {
 	case "summary":

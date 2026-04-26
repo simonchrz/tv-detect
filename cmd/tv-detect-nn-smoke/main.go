@@ -32,7 +32,7 @@ func main() {
 	}
 	defer d.Close()
 
-	nn, err := signals.NewNNDetector(*backbone, *head, d.Width, d.Height)
+	nn, err := signals.NewNNDetector(*backbone, *head, d.Width, d.Height, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nn init:", err)
 		os.Exit(1)
@@ -43,7 +43,7 @@ func main() {
 	count := 0
 	sum := 0.0
 	for f := range d.Frames() {
-		c := nn.Confidence(f.Pixels)
+		c := nn.Confidence(f.Pixels, 0.5) // smoke tool has no logo signal — pass neutral 0.5
 		sum += c
 		count++
 		if count%500 == 0 {

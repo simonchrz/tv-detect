@@ -25,19 +25,40 @@ type NNDetector struct {
 	frameH    int
 	headPath  string
 
-	mu         sync.RWMutex
-	headW      []float32 // 1280 weights
-	headBias   float32
-	headMtime  int64 // last mtime; reload when it changes
-	headLoaded bool
+	mu          sync.RWMutex
+	headW       []float32 // 1280 / 1281 / 1286 / 1287 depending on format
+	headBias    float32
+	headMtime   int64 // last mtime; reload when it changes
+	headLoaded  bool
+	headWithLogo bool // true → weights[1280] = logo-conf coefficient
+	headWithChan bool // true → weights[1280+(0|1) .. +6) = channel one-hot
+
+	channelIdx int  // index into nnChannels for our recording, or -1
 }
 
 // Backbone tensor shape: (1, 3, 224, 224). Output: (1, 1280).
+//
+// Four head formats are supported, distinguished at load time by the
+// raw-bytes length of head.bin. Weights are little-endian float32
+// packed back-to-back, followed by a single float32 bias.
+//
+//   - LEGACY                   (5124 B): backbone only, 1280 weights.
+//   - +LOGO                    (5128 B): backbone (1280) + logo conf (1).
+//   - +CHAN                    (5148 B): backbone (1280) + channel one-hot (6).
+//   - +LOGO+CHAN               (5152 B): backbone + logo + channel = 1287 weights.
+//
+// nnChannels MUST be appended-to-only — re-ordering or inserting
+// breaks every previously trained head. The Python trainer
+// (scripts/train-head.py) holds the same list verbatim.
 const (
-	nnInputW    = 224
-	nnInputH    = 224
-	nnFeatDim   = 1280
+	nnInputW  = 224
+	nnInputH  = 224
+	nnFeatDim = 1280 // backbone output size
 )
+
+var nnChannels = []string{
+	"kabel-eins", "prosieben", "rtl", "sat-1", "sixx", "vox",
+}
 
 // imagenet normalization (BT.601-ish luma is wrong; the backbone was
 // trained on ImageNet RGB normalized stats, so we have to match)
@@ -81,7 +102,11 @@ func initOrtRuntime() error {
 // The backbone's path also implicitly anchors any external-data
 // sidecar (PyTorch's exporter writes large weights to <name>.data;
 // onnxruntime resolves that automatically by location).
-func NewNNDetector(backbonePath, headPath string, frameW, frameH int) (*NNDetector, error) {
+//
+// channelSlug, if it matches one of nnChannels, contributes a
+// one-hot feature when the loaded head is a +CHAN format. Empty or
+// unknown slugs map to all-zero one-hot — the head's bias still fires.
+func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlug string) (*NNDetector, error) {
 	if err := initOrtRuntime(); err != nil {
 		return nil, fmt.Errorf("ort init: %w", err)
 	}
@@ -127,10 +152,18 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int) (*NNDetect
 		outT.Destroy()
 		return nil, fmt.Errorf("session: %w", err)
 	}
+	chanIdx := -1
+	for i, s := range nnChannels {
+		if s == channelSlug {
+			chanIdx = i
+			break
+		}
+	}
 	d := &NNDetector{
 		session: sess, inTensor: inT, outTensor: outT,
 		frameW: frameW, frameH: frameH,
-		headPath: headPath,
+		headPath:   headPath,
+		channelIdx: chanIdx,
 	}
 	if err := d.reloadHead(); err != nil {
 		// Head missing is not fatal — the detector returns 0.5 (no
@@ -160,22 +193,43 @@ func (d *NNDetector) reloadHead() error {
 	if err != nil {
 		return err
 	}
-	wantBytes := (nnFeatDim + 1) * 4
-	if len(raw) != wantBytes {
-		return fmt.Errorf("head file size %d, expected %d (1280 weights + 1 bias × 4 bytes)",
-			len(raw), wantBytes)
+	// Auto-detect head format by raw size. Four shapes possible —
+	// see nnChannels comment block for the layout matrix.
+	nC := len(nnChannels)
+	legacyBytes  := (nnFeatDim + 1) * 4              // 5124
+	withLogoBytes := (nnFeatDim + 1 + 1) * 4          // 5128
+	withChanBytes := (nnFeatDim + nC + 1) * 4         // 5148
+	withBothBytes := (nnFeatDim + 1 + nC + 1) * 4     // 5152
+	var headDim int
+	var withLogo, withChan bool
+	switch len(raw) {
+	case legacyBytes:
+		headDim = nnFeatDim
+	case withLogoBytes:
+		headDim, withLogo = nnFeatDim+1, true
+	case withChanBytes:
+		headDim, withChan = nnFeatDim+nC, true
+	case withBothBytes:
+		headDim, withLogo, withChan = nnFeatDim+1+nC, true, true
+	default:
+		return fmt.Errorf("head file size %d, expected %d/%d/%d/%d "+
+			"(legacy / +logo / +chan / +logo+chan)",
+			len(raw), legacyBytes, withLogoBytes,
+			withChanBytes, withBothBytes)
 	}
-	weights := make([]float32, nnFeatDim)
-	for i := 0; i < nnFeatDim; i++ {
+	weights := make([]float32, headDim)
+	for i := 0; i < headDim; i++ {
 		weights[i] = floatLE(raw[i*4:])
 	}
-	bias := floatLE(raw[nnFeatDim*4:])
+	bias := floatLE(raw[headDim*4:])
 
 	d.mu.Lock()
 	d.headW = weights
 	d.headBias = bias
 	d.headMtime = mtime
 	d.headLoaded = true
+	d.headWithLogo = withLogo
+	d.headWithChan = withChan
 	d.mu.Unlock()
 	return nil
 }
@@ -202,7 +256,13 @@ func (d *NNDetector) MaybeReloadHead() {
 // pixels is row-major rgb24 of length 3*frameW*frameH. Internally we
 // resize to 224x224 by bilinear sampling (cheap pure-Go code) and
 // normalize with ImageNet mean/std before the backbone forward pass.
-func (d *NNDetector) Confidence(pixels []byte) float64 {
+//
+// logoConf is the logo-template match confidence for the same frame
+// (0..1). When the loaded head is a "with-logo" head (1281 weights),
+// this is used as the 1281st input feature so the head can learn
+// per-pattern logo trust. For a legacy 1280-weight head, logoConf is
+// silently ignored — caller can still blend externally via NNWeight.
+func (d *NNDetector) Confidence(pixels []byte, logoConf float64) float64 {
 	preprocess(pixels, d.frameW, d.frameH, d.inTensor.GetData())
 	if err := d.session.Run(); err != nil {
 		return 0.5
@@ -216,6 +276,17 @@ func (d *NNDetector) Confidence(pixels []byte) float64 {
 	logit := d.headBias
 	for i := 0; i < nnFeatDim; i++ {
 		logit += d.headW[i] * feats[i]
+	}
+	chanBase := nnFeatDim
+	if d.headWithLogo {
+		logit += d.headW[nnFeatDim] * float32(logoConf)
+		chanBase = nnFeatDim + 1
+	}
+	if d.headWithChan && d.channelIdx >= 0 {
+		// Sparse one-hot: only the matching slot fires (= 1.0).
+		// Unknown slug → channelIdx = -1 → no channel contribution
+		// at all (effectively all-zero one-hot).
+		logit += d.headW[chanBase+d.channelIdx]
 	}
 	d.mu.RUnlock()
 	return sigmoid(logit)

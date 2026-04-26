@@ -26,6 +26,7 @@ type Opts struct {
 	LogoTemplate   *logotemplate.Template // nil = skip logo
 	NNBackbonePath string                 // "" = skip NN
 	NNHeadPath     string                 // ignored if backbone is empty
+	NNChannelSlug  string                 // for +CHAN heads — set the per-recording one-hot input
 }
 
 // Result is the merged output across all chunks.
@@ -36,6 +37,7 @@ type Result struct {
 	FrameCount  int // total frames processed (sum of chunk frame counts)
 	Blackframes []signals.BlackEvent
 	SceneCuts   []signals.SceneCut
+	IFrames     []float64 // ascending I-frame timestamps from ffprobe
 	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
 	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
 }
@@ -145,7 +147,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	}
 	var nn *signals.NNDetector
 	if opts.NNBackbonePath != "" {
-		nn, err = signals.NewNNDetector(opts.NNBackbonePath, opts.NNHeadPath, d.Width, d.Height)
+		nn, err = signals.NewNNDetector(opts.NNBackbonePath, opts.NNHeadPath, d.Width, d.Height, opts.NNChannelSlug)
 		if err != nil {
 			out.err = err
 			return out
@@ -157,11 +159,16 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	for f := range d.Frames() {
 		black.Push(f.Index, f.Pixels)
 		scene.Push(f.Index, f.Pixels)
+		// Compute logo conf first; the NN may consume it (with-logo
+		// head format passes the same per-frame logoConf as the 1281st
+		// input feature). For a legacy head it's silently ignored.
+		var logoConf float64 = 0.5
 		if logo != nil {
-			out.logoConfs = append(out.logoConfs, logo.Confidence(f.Pixels))
+			logoConf = logo.Confidence(f.Pixels)
+			out.logoConfs = append(out.logoConfs, logoConf)
 		}
 		if nn != nil {
-			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels))
+			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels, logoConf))
 		}
 		count++
 	}

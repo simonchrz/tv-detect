@@ -24,6 +24,14 @@ the architecture and HTTP-vs-SMB rationale.
   and mounts the Pi `tv` share at `~/mnt/pi-tv`. Required because
   Finder's auto-mount lands at `/Volumes/tv` which other scripts
   don't recognise; needed after every Pi reboot.
+- **`capture-bumper.py`** — captures one bumper-template frame from
+  an existing recording for the daemon's bumper-snap refinement.
+  Usage: `capture-bumper.py <uuid_prefix> <timestamp_s> [name]`.
+  Workflow: pause the player at a clean station-id frame, note the
+  displayed timestamp, run the script — channel slug is auto-derived,
+  PNG lands in `/mnt/nvme/tv/hls/.tvd-bumpers/<slug>/`, daemon picks
+  it up on the next detect job. Multiple per channel cover color
+  variants of the same animation (max IoU wins).
 
 ## Install
 
@@ -34,6 +42,7 @@ These files live here for version control; the runtime paths
 ln -sf $PWD/tv-thumbs-daemon.py ~/bin/tv-thumbs-daemon.py
 ln -sf $PWD/tv-train-head.sh    ~/bin/tv-train-head.sh
 ln -sf $PWD/mount-pi-tv.sh      ~/bin/mount-pi-tv.sh
+ln -sf $PWD/capture-bumper.py   ~/bin/capture-bumper.py
 ```
 
 The `~/Library/LaunchAgents/com.user.tv-thumbs-daemon.plist` agent

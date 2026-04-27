@@ -454,8 +454,11 @@ def process_detect(uuid):
     else:
         cmd += ["--auto-train", "5"]
     if bumper_paths:
+        # Snap radius 90s — empirically the model under-predicts ad-end
+        # by ~60-65s on RTL Spielfilm; 60 was JUST too tight to catch
+        # 3 of 4 JC bumpers. 90 catches all four cleanly.
         cmd += ["--bumper-templates", ",".join(bumper_paths),
-                "--bumper-snap", "60"]
+                "--bumper-snap", "90"]
         print(f"  detect {uuid[:8]}: {len(bumper_paths)} bumper "
               f"template(s) loaded for {slug}", flush=True)
     cmd += ["--output", "cutlist", src_url]

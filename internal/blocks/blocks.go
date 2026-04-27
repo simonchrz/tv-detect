@@ -33,6 +33,8 @@ type Opts struct {
 	MaxAdGapS        float64 // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this (default 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
 	StartExtendS     float64 // pull each block's StartS back by this many seconds. Channel-specific systematic correction: users on some channels (RTL) consistently shift block-starts earlier than auto-detected, suggesting tv-detect's logo-loss latency runs late at the head of an ad break. Set per-channel from boundary-drift feedback; capped at the previous block's end (or 0 for the first block) so blocks never overlap.
 	EndExtendS       float64 // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
+	BumperSnapS      float64 // post-refine snap each block END to the latest bumper-match peak (channel station-id card) within ±this seconds. 0 = off (default 10). Strongest single ad-end signal we have when a per-channel bumper template is loaded — unlike logo/scene-cut/I-frame refinement, this is a deterministic channel-specific marker, not statistical inference. Block STARTS are NOT snapped (bumpers mark ad→show transitions, not show→ad).
+	BumperThreshold  float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Only applied when BumperConfs is non-empty.
 	IFrameSnapS      float64 // post-refine snap each boundary to the nearest I-frame within ±this seconds. 0 = off (default 5). Real ad-inserts almost always align with encoder I-frames; snapping here gives sub-second precision regardless of how coarse the rough boundary was.
 	LogoCrossRefineS float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
 	SceneCutSnapS    float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
@@ -53,7 +55,8 @@ type Opts struct {
 // so NNWeight=0 reproduces the logo-only behaviour and NNWeight=1
 // makes the NN authoritative. Length of nnConf must match logoConf
 // (the pipeline guarantees this when both detectors run).
-func Form(opts Opts, logoConf, nnConf []float64, black []signals.BlackEvent,
+func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
+	black []signals.BlackEvent,
 	silence []signals.SilenceEvent, scenes []signals.SceneCut,
 	iFrames []float64, nFrames int) []Block {
 
@@ -210,6 +213,13 @@ func Form(opts Opts, logoConf, nnConf []float64, black []signals.BlackEvent,
 				logoConf, opts.LogoThreshold, opts.FPS, true)
 			endS = logoCrossingRefine(endS, opts.LogoCrossRefineS,
 				logoConf, opts.LogoThreshold, opts.FPS, false)
+		}
+		// Bumper snap is deterministic — overrides everything above for
+		// the END boundary when a high-confidence channel bumper sits
+		// nearby. Only END (bumper marks ad→show transition).
+		if opts.BumperSnapS > 0 && len(bumperConf) > 0 {
+			endS = snapToBumper(endS, bumperConf,
+				opts.FPS, opts.BumperSnapS, opts.BumperThreshold)
 		}
 		if endS-startS < opts.MinBlockS {
 			continue
@@ -428,6 +438,15 @@ func defaults(o *Opts) {
 	if o.MaxAdGapS <= 0 {
 		o.MaxAdGapS = 30
 	}
+	// BumperSnapS / BumperThreshold: only meaningful when the caller
+	// passed a non-empty bumperConf slice. Defaults are no-op safe (a
+	// zero-length conf slice short-circuits in snapToBumper).
+	if o.BumperSnapS <= 0 {
+		o.BumperSnapS = 10
+	}
+	if o.BumperThreshold <= 0 {
+		o.BumperThreshold = 0.85
+	}
 	// IFrameSnapS, LogoCrossRefineS, MaxAdGapS, *SmoothS all use
 	// "0 = off, positive = on" semantics. Production defaults live
 	// at the CLI flag declarations in cmd/tv-detect/main.go so test
@@ -568,6 +587,32 @@ func snapToSceneCut(t float64, scenes []signals.SceneCut, r float64) float64 {
 }
 
 // snapToIFrame returns the I-frame timestamp closest to t within ±r,
+// snapToBumper looks for the LATEST frame in [t-r, t+r] where the
+// bumper match score exceeds threshold and returns its position + 1
+// frame (= first show frame after the bumper). Bumpers span 2-3
+// seconds; we want the END of the bumper window, not the start of
+// the match. If no peak is found, returns t unchanged.
+func snapToBumper(t float64, bumperConf []float64, fps, r, threshold float64) float64 {
+	if len(bumperConf) == 0 || r <= 0 || fps <= 0 {
+		return t
+	}
+	iCenter := int(t * fps)
+	iLo := iCenter - int(r*fps)
+	iHi := iCenter + int(r*fps)
+	if iLo < 0 {
+		iLo = 0
+	}
+	if iHi >= len(bumperConf) {
+		iHi = len(bumperConf) - 1
+	}
+	for i := iHi; i >= iLo; i-- {
+		if bumperConf[i] > threshold {
+			return float64(i+1) / fps
+		}
+	}
+	return t
+}
+
 // or t unchanged if no I-frame falls inside the window. iFrames is
 // expected to be sorted ascending — caller responsibility.
 func snapToIFrame(t float64, iFrames []float64, r float64) float64 {

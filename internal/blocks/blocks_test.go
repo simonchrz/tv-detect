@@ -28,7 +28,7 @@ func TestFormBasicAdBlock(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 15000}, {22500, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
 	}
@@ -44,7 +44,7 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 630, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("30s gap should be filtered, got %+v", blocks)
 	}
@@ -65,7 +65,7 @@ func TestFormBoundaryRefineToBlackframe(t *testing.T) {
 		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, black, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, black, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}
@@ -110,6 +110,39 @@ func TestSnapToIFrame(t *testing.T) {
 			if !near(got, c.wantT, 1e-6) {
 				t.Errorf("snapToIFrame(%.1f, _, %.1f) = %.3f, want %.3f",
 					c.t, c.radius, got, c.wantT)
+			}
+		})
+	}
+}
+
+func TestSnapToBumper(t *testing.T) {
+	// 25 fps; bumper peaks 0.95 at frames 100..120 (= 4.0 .. 4.8 s),
+	// background at 0.10 elsewhere. snapToBumper should return the
+	// FIRST frame after the last peak: frame 121 / 25 = 4.84 s.
+	fps := 25.0
+	conf := make([]float64, 250)
+	for i := 100; i <= 120; i++ {
+		conf[i] = 0.95
+	}
+	cases := []struct {
+		name      string
+		t         float64
+		radius    float64
+		threshold float64
+		want      float64
+	}{
+		{"end inside bumper window", 4.5, 5, 0.85, 4.84},
+		{"end after bumper window", 6.0, 5, 0.85, 4.84},
+		{"end before bumper window", 3.0, 5, 0.85, 4.84},
+		{"radius too small — passthrough", 7.0, 0.5, 0.85, 7.0},
+		{"threshold too high — passthrough", 4.5, 5, 0.99, 4.5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := snapToBumper(c.t, conf, fps, c.radius, c.threshold)
+			if !near(got, c.want, 0.05) {
+				t.Errorf("snapToBumper(%.1f, _, %.1f, %.2f) = %.3f, want %.3f",
+					c.t, c.radius, c.threshold, got, c.want)
 			}
 		})
 	}
@@ -173,7 +206,7 @@ func TestStartEndExtendCappedToNeighbours(t *testing.T) {
 		StartExtendS: 50,
 		EndExtendS:   50,
 		MinBlockS:    50, // allow shorter blocks for the test
-	}, logo, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d", len(blocks))
 	}
@@ -200,7 +233,7 @@ func TestStartEndExtendCappedAtBoundaries(t *testing.T) {
 		StartExtendS: 60,
 		EndExtendS:   60,
 		MinBlockS:    50,
-	}, logo, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}

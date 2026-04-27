@@ -11,16 +11,17 @@ import (
 	"fmt"
 	"image"
 	_ "image/png"
+	"math/bits"
 	"os"
 )
 
 // BumperTemplate is one reference frame, pre-converted to a luma
-// binary mask matching the runtime frame size. Multiple templates per
-// channel cover color-variant animations.
+// binary mask packed into 64-bit words. Per-frame IoU then reduces
+// to ANDs + popcount, ~32× faster than per-bool iteration.
 type BumperTemplate struct {
-	Name      string
-	Mask      []bool // length = w*h
-	WhiteSet  int    // popcount(mask) — used for IoU denominator
+	Name     string
+	Mask     []uint64 // ceil(w*h / 64) words
+	WhiteSet int      // popcount(Mask) — IoU denominator
 }
 
 // BumperDetector matches one or more templates against per-frame
@@ -62,22 +63,21 @@ func (d *BumperDetector) Confidence(pixels []byte) float64 {
 	if d == nil || len(d.templates) == 0 {
 		return 0
 	}
-	frameMask := make([]bool, d.frameW*d.frameH)
+	nPx := d.frameW * d.frameH
+	nWords := (nPx + 63) / 64
+	frameMask := make([]uint64, nWords)
 	frameWhite := 0
-	for i := 0; i < d.frameW*d.frameH; i++ {
-		luma := lumaAt(pixels, i*3)
-		if luma > d.lumaTh {
-			frameMask[i] = true
+	for i := 0; i < nPx; i++ {
+		if lumaAt(pixels, i*3) > d.lumaTh {
+			frameMask[i>>6] |= 1 << uint(i&63)
 			frameWhite++
 		}
 	}
 	best := 0.0
 	for _, t := range d.templates {
 		inter := 0
-		for i, b := range t.Mask {
-			if b && frameMask[i] {
-				inter++
-			}
+		for i := 0; i < nWords; i++ {
+			inter += bits.OnesCount64(t.Mask[i] & frameMask[i])
 		}
 		union := t.WhiteSet + frameWhite - inter
 		if union == 0 {
@@ -106,7 +106,9 @@ func loadBumperTemplate(path string, frameW, frameH, lumaThresh int) (*BumperTem
 	}
 	srcB := img.Bounds()
 	srcW, srcH := srcB.Dx(), srcB.Dy()
-	mask := make([]bool, frameW*frameH)
+	nPx := frameW * frameH
+	nWords := (nPx + 63) / 64
+	mask := make([]uint64, nWords)
 	white := 0
 	for fy := 0; fy < frameH; fy++ {
 		sy := fy * srcH / frameH
@@ -117,7 +119,8 @@ func loadBumperTemplate(path string, frameW, frameH, lumaThresh int) (*BumperTem
 			r8, g8, b8 := int(r>>8), int(g>>8), int(b>>8)
 			luma := (77*r8 + 150*g8 + 29*b8) >> 8
 			if luma > lumaThresh {
-				mask[fy*frameW+fx] = true
+				idx := fy*frameW + fx
+				mask[idx>>6] |= 1 << uint(idx&63)
 				white++
 			}
 		}

@@ -245,6 +245,29 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   px² adaptive shrink in `autoTrainLogo` will keep the new bbox
   honest.
 
+- **Letterbox compensation via `--logo-y-offset N`.** Channels that
+  air a 16:9 movie in their 4:3 broadcast container (RTL on Spielfilm
+  blocks is the canonical case) put the logo at the same screen
+  position relative to the visible 16:9 area — which means it sits
+  N pixels DOWN in the 720x576 frame compared to non-letterboxed
+  programmes. Without compensation the comskip-trained template lands
+  in the top black bar, logoConf collapses to 0 throughout, and the
+  block detector reverts to NN-only with massive false-positive rate.
+  Symptom: a 2 h film produces 15+ ad blocks instead of the actual 5.
+
+  The Mac daemon (`~/bin/tv-thumbs-daemon.py`) computes the offset
+  per recording: `ffmpeg cropdetect` on a 5 s sample at the 60 s mark
+  → take the last `crop=...:Y` y-value → `offset = max(0, Y - 20)`.
+  The constant 20 is RTL-empirical: cropdetect finds the bar
+  boundary, but the channel logo overhangs ~20 px into what should
+  be visible content, so the bar y is too deep by that amount. Same
+  cropdetect pass runs in `train-head.py` so cached training features
+  match what inference produces (cache key bumped `-l1` → `-l2` to
+  invalidate pre-letterbox-aware features). The 20-px overhang may
+  not generalise to channels that don't air movies; revisit if
+  another channel ever ships letterboxed content with a different
+  logo position.
+
 - **Per-frame logo signal works since Phase 5+.** The edge detector
   (Sobel 3×3) and template parser (comskip-compatible header +
   `-/|/+/space` glyphs) match correctly. The confidence is the

@@ -29,7 +29,8 @@ parsers consume it unchanged.
 | 5 | Validation suite | ✅ 7/19 frame-perfect, 5/19 close, see [VALIDATION.md](VALIDATION.md) |
 | 6a | Mac launchd agent swap (tv-comskip.sh → tv-detect) | ✅ full swap, comskip not invoked, see [PHASE6.md](PHASE6.md) |
 | 6b | Pi container swap (hls-gateway/_rec_cskip_spawn) | ✅ |
-| 7  | NN evidence source via ONNX (`signals.NNDetector`) | 🟡 in progress, see [PHASE7.md](PHASE7.md) |
+| 7  | NN evidence source via ONNX (`signals.NNDetector`) | ✅ +LOGO head (1281 weights) deployed, blends with logo via `--nn-weight 0.3` |
+| 8  | Letterbox-aware logo matching (`--logo-y-offset N`) | ✅ daemon runs cropdetect, shifts template y-coords for 16:9-in-4:3 broadcasts |
 
 End-to-end output works once a per-channel template has been trained
 by `tv-detect-train-logo`. The cached comskip templates don't align
@@ -76,6 +77,13 @@ tv-detect --workers 4 --logo vox.logo.txt recording.ts
 
 # Cutlist output (comskip-compatible, line-delimited frame pairs).
 tv-detect --workers 4 --output cutlist --logo vox.logo.txt recording.ts
+
+# Letterbox-aware logo matching for 16:9 movies in 4:3 broadcast
+# containers (e.g. RTL Spielfilm). Shifts the logo template's y-coords
+# down by N px so the matcher hits the actual logo position inside the
+# visible content area, not the top black bar. The Mac daemon computes
+# N automatically via ffmpeg cropdetect; pass it manually for one-offs.
+tv-detect --workers 4 --logo rtl.logo.txt --logo-y-offset 60 recording.ts
 
 # Per-signal debug output (each independent of --output).
 tv-detect --emit-blackframes input.ts

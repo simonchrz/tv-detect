@@ -229,6 +229,53 @@ def extract_audio_rms_per_second(src, n_seconds, sample_rate=48000):
     return norm[:n_seconds]
 
 
+def extract_uniformity_per_second(src, n_seconds):
+    """Per-second luma spread (YHIGH-YLOW from ffmpeg signalstats),
+    normalised to 0..1. High spread = textured (typical show), low
+    spread = uniform (typical ad: text overlays, logo cards, branding
+    backgrounds). Comskip's `non_uniformity` in the same vein.
+
+    Why YHIGH-YLOW and not YMAX-YMIN: percentile-style spread is
+    immune to a single outlier pixel, full-range is dominated by
+    speculars/noise. signalstats has no YDEV/YSTDEV in the ffmpeg
+    builds we ship (build flags don't include it).
+
+    Returns (n_seconds,) float32 normalised so 0..200 spread → 0..1.
+    Falls back to a neutral 0.5 array on any failure."""
+    neutral = np.full(n_seconds, 0.5, dtype=np.float32)
+    try:
+        out = subprocess.run([
+            "ffmpeg", "-nostdin", "-nostats", "-loglevel", "info",
+            "-i", str(src),
+            "-vf", "fps=1,signalstats,metadata=mode=print:file=-",
+            "-an", "-f", "null", "-"
+        ], capture_output=True, text=True, timeout=900)
+    except (subprocess.TimeoutExpired, OSError):
+        return neutral
+    # signalstats prints two lines per frame we care about — pair them.
+    cur_low = cur_high = None
+    spreads = []
+    for line in out.stdout.splitlines():
+        if "lavfi.signalstats.YLOW=" in line:
+            try: cur_low = float(line.split("=", 1)[1].strip())
+            except ValueError: cur_low = None
+        elif "lavfi.signalstats.YHIGH=" in line:
+            try: cur_high = float(line.split("=", 1)[1].strip())
+            except ValueError: cur_high = None
+            if cur_low is not None and cur_high is not None:
+                spreads.append(cur_high - cur_low)
+                cur_low = cur_high = None
+    if not spreads:
+        return neutral
+    arr = np.array(spreads, dtype=np.float32)
+    norm = np.clip(arr / 200.0, 0.0, 1.0)
+    if len(norm) < n_seconds:
+        result = neutral.copy()
+        result[:len(norm)] = norm
+        return result
+    return norm[:n_seconds]
+
+
 # Keep in sync with the daemon's detect_letterbox_offset() in
 # ~/bin/tv-thumbs-daemon.py — both pipelines must apply the same
 # y-offset to a given recording, otherwise cached training features
@@ -584,10 +631,12 @@ def _worker_extract(args):
       logo conf        (1 col, if logo_path given)
       channel one-hot  (6 cols, if chan_slug given)
       audio rms        (1 col, if with_audio)
+      yamnet emb       (1024 cols, if with_yamnet)
+      uniformity       (1 col, if with_uniformity)
     Both Go inference and the cache key encoding rely on this exact
     order — keep concat operations in the same sequence."""
     (src, fps_extract, cache_path, logo_path, tv_detect_bin,
-     chan_slug, with_audio, with_yamnet) = args
+     chan_slug, with_audio, with_yamnet, with_uniformity) = args
     feats = featurize_recording(_WORKER_SESS, src, fps_extract)
     if logo_path:
         # Letterbox-aware: shift template y-coords down by N pixels for
@@ -611,6 +660,10 @@ def _worker_extract(args):
     if with_yamnet:
         yam = extract_audio_yamnet_per_second(src, n_seconds=feats.shape[0])
         feats = np.concatenate([feats, yam], axis=1)
+    if with_uniformity:
+        u = extract_uniformity_per_second(src, n_seconds=feats.shape[0])
+        feats = np.concatenate(
+            [feats, u.reshape(-1, 1).astype(np.float32)], axis=1)
     return cache_path, feats
 
 
@@ -758,6 +811,14 @@ def main():
                          "head grows to 2305 (with-logo) or 2304 "
                          "(audio-only). EXPERIMENTAL: Go inference "
                          "can't read this format — use --output /tmp/.")
+    ap.add_argument("--with-uniformity", action="store_true",
+                    help="append per-second luma std-dev (ffmpeg "
+                         "signalstats YDEV, mean per second, normalised "
+                         "to 0..1). Comskip's uniformity signal: ads "
+                         "tend to have uniform color blocks (text "
+                         "overlays, brand cards), shows are textured. "
+                         "1 extra input dim. EXPERIMENTAL: Go-side head "
+                         "loader needs new size before deploying.")
     ap.add_argument("--with-channel", action="store_true",
                     help="append a 6-dim sparse one-hot of the channel "
                          "(kabel-eins/prosieben/rtl/sat-1/sixx/vox) as "
@@ -966,6 +1027,7 @@ def main():
         if args.with_channel: suffix += "-c1"
         if args.with_audio:   suffix += "-a1"
         if args.with_yamnet:  suffix += "-y1"
+        if args.with_uniformity: suffix += "-u1"
         cache_path = cache_dir / f"{uuid}-{src_mt}-fps{int(args.fps_extract*100)}{suffix}.npy"
         slug = uuid_slug.get(uuid, "")
         rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
@@ -984,6 +1046,7 @@ def main():
         if args.with_channel: flags.append("chan")
         if args.with_audio: flags.append("audio")
         if args.with_yamnet: flags.append("yamnet")
+        if args.with_uniformity: flags.append("uniformity")
         flagstr = f" (+{'+'.join(flags)})" if flags else ""
         print(f"extracting {len(todo)} new recording(s) on {args.workers} workers{flagstr}...")
         t0 = time.time()
@@ -1005,7 +1068,8 @@ def main():
                     _worker_extract,
                     (src, args.fps_extract, str(cache_path),
                      logo_path, args.tv_detect, chan_slug,
-                     args.with_audio, args.with_yamnet))] = rec_info
+                     args.with_audio, args.with_yamnet,
+                     args.with_uniformity))] = rec_info
             done = 0
             for fut in cf.as_completed(future_map):
                 rec_info = future_map[fut]
@@ -1573,10 +1637,14 @@ def main():
         yamnet_cols = []
         if args.with_yamnet:
             yamnet_cols = list(range(col, col + 1024)); col += 1024
+        uniformity_col = -1
+        if args.with_uniformity:
+            uniformity_col = col; col += 1
 
-        # head_logo: visual signal — backbone + logo + channel
+        # head_logo: visual signal — backbone + logo + channel + uniformity
         logo_view_cols = backbone_cols + (
-            [logo_col] if logo_col >= 0 else []) + channel_cols
+            [logo_col] if logo_col >= 0 else []) + channel_cols + (
+            [uniformity_col] if uniformity_col >= 0 else [])
         # head_audio: acoustic signal — yamnet (if present) + rms +
         # channel. NO backbone (that's the visual view; including it
         # would defeat conditional-independence for co-training).

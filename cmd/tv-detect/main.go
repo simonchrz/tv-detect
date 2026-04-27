@@ -52,6 +52,8 @@ func main() {
 		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
 		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
+		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
+		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as channel-bumper reference frames (e.g. RTL's 'Mein RTL' end-of-ad-block card). All templates are matched per frame; max score wins. Color variants of the same animation should be added together.")
 		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
 		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
 		nnChannelSlug   = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
@@ -179,8 +181,9 @@ func main() {
 		DecodeHeight:   *decodeHeight,
 		BlackframeDurS: *blackframeDur,
 		SceneThreshold: *sceneThreshold,
-		LogoTemplate:   tmpl,
-		LogoYOffset:    *logoYOffset,
+		LogoTemplate:    tmpl,
+		LogoYOffset:     *logoYOffset,
+		BumperTemplates: parseBumperTemplates(*bumperTemplates),
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,
@@ -238,6 +241,12 @@ func main() {
 	if *emitLogoCSV {
 		fmt.Println("idx,time_s,confidence")
 		for i, c := range res.LogoConfs {
+			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
+		}
+	}
+	if *emitBumperCSV {
+		fmt.Println("idx,time_s,bumper_score")
+		for i, c := range res.BumperConfs {
 			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
 		}
 	}
@@ -402,6 +411,22 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 			note, cachedTo)
 	}
 	return tmpl, nil
+}
+
+// parseBumperTemplates splits a comma-separated paths list and drops
+// empty/whitespace entries. Returns nil for an empty/whitespace input
+// so the pipeline can skip the bumper detector entirely.
+func parseBumperTemplates(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

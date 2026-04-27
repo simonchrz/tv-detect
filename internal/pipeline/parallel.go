@@ -23,11 +23,12 @@ type Opts struct {
 	DecodeHeight   int     // 0 = native
 	BlackframeDurS float64
 	SceneThreshold float64
-	LogoTemplate   *logotemplate.Template // nil = skip logo
-	LogoYOffset    int                    // shift template y-coords by N pixels (letterbox correction)
-	NNBackbonePath string                 // "" = skip NN
-	NNHeadPath     string                 // ignored if backbone is empty
-	NNChannelSlug  string                 // for +CHAN heads — set the per-recording one-hot input
+	LogoTemplate    *logotemplate.Template // nil = skip logo
+	LogoYOffset     int                    // shift template y-coords by N pixels (letterbox correction)
+	BumperTemplates []string               // PNG paths; nil/empty = skip bumper detection
+	NNBackbonePath  string                 // "" = skip NN
+	NNHeadPath      string                 // ignored if backbone is empty
+	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
 }
 
 // Result is the merged output across all chunks.
@@ -41,6 +42,7 @@ type Result struct {
 	IFrames     []float64 // ascending I-frame timestamps from ffprobe
 	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
 	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
+	BumperConfs []float64 // per-frame max bumper match score, nil if no templates
 }
 
 // chunkPlan describes one worker's time-range slice.
@@ -59,6 +61,7 @@ type chunkRes struct {
 	sceneCuts   []signals.SceneCut
 	logoConfs   []float64
 	nnConfs     []float64
+	bumperConfs []float64
 	err         error
 }
 
@@ -103,7 +106,10 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
 
-	return merge(results, info, opts.LogoTemplate != nil, opts.NNBackbonePath != ""), nil
+	return merge(results, info,
+		opts.LogoTemplate != nil,
+		opts.NNBackbonePath != "",
+		len(opts.BumperTemplates) > 0), nil
 }
 
 func planChunks(totalS float64, workers int) []chunkPlan {
@@ -146,6 +152,14 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			return out
 		}
 	}
+	var bumper *signals.BumperDetector
+	if len(opts.BumperTemplates) > 0 {
+		bumper, err = signals.NewBumperDetector(opts.BumperTemplates, d.Width, d.Height, 0)
+		if err != nil {
+			out.err = err
+			return out
+		}
+	}
 	var nn *signals.NNDetector
 	if opts.NNBackbonePath != "" {
 		nn, err = signals.NewNNDetector(opts.NNBackbonePath, opts.NNHeadPath, d.Width, d.Height, opts.NNChannelSlug)
@@ -171,6 +185,9 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 		if nn != nil {
 			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels, logoConf))
 		}
+		if bumper != nil {
+			out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
+		}
 		count++
 	}
 	black.Finish()
@@ -189,7 +206,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 // chunk boundary are reunited; suspicious scene-cuts at the very
 // first frame of chunks 2..N are dropped (they're artifacts of the
 // decoder starting fresh, not real content changes).
-func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN bool) *Result {
+func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper bool) *Result {
 	r := &Result{
 		FPS:    info.FPS,
 		Width:  info.Width,
@@ -225,6 +242,9 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN bool) *Result {
 		}
 		if hasNN {
 			r.NNConfs = append(r.NNConfs, c.nnConfs...)
+		}
+		if hasBumper {
+			r.BumperConfs = append(r.BumperConfs, c.bumperConfs...)
 		}
 	}
 	// Reunite adjacent blackframes split across a chunk boundary.

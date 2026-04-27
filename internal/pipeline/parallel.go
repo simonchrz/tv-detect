@@ -24,6 +24,7 @@ type Opts struct {
 	BlackframeDurS float64
 	SceneThreshold float64
 	LogoTemplate   *logotemplate.Template // nil = skip logo
+	LogoYOffset    int                    // shift template y-coords by N pixels (letterbox correction)
 	NNBackbonePath string                 // "" = skip NN
 	NNHeadPath     string                 // ignored if backbone is empty
 	NNChannelSlug  string                 // for +CHAN heads — set the per-recording one-hot input
@@ -139,7 +140,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	scene := signals.NewSceneDetector(d.FPS, opts.SceneThreshold)
 	var logo *signals.LogoDetector
 	if opts.LogoTemplate != nil {
-		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, 0)
+		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, 0, opts.LogoYOffset)
 		if err != nil {
 			out.err = err
 			return out

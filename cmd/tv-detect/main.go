@@ -60,6 +60,7 @@ func main() {
 		nnSmoothS       = flag.Float64("nn-smooth", 10, "rolling-mean window (s, total) on NN confidences before blending. 0 = off. Single-frame backbone is noisy; 10s smoothing gives clean block boundaries.")
 		logoSmoothS     = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
+		logoYOffset     = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 	)
@@ -179,6 +180,7 @@ func main() {
 		BlackframeDurS: *blackframeDur,
 		SceneThreshold: *sceneThreshold,
 		LogoTemplate:   tmpl,
+		LogoYOffset:    *logoYOffset,
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,

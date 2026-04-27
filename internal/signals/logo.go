@@ -25,31 +25,37 @@ const defaultEdgeThresh = 80
 // stays within frameW. We range-check rather than fail outright so a
 // trimmed/cropped frame just under-counts gracefully.
 type LogoDetector struct {
-	tmpl   *logotemplate.Template
-	frameW int
-	frameH int
-	edgeTh int
-	stride int
+	tmpl    *logotemplate.Template
+	frameW  int
+	frameH  int
+	edgeTh  int
+	stride  int
+	yOffset int // shift template y-coords (= letterbox top-bar height)
 }
 
 // NewLogoDetector creates a detector for the given template + frame
-// dimensions. edgeThresh of 0 selects the default. Returns an error
-// only if the bounding box can't fit in the frame at all.
-func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh int) (*LogoDetector, error) {
-	if tmpl.MaxX > frameW || tmpl.MaxY > frameH {
+// dimensions. edgeThresh of 0 selects the default. yOffset shifts
+// the template's Y coordinates downward (positive) — used when the
+// channel airs a 16:9 program in a 4:3 broadcast container with
+// letterbox bars: the template was trained against the full frame,
+// but the actual logo appears further down in the visible area.
+// Returns an error only if the bounding box can't fit in the frame.
+func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yOffset int) (*LogoDetector, error) {
+	if tmpl.MaxX > frameW || tmpl.MaxY+yOffset > frameH {
 		return nil, fmt.Errorf(
-			"logo bbox (%d,%d)-(%d,%d) doesn't fit in %dx%d frame",
-			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, frameW, frameH)
+			"logo bbox (%d,%d)-(%d,%d) +yOffset=%d doesn't fit in %dx%d frame",
+			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, yOffset, frameW, frameH)
 	}
 	if edgeThresh <= 0 {
 		edgeThresh = defaultEdgeThresh
 	}
 	return &LogoDetector{
-		tmpl:   tmpl,
-		frameW: frameW,
-		frameH: frameH,
-		edgeTh: edgeThresh,
-		stride: 3 * frameW,
+		tmpl:    tmpl,
+		frameW:  frameW,
+		frameH:  frameH,
+		edgeTh:  edgeThresh,
+		stride:  3 * frameW,
+		yOffset: yOffset,
 	}, nil
 }
 
@@ -61,7 +67,7 @@ func (d *LogoDetector) Confidence(pixels []byte) float64 {
 	x0, y0 := d.tmpl.MinX, d.tmpl.MinY
 	matches := 0
 	for ry := 0; ry < h; ry++ {
-		fy := y0 + ry
+		fy := y0 + ry + d.yOffset
 		if fy <= 0 || fy >= d.frameH-1 {
 			continue // need fy-1 and fy+1 for the Sobel kernel
 		}

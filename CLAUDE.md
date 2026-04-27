@@ -181,6 +181,22 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
     sub-frame timestamp where logoConf crosses LogoThreshold.
     40 ms precision, free (re-uses the per-frame logo signal).
 
+- **`scripts/model-anchor.sh`**: off-Pi semantic snapshots of the
+  trained model. `create <name>` bundles `head.bin`, `backbone.onnx`,
+  `head.history.json` from `~/mnt/pi-tv/hls/.tvd-models/` (auto-
+  detected; falls back to scp-from-Pi if SMB is dead) into a
+  GitHub release tagged `model-anchor-<name>`. Notes auto-include
+  Block-IoU, Acc, n recs from the latest history entry plus a
+  free-text `--notes` block. `install <name>` restores any anchor
+  in one command (existing files saved as `*.bak.<ts>`); tv-detect
+  picks up `head.bin` via the existing mtime watch, no restart.
+
+  Use anchors at semantic milestones (letterbox fix, IoU
+  thresholds, dataset-size jumps), NOT for every nightly retrain
+  — the rolling `archive/head.<unix-ts>.bin` already covers that.
+  First anchor: `letterbox-fix-2026-04-27` (post-cropdetect, IoU
+  0.73 / Acc 96 %).
+
 - **`scripts/bumper-detect.py`**: ffmpeg `blackdetect ∩
   silencedetect` helper. Outputs `_rec_*/bumpers.json` with
   proximity-matched (gap ≤ 1.5 s, NOT strict intersection — privates

@@ -1155,10 +1155,18 @@ def main():
     # predict on their features) are excluded from train AND test —
     # they have nothing to validate against.
     def _is_bootstrap(r): return len(r) > 12 and r[12]
+    def _is_pseudo(r): return len(r) > 11 and r[11]
     train_recs = [r for r in per_rec
                   if not _is_test(r[0]) and not _is_bootstrap(r)]
+    # Pseudo-labelled recordings are excluded from the test set:
+    # eval against pseudo-labels is circular (model graded against its
+    # own predictions), and the gaps between pseudo-labelled frames
+    # default to label=0 which produces false-positive misses where
+    # the model predicts ad for a "no-opinion" frame. Train-side they
+    # contribute frames via frame_mask filtering at lower weight.
     test_recs  = [r for r in per_rec
-                  if _is_test(r[0]) and not _is_bootstrap(r)]
+                  if _is_test(r[0]) and not _is_bootstrap(r)
+                                    and not _is_pseudo(r)]
 
     # Label-hygiene pass (Stufe 2): use the existing head.bin as a
     # teacher to drop frames where labels and teacher strongly

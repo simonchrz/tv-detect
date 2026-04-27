@@ -229,7 +229,37 @@ def extract_audio_rms_per_second(src, n_seconds, sample_rate=48000):
     return norm[:n_seconds]
 
 
-def extract_logo_per_second(src, logo_path, n_seconds, tv_detect):
+# Keep in sync with the daemon's detect_letterbox_offset() in
+# ~/bin/tv-thumbs-daemon.py — both pipelines must apply the same
+# y-offset to a given recording, otherwise cached training features
+# (logoConf=0 in the black bar) won't match Mac-side inference values
+# (logoConf>0 with offset applied).
+LETTERBOX_LOGO_OVERHANG = 20
+
+
+def detect_letterbox_offset(src):
+    """Return recommended --logo-y-offset for `src`, or 0 if no
+    meaningful letterbox. Runs a 5s cropdetect pass at the 60s mark
+    (skips intros/promos)."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "info",
+             "-ss", "60", "-t", "5", "-i", str(src),
+             "-vf", "cropdetect=24:16:0",
+             "-an", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120)
+    except Exception:
+        return 0
+    ys = re.findall(r"crop=\d+:\d+:\d+:(\d+)", r.stderr)
+    if not ys:
+        return 0
+    y = int(ys[-1])
+    if y < 8:
+        return 0
+    return max(0, y - LETTERBOX_LOGO_OVERHANG)
+
+
+def extract_logo_per_second(src, logo_path, n_seconds, tv_detect, y_offset=0):
     """Run tv-detect --emit-logo-csv against `src` with `logo_path` as
     the channel template, then downsample the per-frame confidences
     to one value per second by mean. Returns a (n_seconds,) float32
@@ -243,11 +273,13 @@ def extract_logo_per_second(src, logo_path, n_seconds, tv_detect):
     neutral = np.full(n_seconds, 0.5, dtype=np.float32)
     if not logo_path or not Path(logo_path).exists():
         return neutral
+    cmd = [tv_detect, "--quiet", "--workers", "4",
+           "--logo", str(logo_path)]
+    if y_offset > 0:
+        cmd += ["--logo-y-offset", str(y_offset)]
+    cmd += ["--emit-logo-csv", str(src)]
     try:
-        out = subprocess.run(
-            [tv_detect, "--quiet", "--workers", "4",
-             "--logo", str(logo_path), "--emit-logo-csv", str(src)],
-            capture_output=True, text=True, timeout=900)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except (subprocess.TimeoutExpired, OSError):
         return neutral
     if out.returncode != 0:
@@ -558,9 +590,15 @@ def _worker_extract(args):
      chan_slug, with_audio, with_yamnet) = args
     feats = featurize_recording(_WORKER_SESS, src, fps_extract)
     if logo_path:
+        # Letterbox-aware: shift template y-coords down by N pixels for
+        # 16:9-in-4:3 broadcasts. Without this, cached features for
+        # affected recordings have logoConf=0 throughout, while Mac-side
+        # inference now gets non-zero values — model trained on stale
+        # features would mispredict at inference time.
+        y_off = detect_letterbox_offset(src)
         logo_arr = extract_logo_per_second(
             src, logo_path, n_seconds=feats.shape[0],
-            tv_detect=tv_detect_bin)
+            tv_detect=tv_detect_bin, y_offset=y_off)
         feats = np.concatenate(
             [feats, logo_arr.reshape(-1, 1).astype(np.float32)], axis=1)
     if chan_slug:
@@ -921,7 +959,10 @@ def main():
         # rebuild for the affected entries (old caches stay on disk but
         # become unused).
         suffix = ""
-        if args.with_logo:    suffix += "-l1"
+        # -l2 bumps -l1: l2 applies a per-recording cropdetect-derived
+        # y-offset to the logo template (letterbox compensation), so
+        # cached logoConf values differ from the unshifted -l1 era.
+        if args.with_logo:    suffix += "-l2"
         if args.with_channel: suffix += "-c1"
         if args.with_audio:   suffix += "-a1"
         if args.with_yamnet:  suffix += "-y1"

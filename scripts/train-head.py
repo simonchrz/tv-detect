@@ -1069,6 +1069,22 @@ def main():
                         confirmed_show, confirmed_ad_skips, rec_age_days,
                         bumpers, frame_mask, which == "pseudo",
                         is_bootstrap))
+    # Right-pad all per_rec feature matrices to the widest column count
+    # we have. Cached .npy files from older runs (extracted before
+    # the slug→logo lookup landed) can be 1 column narrower than the
+    # current full-feature pipeline. Padding with neutral 0.5 keeps
+    # train/eval/concat happy without forcing a full re-extraction
+    # of every old recording.
+    if per_rec:
+        target_dim = max(r[3].shape[1] for r in per_rec)
+        for i, r in enumerate(per_rec):
+            f = r[3]
+            if f.shape[1] < target_dim:
+                pad = np.full((f.shape[0], target_dim - f.shape[1]),
+                              0.5, dtype=f.dtype)
+                f = np.concatenate([f, pad], axis=1)
+                per_rec[i] = (r[0], r[1], r[2], f, r[4], r[5],
+                              r[6], r[7], r[8], r[9], r[10], r[11], r[12])
     if dropped_high:
         print(f"hygiene: dropped {len(dropped_high)} recording(s) with "
               f"ad-rate > {args.max_ad_rate*100:.0f}% "
@@ -1436,6 +1452,20 @@ def main():
                     if not matching:
                         n_skipped += 1; continue
                     feats = matching[0][3]
+                    # Defensive pad: bootstrap recordings extracted
+                    # without a known channel slug skip the optional
+                    # feature columns (logo / channel / audio), so
+                    # their cached array can be narrower than what
+                    # clf was fit on. Right-pad with neutral 0.5 so
+                    # predict_proba doesn't throw — neutral values
+                    # mean these recordings just don't contribute
+                    # the channel-specific signal but the rest works.
+                    expected_dim = clf.coef_.shape[1]
+                    if feats.shape[1] < expected_dim:
+                        pad = np.full(
+                            (feats.shape[0], expected_dim - feats.shape[1]),
+                            0.5, dtype=feats.dtype)
+                        feats = np.concatenate([feats, pad], axis=1)
                     proba = clf.predict_proba(feats)[:, 1]
                     n = len(proba)
                     prior_arr = np.array(minute_prior[slug])
@@ -1588,12 +1618,21 @@ def main():
     # it works; ship the full-data model).
     if args.final_on_all and test_recs:
         print("\nrefitting on all data for production head...")
-        X_all = np.concatenate([r[3] for r in per_rec])
-        y_all = np.concatenate([r[4] for r in per_rec])
+        # Bootstrap recordings (no slug at extract → optional feature
+        # columns absent) have narrower X than full-feature recordings
+        # → np.concatenate fails. Drop them from the final fit since
+        # they have no labels anyway (frame_mask=all-False).
+        target_dim = max(r[3].shape[1] for r in per_rec)
+        keep = [r for r in per_rec if r[3].shape[1] == target_dim
+                                    and not (len(r) > 12 and r[12])]
+        X_all = np.concatenate([r[3] for r in keep])
+        y_all = np.concatenate([r[4] for r in keep])
         clf = LogisticRegression(max_iter=2000, C=1.0, verbose=0)
         clf.fit(X_all, y_all)
         full_acc = (clf.predict(X_all) == y_all).mean()
-        print(f"full-data fit acc {full_acc*100:.1f}%")
+        print(f"full-data fit acc {full_acc*100:.1f}% "
+              f"({len(keep)}/{len(per_rec)} recs, "
+              f"{X_all.shape[0]} frames)")
     weights = clf.coef_.ravel().astype(np.float32)  # (1280,)
     bias = float(clf.intercept_[0])
 
@@ -1616,6 +1655,15 @@ def main():
         with open(out_path, "w") as f:
             f.write("# uuid\ttime_s\tprobability\ttitle\tsource\n")
             for uuid, title, ads, X, y, *_ in per_rec:
+                # Pad bootstrap recordings (no slug → no logo column
+                # at extract time) up to clf's expected dim so
+                # predict_proba doesn't throw. Same defensive pattern
+                # as the Phase B inference site below.
+                expected_dim = clf.coef_.shape[1]
+                if X.shape[1] < expected_dim:
+                    X = np.concatenate([X, np.full(
+                        (X.shape[0], expected_dim - X.shape[1]),
+                        0.5, dtype=X.dtype)], axis=1)
                 proba = clf.predict_proba(X)[:, 1]
                 unc = 1.0 - 2.0 * np.abs(proba - 0.5)
                 top_unc = set(np.argsort(-unc)[:n_unc].tolist())

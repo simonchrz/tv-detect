@@ -181,6 +181,48 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
     sub-frame timestamp where logoConf crosses LogoThreshold.
     40 ms precision, free (re-uses the per-frame logo signal).
 
+- **At N ≈ 50 train recordings the linear head is FEATURE-CEILED.**
+  Two new feature columns tested in 2026-04-27 (after the letterbox
+  fix lifted IoU 0.64 → 0.73), neither helped:
+
+  - `--with-yamnet` (1024-dim audio embedding): net +0.02 OVERALL IoU
+    but mixed per-show — HIMYM jumped 0.49 → 0.99, but Jungle Cruise
+    crashed 0.96 → 0.78, Wetzel 0.42 → 0.31. Test acc dropped 96 % →
+    89 %. Classic overfitting from too many features (1024) vs few
+    samples (~50 recs × ~3000 frames each, but per-recording labels
+    are highly correlated).
+  - `--with-uniformity` (1-dim luma spread): net **-0.04** OVERALL
+    IoU. Even with no overfitting risk (1 column!) the signal didn't
+    carry, AND the regularisation drift from the new column tanked
+    JC + Wetzel similarly to the YAMNet run.
+
+  The shared-pattern observation matters: **JC drops 0.96 → 0.78 in
+  BOTH runs regardless of which feature is added.** That's not the
+  feature — that's the L2 balance shifting once the head sees one
+  more column. The deployed boundary on JC is fragile and any
+  regularisation perturbation moves it. Lesson: at this dataset
+  size, "free" features that just add columns can hurt by changing
+  what the head focuses on, not by their own signal value.
+
+  → **Stop adding features until N ≥ 150 recordings.** Active
+  learning + nightly retrain grows the dataset passively. Revisit
+  feature engineering once the linear head has the headroom to
+  absorb additional dimensions without dropping known wins.
+
+- **DVB subtitles as a feature: dead path on this hardware.**
+  Investigated 2026-04-27 because broadcasters don't subtitle ads —
+  would have been a near-binary ad/show signal. ffprobe survey
+  showed 0 PES packets on the dvb_subtitle PID for 58 of 64
+  recordings (only 6 RTL recordings carry actual sub data, e.g.
+  Spielfilme; news/court/docu shows have an empty stream descriptor).
+  Root cause: FRITZ!Box 6690 Cable's SAT>IP-style server filters
+  subtitle PES packets at the gateway level (TS packets show up
+  with payload_unit_start=0 only). tvheadend has AVM quirks
+  hardcoded (`sd_fullmux_ok = 0`, `sd_pids_deladd = 0`) so no UI
+  workaround exists. Only fixes: separate USB DVB-C tuner, or
+  audio-based proxy (Whisper / VAD) — but YAMNet test showed audio
+  features don't beat the feature-ceiling problem above.
+
 - **`scripts/model-anchor.sh`**: off-Pi semantic snapshots of the
   trained model. `create <name>` bundles `head.bin`, `backbone.onnx`,
   `head.history.json` from `~/mnt/pi-tv/hls/.tvd-models/` (auto-

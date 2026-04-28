@@ -29,7 +29,17 @@ from pathlib import Path
 
 POLL_INTERVAL_S = 5
 TIMEOUT_S = 1800           # HLS-remux of 90-min recording can take ~30s
-GATEWAY = os.environ.get("GATEWAY", "https://raspberrypi5lan:8443")
+GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
+
+# Concurrency: how many detect jobs to run in parallel. Default 1 (legacy
+# sequential). Set DETECT_PARALLEL=3 to overlap downloads + decode + NN.
+# Each tv-detect run uses --workers (8 // DETECT_PARALLEL) CPU cores so
+# total per-job CPU stays bounded — a Mac with 8 perf cores running 3
+# parallel detects with 4 workers each is fine; the 8th core handles
+# Python + ffmpeg overhead. Memory bound: each detect carries ~1-2 GB
+# (ffmpeg decode buffers + NN backbone), so 3-parallel ≈ 4-6 GB peak.
+DETECT_PARALLEL = max(1, int(os.environ.get("DETECT_PARALLEL", "1")))
+TVD_WORKERS = max(2, 8 // DETECT_PARALLEL)
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
 TVD = os.path.expanduser("~/.local/bin/tv-detect")
@@ -49,6 +59,31 @@ MODEL_CACHE.mkdir(parents=True, exist_ok=True)
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 SOURCE_CACHE.mkdir(parents=True, exist_ok=True)
 SOURCE_CACHE_MAX_GB = int(os.environ.get("SOURCE_CACHE_MAX_GB", "60"))
+
+# Speaker-fingerprint orchestration (default OFF). When SPEAKER_ENABLE=1
+# the daemon runs three Python helpers around each detect:
+#   1. extract-speaker-embeddings.py — once per recording, ECAPA-TDNN
+#      embeddings cached as <uuid>.npz (~30KB-1MB per recording, never
+#      invalidated since audio doesn't change)
+#   2. update-show-centroid.py — rebuilt per show on every detect of an
+#      episode of that show (cheap once embeddings exist; sub-second)
+#   3. compute-speaker-confs.py — per-recording speaker.csv combining
+#      this recording's embeddings with the show centroid
+# tv-detect then runs with --speaker-csv + --speaker-weight.
+# Disabled by default until empirically validated to net-improve IoU.
+SPEAKER_ENABLE = os.environ.get("SPEAKER_ENABLE", "0") == "1"
+SPEAKER_WEIGHT = float(os.environ.get("SPEAKER_WEIGHT", "0.3"))
+EMB_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "embeddings"
+CENTROID_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "centroids"
+SPK_CSV_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "speaker-csv"
+if SPEAKER_ENABLE:
+    EMB_CACHE.mkdir(parents=True, exist_ok=True)
+    CENTROID_CACHE.mkdir(parents=True, exist_ok=True)
+    SPK_CSV_CACHE.mkdir(parents=True, exist_ok=True)
+SPEAKER_PYTHON = os.environ.get(
+    "SPEAKER_PYTHON",
+    "/Users/simon/ml/tv-classifier/.venv/bin/python")
+SPEAKER_SCRIPTS = Path("/Users/simon/src/tv-detect/scripts")
 
 
 def _maybe_evict_source_cache():
@@ -251,6 +286,12 @@ def process_recording(uuid, do_hls, do_thumbs):
             if vcodec in SAFE_VIDEO:
                 v_opts = ["-c:v", "copy"]
             else:
+                # libx264 ultrafast on M5 Pro encodes 90× realtime
+                # (a 90-min recording finalises in ~1 min wallclock)
+                # at the cost of bursting to ~8 cores. Tested
+                # h264_videotoolbox 2026-04 — 5× less CPU but 3× SLOWER
+                # wallclock. Wallclock wins for snappier "play-now"
+                # availability after recording ends.
                 v_opts = ["-vf",
                           "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1",
                           "-c:v", "libx264", "-preset", "ultrafast",
@@ -371,6 +412,93 @@ def detect_letterbox_offset(src):
     return max(0, y - LETTERBOX_LOGO_OVERHANG)
 
 
+def _slugify_show(title: str) -> str:
+    s = (title or "").lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    return s.strip("-")
+
+
+def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
+    """Three-step pre-detect: extract embeddings, update show centroid,
+    compute per-recording speaker.csv. Returns CSV path or None on any
+    failure (so the caller can fall through to non-speaker detect).
+
+    Cached aggressively: embeddings never re-extracted (audio doesn't
+    change), centroid + csv re-computed each call (sub-second once
+    embeddings exist) so newly user-edited episodes are picked up
+    without explicit invalidation.
+    """
+    if not SPEAKER_ENABLE:
+        return None
+    show_slug = _slugify_show(show_title)
+    if not show_slug:
+        return None
+    emb_path = EMB_CACHE / f"{uuid}.npz"
+    centroid_path = CENTROID_CACHE / f"{show_slug}.npz"
+    csv_path = SPK_CSV_CACHE / f"{uuid}.speaker.csv"
+
+    # 1) Extract embeddings (once per recording)
+    if not emb_path.exists():
+        print(f"  detect {uuid[:8]}: extracting speaker embeddings "
+              f"(~10-15min wallclock for 30min recording)", flush=True)
+        t0 = time.time()
+        try:
+            r = subprocess.run(
+                [SPEAKER_PYTHON,
+                 str(SPEAKER_SCRIPTS / "extract-speaker-embeddings.py"),
+                 src_path, str(emb_path)],
+                capture_output=True, text=True, timeout=2400)
+            if r.returncode != 0:
+                print(f"  detect {uuid[:8]}: embedding extract failed "
+                      f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
+                return None
+            print(f"  detect {uuid[:8]}: embeddings extracted in "
+                  f"{time.time()-t0:.0f}s", flush=True)
+        except Exception as e:
+            print(f"  detect {uuid[:8]}: embedding extract err: {e}",
+                  flush=True)
+            return None
+
+    # 2) Rebuild show centroid from all available episodes
+    try:
+        r = subprocess.run(
+            [SPEAKER_PYTHON,
+             str(SPEAKER_SCRIPTS / "update-show-centroid.py"),
+             show_slug, str(centroid_path),
+             "--embeddings-dir", str(EMB_CACHE),
+             "--gateway", GATEWAY,
+             "--show-title", show_title],
+            capture_output=True, text=True, timeout=120)
+        if r.returncode == 2:
+            # Insufficient data (no edited episodes yet) — expected for
+            # cold-start shows. Run detect without speaker.
+            return None
+        if r.returncode != 0:
+            print(f"  detect {uuid[:8]}: centroid build failed "
+                  f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
+            return None
+    except Exception as e:
+        print(f"  detect {uuid[:8]}: centroid build err: {e}", flush=True)
+        return None
+
+    # 3) Compute per-recording speaker.csv
+    try:
+        r = subprocess.run(
+            [SPEAKER_PYTHON,
+             str(SPEAKER_SCRIPTS / "compute-speaker-confs.py"),
+             str(emb_path), str(centroid_path), str(csv_path)],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            print(f"  detect {uuid[:8]}: speaker-csv compute failed "
+                  f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
+            return None
+    except Exception as e:
+        print(f"  detect {uuid[:8]}: speaker-csv err: {e}", flush=True)
+        return None
+
+    return csv_path
+
+
 def process_detect(uuid):
     """Run tv-detect on a recording (HTTP-streamed source) and POST
     the cutlist back. Always passes --nn-backbone + --nn-head + the
@@ -430,11 +558,20 @@ def process_detect(uuid):
             print(f"  detect {uuid[:8]}: bumper-list err: {e}",
                   flush=True)
 
-    cmd = [TVD, "--quiet", "--workers", "8",
+    cmd = [TVD, "--quiet", "--workers", str(TVD_WORKERS),
            "--nn-backbone", str(backbone_path),
            "--nn-head",     str(head_path),
            "--nn-weight",   "0.3",
-           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0)]
+           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),
+           # Letterbox-snap with 90s window catches the RTL "Werbung"-
+           # promo period that precedes the actual logo-loss: during
+           # 16:9-letterboxed RTL self-promos the small RTL badge keeps
+           # the logo signal "present" so the state machine opens the
+           # block 30-50 s late. Snapping to the EARLIEST letterbox
+           # onset within ±90 s rewinds the START to the true ad cut
+           # (validated on GZSZ: 1146→1099, user truth 1099.82).
+           # No-op on broadcasters that always air same aspect.
+           "--letterbox-snap", "90"]
     if cfg.get("start_extend_s", 0) > 0:
         cmd += ["--start-extend", str(cfg["start_extend_s"])]
     if cfg.get("end_extend_s", 0) > 0:
@@ -461,6 +598,20 @@ def process_detect(uuid):
                 "--bumper-snap", "90"]
         print(f"  detect {uuid[:8]}: {len(bumper_paths)} bumper "
               f"template(s) loaded for {slug}", flush=True)
+
+    # Speaker-fingerprint orchestration (only if SPEAKER_ENABLE=1).
+    # Three-step: extract embeddings → update show centroid → compute
+    # per-recording speaker.csv. Returns None on cold-start (no
+    # confirmed episodes yet) or any error — detect runs without speaker
+    # in those cases.
+    spk_csv = _ensure_speaker_artifacts(
+        uuid, src_url, cfg.get("show_title") or "")
+    if spk_csv:
+        cmd += ["--speaker-csv", str(spk_csv),
+                "--speaker-weight", str(SPEAKER_WEIGHT)]
+        print(f"  detect {uuid[:8]}: speaker fingerprint engaged "
+              f"(weight={SPEAKER_WEIGHT})", flush=True)
+
     cmd += ["--output", "cutlist", src_url]
 
     # tv-detect spawns ffprobe internally — give it a sane PATH that
@@ -495,6 +646,25 @@ def process_detect(uuid):
 def main():
     print(f"tv-thumbs-daemon (HTTP, thumbs+hls) started, "
           f"gateway={GATEWAY}", flush=True)
+    # Detect concurrency: in-flight set of UUIDs currently being processed
+    # by a worker thread. Avoids re-submitting the same recording on the
+    # next poll cycle while it's still in progress. HLS/thumbs jobs stay
+    # sequential (they're fast and contention-free).
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    detect_executor = ThreadPoolExecutor(max_workers=DETECT_PARALLEL)
+    detect_in_flight = set()
+    detect_lock = threading.Lock()
+
+    def _run_detect(uuid):
+        try:
+            process_detect(uuid)
+        except Exception as e:
+            print(f"  detect {uuid[:8]}: unhandled err: {e}", flush=True)
+        finally:
+            with detect_lock:
+                detect_in_flight.discard(uuid)
+
     cycle = 0
     while True:
         cycle += 1
@@ -512,9 +682,13 @@ def main():
                 print(f"  [cycle {cycle}] gateway unreachable: {e}",
                       flush=True)
             time.sleep(30); continue
-        if thumbs or hls or detect or cycle % 12 == 1:
+        with detect_lock:
+            in_flight_n = len(detect_in_flight)
+        if thumbs or hls or detect or in_flight_n or cycle % 12 == 1:
             print(f"  [cycle {cycle}] thumbs={len(thumbs)} "
-                  f"hls={len(hls)} detect={len(detect)}", flush=True)
+                  f"hls={len(hls)} detect={len(detect)} "
+                  f"in_flight={in_flight_n}/{DETECT_PARALLEL}",
+                  flush=True)
         thumb_uuids = {j["uuid"] for j in thumbs}
         hls_uuids = {j["uuid"] for j in hls}
         detect_uuids = {j["uuid"] for j in detect}
@@ -523,22 +697,38 @@ def main():
         cooled = {u for u, t in _failed_until.items() if t > now}
         for u in [u for u, t in _failed_until.items() if t <= now]:
             _failed_until.pop(u, None)
-        all_uuids = sorted((hls_uuids | thumb_uuids | detect_uuids) - cooled)
-        if cooled and (cycle % 12 == 1 or thumbs or hls or detect):
-            print(f"  [cycle {cycle}] skipping {len(cooled)} cooled uuid(s)",
-                  flush=True)
-        for uuid in all_uuids:
+
+        # Submit detect jobs to the pool until either the pool is full or
+        # the queue is exhausted. Each pool worker runs process_detect in
+        # parallel; tv-detect inside scales itself to TVD_WORKERS cores.
+        with detect_lock:
+            available = DETECT_PARALLEL - len(detect_in_flight)
+            already = set(detect_in_flight)
+        for j in detect:
+            if available <= 0:
+                break
+            uuid = j["uuid"]
+            if uuid in already or uuid in cooled:
+                continue
+            with detect_lock:
+                detect_in_flight.add(uuid)
+            print(f"  → {uuid[:8]} detect=True (parallel slot)", flush=True)
+            detect_executor.submit(_run_detect, uuid)
+            available -= 1
+
+        # HLS / thumbs stay sequential (cheap, doesn't benefit from parallel)
+        for uuid in sorted((hls_uuids | thumb_uuids) - cooled):
             do_hls = uuid in hls_uuids
             do_thumbs = uuid in thumb_uuids
-            do_detect = uuid in detect_uuids
-            print(f"  → {uuid[:8]} hls={do_hls} thumbs={do_thumbs} "
-                  f"detect={do_detect}", flush=True)
+            with detect_lock:
+                if uuid in detect_in_flight:
+                    continue  # let detect-thread own this uuid this cycle
+            print(f"  → {uuid[:8]} hls={do_hls} thumbs={do_thumbs}",
+                  flush=True)
             if do_hls or do_thumbs:
                 process_recording(uuid, do_hls, do_thumbs)
-            if do_detect:
-                process_detect(uuid)
-            if do_hls or do_detect:
-                break  # heavy work — yield to next cycle
+            if do_hls:
+                break
         time.sleep(POLL_INTERVAL_S)
 
 

@@ -44,6 +44,7 @@ type Result struct {
 	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
 	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
 	BumperConfs []float64 // per-frame max bumper match score, nil if no templates
+	Letterbox   []signals.LetterboxEvent
 }
 
 // chunkPlan describes one worker's time-range slice.
@@ -63,6 +64,7 @@ type chunkRes struct {
 	logoConfs   []float64
 	nnConfs     []float64
 	bumperConfs []float64
+	letterbox   []signals.LetterboxEvent
 	err         error
 }
 
@@ -145,6 +147,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 
 	black := signals.NewBlackDetector(d.FPS, opts.BlackframeDurS, 0, 0)
 	scene := signals.NewSceneDetector(d.FPS, opts.SceneThreshold)
+	letterbox := signals.NewLetterboxDetector(d.FPS, d.Width, d.Height, 0, 0)
 	var logo *signals.LogoDetector
 	if opts.LogoTemplate != nil {
 		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, 0, opts.LogoYOffset)
@@ -194,6 +197,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	for f := range d.Frames() {
 		black.Push(f.Index, f.Pixels)
 		scene.Push(f.Index, f.Pixels)
+		letterbox.Push(f.Index, f.Pixels)
 		// Compute logo conf first; the NN may consume it (with-logo
 		// head format passes the same per-frame logoConf as the 1281st
 		// input feature). For a legacy head it's silently ignored.
@@ -240,6 +244,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	out.frameCount = count
 	out.blackframes = black.Events()
 	out.sceneCuts = scene.Cuts()
+	out.letterbox = letterbox.Events()
 	return out
 }
 
@@ -293,6 +298,22 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper bool) 
 		}
 		if hasBumper {
 			r.BumperConfs = append(r.BumperConfs, c.bumperConfs...)
+		}
+		// Drop the very first letterbox event of chunks 2..N — the
+		// detector emits a state-confirmation as soon as it has seen
+		// `hysteresis` frames of consistent state, which is meaningless
+		// for a chunk that started mid-stream. (We don't know the prior
+		// chunk's letterbox state without crossing the boundary.)
+		lb := c.letterbox
+		if i > 0 && len(lb) > 0 && lb[0].Frame < int(0.6*info.FPS) {
+			lb = lb[1:]
+		}
+		for _, e := range lb {
+			r.Letterbox = append(r.Letterbox, signals.LetterboxEvent{
+				Frame: e.Frame,
+				TimeS: e.TimeS + c.startS,
+				Onset: e.Onset,
+			})
 		}
 	}
 	// Reunite adjacent blackframes split across a chunk boundary.

@@ -145,6 +145,19 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlu
 		outT.Destroy()
 		return nil, fmt.Errorf("set inter-op threads: %w", err)
 	}
+	// Enable CoreML execution provider on Apple Silicon (silently no-op on
+	// non-Mac builds). MLProgram format gets the most ops onto Apple Neural
+	// Engine + GPU; CPU provider remains as fallback for ops the EP can't
+	// execute. Disable via TVD_NO_COREML env if it ever causes issues.
+	if os.Getenv("TVD_NO_COREML") == "" {
+		coremlOpts := map[string]string{
+			"ModelFormat":     "MLProgram",
+			"MLComputeUnits":  "ALL",
+		}
+		// V2 takes a map[string]string; ignore error to fall through to
+		// CPU on platforms without the CoreML provider compiled in.
+		_ = opts.AppendExecutionProviderCoreMLV2(coremlOpts)
+	}
 	sess, err := ort.NewAdvancedSession(backbonePath,
 		[]string{"frame"}, []string{"features"},
 		[]ort.Value{inT}, []ort.Value{outT}, opts)

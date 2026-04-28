@@ -37,6 +37,7 @@ func main() {
 		iframeSnapS    = flag.Float64("iframe-snap", 5, "post-refine snap each boundary to the nearest I-frame within ±N seconds. 0 = off. Real ad-inserts always align with encoder I-frames.")
 		logoCrossS     = flag.Float64("logo-cross-refine", 2, "post-refine snap each boundary to the precise frame where logoConf crosses --logo-threshold within ±N seconds. 0 = off. Sub-frame precision (40 ms) using the existing 25-fps logo signal — no extra decode.")
 		sceneCutSnapS  = flag.Float64("scene-cut-snap", 0, "post-refine snap each boundary to the nearest hard scene cut within ±N seconds. 0 = off (default — empirical test showed regressions on some shows when the I-frame snap was authoritative for those broadcasters). Set 1.5 to enable.")
+		letterboxSnapS = flag.Float64("letterbox-snap", 5, "post-refine snap each boundary to the nearest letterbox transition (onset for START, offset for END) within ±N seconds. 0 = off. Geometric deterministic signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI/VOX). No-op when no letterbox transitions detected.")
 		minAbsentS     = flag.Float64("min-absent-open", 5, "seconds of continuous logo-absent before a candidate block opens (filters single-frame flickers in the show)")
 		refineWindowS  = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
 		logoThreshold  = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
@@ -51,6 +52,7 @@ func main() {
 		emitBlackframes = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout")
 		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
 		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
+		emitLetterbox   = flag.Bool("emit-letterbox", false, "print detected letterbox transitions (onset/offset) to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
 		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
 		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as channel-bumper reference frames (e.g. RTL's 'Mein RTL' end-of-ad-block card). All templates are matched per frame; max score wins. Color variants of the same animation should be added together.")
@@ -63,6 +65,8 @@ func main() {
 		nnWeight        = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
 		nnGate          = flag.Float64("nn-gate", 0.3, "ignore NN where |conf - 0.5| < this (0 = always use NN, 0.3 = only when conf < 0.2 or > 0.8)")
 		nnSmoothS       = flag.Float64("nn-smooth", 10, "rolling-mean window (s, total) on NN confidences before blending. 0 = off. Single-frame backbone is noisy; 10s smoothing gives clean block boundaries.")
+		speakerCSV      = flag.String("speaker-csv", "", "path to per-window speaker-fingerprint CSV (time_s,speaker_conf,has_speech) produced by scripts/compute-speaker-confs.py. Loaded once, expanded to per-frame, blended into the logo+NN show-likelihood score per --speaker-weight.")
+		speakerWeight   = flag.Float64("speaker-weight", 0, "blend weight of speaker-fingerprint evidence vs logo+NN (0 = off, 0.3 = strong but won't override confident logo+NN). Only effective when --speaker-csv is supplied.")
 		logoSmoothS     = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
 		logoYOffset     = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
@@ -242,6 +246,15 @@ func main() {
 			fmt.Printf("scene frame=%d t=%.3f dist=%.3f\n", c.Frame, c.TimeS, c.Distance)
 		}
 	}
+	if *emitLetterbox {
+		for _, e := range res.Letterbox {
+			kind := "offset"
+			if e.Onset {
+				kind = "onset"
+			}
+			fmt.Printf("letterbox %s frame=%d t=%.3f\n", kind, e.Frame, e.TimeS)
+		}
+	}
 	if *emitLogoCSV {
 		fmt.Println("idx,time_s,confidence")
 		for i, c := range res.LogoConfs {
@@ -252,6 +265,25 @@ func main() {
 		fmt.Println("idx,time_s,bumper_score")
 		for i, c := range res.BumperConfs {
 			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
+		}
+	}
+
+	// Optional speaker-fingerprint signal. Pre-computed offline by
+	// scripts/compute-speaker-confs.py from the recording's audio
+	// embeddings + a per-show centroid. Loaded once, expanded to a
+	// per-frame array, blended in blocks.Form when --speaker-weight > 0.
+	var speakerConfFrames []float64
+	if *speakerCSV != "" {
+		ws, err := signals.LoadSpeakerCSV(*speakerCSV)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "speaker-csv:", err)
+			os.Exit(1)
+		}
+		speakerConfFrames = signals.ExpandSpeakerToFrames(ws, res.FPS, res.FrameCount)
+		if !*quiet {
+			fmt.Fprintf(os.Stderr,
+				"speaker: %d windows loaded, %d frames expanded, weight=%.2f\n",
+				len(ws), len(speakerConfFrames), *speakerWeight)
 		}
 	}
 
@@ -277,8 +309,11 @@ func main() {
 		SceneCutSnapS:    *sceneCutSnapS,
 		BumperSnapS:      *bumperSnapS,
 		BumperThreshold:  *bumperThresh,
-	}, res.LogoConfs, res.NNConfs, res.BumperConfs, res.Blackframes, sil.events,
-		res.SceneCuts, res.IFrames, res.FrameCount)
+		LetterboxSnapS:   *letterboxSnapS,
+		SpeakerWeight:    *speakerWeight,
+	}, res.LogoConfs, res.NNConfs, res.BumperConfs, speakerConfFrames,
+		res.Blackframes, sil.events,
+		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
 
 	switch *output {
 	case "summary":

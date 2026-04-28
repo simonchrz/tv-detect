@@ -35,9 +35,11 @@ type Opts struct {
 	EndExtendS       float64 // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
 	BumperSnapS      float64 // post-refine snap each block END to the latest bumper-match peak (channel station-id card) within ±this seconds. 0 = off (default 10). Strongest single ad-end signal we have when a per-channel bumper template is loaded — unlike logo/scene-cut/I-frame refinement, this is a deterministic channel-specific marker, not statistical inference. Block STARTS are NOT snapped (bumpers mark ad→show transitions, not show→ad).
 	BumperThreshold  float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Only applied when BumperConfs is non-empty.
+	SpeakerWeight   float64  // 0..1 weight of speaker-fingerprint evidence vs logo+NN (default 0; pass --speaker-weight 0.3 to engage). When > 0 and SpeakerConfs is len(logoConf), per-frame "show-likelihood" is re-blended:  score = (1-SpeakerWeight)*old_score + SpeakerWeight*speaker — orthogonal signal to logo/NN/letterbox. Useful for shows with persistent recurring speakers (soap operas, court shows) where ad voice-overs are reliably distinct from the show's cast.
 	IFrameSnapS      float64 // post-refine snap each boundary to the nearest I-frame within ±this seconds. 0 = off (default 5). Real ad-inserts almost always align with encoder I-frames; snapping here gives sub-second precision regardless of how coarse the rough boundary was.
 	LogoCrossRefineS float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
 	SceneCutSnapS    float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
+	LetterboxSnapS   float64 // post-refine snap to the nearest letterbox transition (onset for START, offset for END) within ±this seconds. 0 = off (default 5). Deterministic geometric signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI) — overrides scene-cut/I-frame for the boundary it covers. No-op when LetterboxEvents is empty.
 }
 
 // Form combines per-frame logo confidences and (optionally) NN
@@ -55,9 +57,10 @@ type Opts struct {
 // so NNWeight=0 reproduces the logo-only behaviour and NNWeight=1
 // makes the NN authoritative. Length of nnConf must match logoConf
 // (the pipeline guarantees this when both detectors run).
-func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
+func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
 	black []signals.BlackEvent,
 	silence []signals.SilenceEvent, scenes []signals.SceneCut,
+	letterbox []signals.LetterboxEvent,
 	iFrames []float64, nFrames int) []Block {
 
 	defaults(&opts)
@@ -95,6 +98,7 @@ func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
 	wL := 1.0 - opts.NNWeight
 	wN := opts.NNWeight
 	gate := opts.NNGate
+	useSpeaker := opts.SpeakerWeight > 0 && len(speakerConf) == len(logoConf)
 	present := make([]bool, len(logoConf))
 	for i, c := range logoConf {
 		score := c
@@ -107,6 +111,17 @@ func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
 			if confident {
 				score = wL*c + wN*(1-nn)
 			}
+		}
+		// Speaker-fingerprint blend: ADDITIVE CENTERED nudge, not a
+		// re-weighted average. Speaker conf in [0,1] is centered around
+		// 0.5 (neutral = no info / non-speech / silence) so we subtract
+		// 0.5 before scaling — values > 0.5 boost present-likelihood
+		// (show-like voice), values < 0.5 reduce it (ad-like voice).
+		// Re-weighted average would BOOST every frame because (1+cos)/2
+		// is always > 0 for any non-opposite vectors, killing the
+		// state machine's ability to open blocks.
+		if useSpeaker {
+			score += opts.SpeakerWeight * (speakerConf[i] - 0.5)
 		}
 		present[i] = score >= opts.LogoThreshold
 	}
@@ -190,9 +205,9 @@ func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
 		startS := float64(r.startF) / opts.FPS
 		endS := float64(r.endF) / opts.FPS
 		startS = refineBoundaryVoting(startS, opts.RefineWindowS,
-			black, silence, scenes, true)
+			black, silence, scenes, letterbox, true)
 		endS = refineBoundaryVoting(endS, opts.RefineWindowS,
-			black, silence, scenes, false)
+			black, silence, scenes, letterbox, false)
 		if iFrameSnap > 0 && len(iFrames) > 0 {
 			startS = snapToIFrame(startS, iFrames, iFrameSnap)
 			endS = snapToIFrame(endS, iFrames, iFrameSnap)
@@ -207,6 +222,16 @@ func Form(opts Opts, logoConf, nnConf, bumperConf []float64,
 		if opts.SceneCutSnapS > 0 && len(scenes) > 0 {
 			startS = snapToSceneCut(startS, scenes, opts.SceneCutSnapS)
 			endS = snapToSceneCut(endS, scenes, opts.SceneCutSnapS)
+		}
+		// Letterbox snap is deterministic for 4:3-broadcasters airing
+		// 16:9 promos: an onset = programme→promo cut, offset =
+		// promo→programme. Runs after the scene-cut snap because
+		// letterbox transitions are channel-geometric (no luma/chroma
+		// dependence) and beat any scene-cut on broadcasters where it
+		// fires. No-op on broadcasters that always air same aspect.
+		if opts.LetterboxSnapS > 0 && len(letterbox) > 0 {
+			startS = snapToLetterbox(startS, letterbox, opts.LetterboxSnapS, true)
+			endS = snapToLetterbox(endS, letterbox, opts.LetterboxSnapS, false)
 		}
 		if opts.LogoCrossRefineS > 0 {
 			startS = logoCrossingRefine(startS, opts.LogoCrossRefineS,
@@ -447,6 +472,9 @@ func defaults(o *Opts) {
 	if o.BumperThreshold <= 0 {
 		o.BumperThreshold = 0.85
 	}
+	if o.LetterboxSnapS <= 0 {
+		o.LetterboxSnapS = 5
+	}
 	// IFrameSnapS, LogoCrossRefineS, MaxAdGapS, *SmoothS all use
 	// "0 = off, positive = on" semantics. Production defaults live
 	// at the CLI flag declarations in cmd/tv-detect/main.go so test
@@ -475,9 +503,11 @@ func abs(x float64) float64 {
 // few seconds before the cut); for ad-end it's BEFORE.
 func refineBoundaryVoting(roughS, radiusS float64,
 	black []signals.BlackEvent, silence []signals.SilenceEvent,
-	scenes []signals.SceneCut, isStart bool) float64 {
+	scenes []signals.SceneCut, letterbox []signals.LetterboxEvent,
+	isStart bool) float64 {
 	const backTolerance = 5.0
 	const wBlack = 2.0
+	const wLetter = 2.0 // deterministic geometric signal — same weight as blackframe
 	const wScene = 1.5
 	const wSilence = 1.0
 	const clusterRadius = 2.0
@@ -520,6 +550,18 @@ func refineBoundaryVoting(roughS, radiusS float64,
 	}
 	for _, c := range scenes {
 		add(c.TimeS, wScene)
+	}
+	for _, e := range letterbox {
+		// Onset = programme→promo (ad-start). Offset = promo→programme
+		// (ad-end). Wrong-direction events are filtered: their geometric
+		// meaning doesn't match the boundary type.
+		if isStart && !e.Onset {
+			continue
+		}
+		if !isStart && e.Onset {
+			continue
+		}
+		add(e.TimeS, wLetter)
 	}
 	if len(cands) == 0 {
 		return roughS
@@ -587,6 +629,56 @@ func snapToSceneCut(t float64, scenes []signals.SceneCut, r float64) float64 {
 }
 
 // snapToIFrame returns the I-frame timestamp closest to t within ±r,
+// snapToLetterbox snaps a boundary timestamp to the EARLIEST letterbox
+// onset (for START) or LATEST offset (for END) within the snap window.
+// Picking the extreme rather than the nearest catches the case where
+// the broadcast's RTL-branded Werbung-promo period (logo still visible
+// in the badge → state machine stays closed) actually started 30-50 s
+// before the rough boundary the state machine produced. The chain of
+// letterbox events between true ad-start and logo-loss collapses to a
+// single snap-target = the first letterbox onset.
+//
+// A small forward-tolerance (5 s) into the "wrong" direction is allowed
+// so that a letterbox event slightly past the rough boundary (typical
+// hysteresis lag) still matches.
+func snapToLetterbox(t float64, events []signals.LetterboxEvent, r float64, isStart bool) float64 {
+	if len(events) == 0 || r <= 0 {
+		return t
+	}
+	const fwdTolerance = 5.0
+	bestT := t
+	found := false
+	for _, e := range events {
+		if isStart && !e.Onset {
+			continue
+		}
+		if !isStart && e.Onset {
+			continue
+		}
+		d := e.TimeS - t // negative = before t
+		if isStart {
+			// Window: [t-r, t+fwdTolerance]. Pick EARLIEST.
+			if d < -r || d > fwdTolerance {
+				continue
+			}
+			if !found || e.TimeS < bestT {
+				bestT = e.TimeS
+				found = true
+			}
+		} else {
+			// Window: [t-fwdTolerance, t+r]. Pick LATEST.
+			if d < -fwdTolerance || d > r {
+				continue
+			}
+			if !found || e.TimeS > bestT {
+				bestT = e.TimeS
+				found = true
+			}
+		}
+	}
+	return bestT
+}
+
 // snapToBumper looks for the LATEST frame in [t-r, t+r] where the
 // bumper match score exceeds threshold and returns its position + 1
 // frame (= first show frame after the bumper). Bumpers span 2-3

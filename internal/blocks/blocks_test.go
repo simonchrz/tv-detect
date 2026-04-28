@@ -28,7 +28,7 @@ func TestFormBasicAdBlock(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 15000}, {22500, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
 	}
@@ -44,7 +44,7 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 630, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("30s gap should be filtered, got %+v", blocks)
 	}
@@ -65,7 +65,7 @@ func TestFormBoundaryRefineToBlackframe(t *testing.T) {
 		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, black, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, nil, black, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}
@@ -164,7 +164,7 @@ func TestRefineBoundaryVotingMultiSignalAgreement(t *testing.T) {
 		{TimeS: 100.0, Distance: 0.5},
 	}
 	// rough boundary 121s, isStart=false (so anchor preference is BACKWARD)
-	got := refineBoundaryVoting(121.0, 30.0, black, silence, scenes, false)
+	got := refineBoundaryVoting(121.0, 30.0, black, silence, scenes, nil, false)
 	if !near(got, 119.8, 0.6) && !near(got, 120.0, 0.6) && !near(got, 120.5, 0.6) {
 		t.Errorf("multi-signal cluster around t≈120 expected, got %.3f", got)
 	}
@@ -172,7 +172,7 @@ func TestRefineBoundaryVotingMultiSignalAgreement(t *testing.T) {
 
 func TestRefineBoundaryVotingFallthroughEmpty(t *testing.T) {
 	// No candidates at all → return roughS unchanged.
-	got := refineBoundaryVoting(500.0, 30, nil, nil, nil, true)
+	got := refineBoundaryVoting(500.0, 30, nil, nil, nil, nil, true)
 	if got != 500.0 {
 		t.Errorf("empty signals: want passthrough 500, got %.3f", got)
 	}
@@ -188,7 +188,7 @@ func TestRefineBoundaryVotingDirectionalPenalty(t *testing.T) {
 		{StartS: 100.0, EndS: 100.5}, // anchor for isStart = EndS = 100.5
 		{StartS: 110.0, EndS: 110.5}, // anchor = 110.5
 	}
-	got := refineBoundaryVoting(105.0, 30.0, black, nil, nil, true)
+	got := refineBoundaryVoting(105.0, 30.0, black, nil, nil, nil, true)
 	if !near(got, 110.5, 0.1) {
 		t.Errorf("forward bias for isStart: want ≈110.5, got %.3f", got)
 	}
@@ -206,7 +206,7 @@ func TestStartEndExtendCappedToNeighbours(t *testing.T) {
 		StartExtendS: 50,
 		EndExtendS:   50,
 		MinBlockS:    50, // allow shorter blocks for the test
-	}, logo, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d", len(blocks))
 	}
@@ -233,7 +233,7 @@ func TestStartEndExtendCappedAtBoundaries(t *testing.T) {
 		StartExtendS: 60,
 		EndExtendS:   60,
 		MinBlockS:    50,
-	}, logo, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}

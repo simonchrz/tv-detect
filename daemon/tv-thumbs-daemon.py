@@ -430,7 +430,7 @@ def process_detect(uuid):
             print(f"  detect {uuid[:8]}: bumper-list err: {e}",
                   flush=True)
 
-    cmd = [TVD, "--quiet", "--workers", "4",
+    cmd = [TVD, "--quiet", "--workers", "8",
            "--nn-backbone", str(backbone_path),
            "--nn-head",     str(head_path),
            "--nn-weight",   "0.3",

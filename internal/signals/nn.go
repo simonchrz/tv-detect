@@ -54,6 +54,7 @@ const (
 	nnInputW  = 224
 	nnInputH  = 224
 	nnFeatDim = 1280 // backbone output size
+	nnBatch   = 8    // frames per ONNX inference call. CoreML on M-series benefits from batched matmul; see ConfidenceBatch. Sub-batches are zero-padded.
 )
 
 var nnChannels = []string{
@@ -110,8 +111,8 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlu
 	if err := initOrtRuntime(); err != nil {
 		return nil, fmt.Errorf("ort init: %w", err)
 	}
-	inShape := ort.NewShape(1, 3, nnInputH, nnInputW)
-	outShape := ort.NewShape(1, nnFeatDim)
+	inShape := ort.NewShape(nnBatch, 3, nnInputH, nnInputW)
+	outShape := ort.NewShape(nnBatch, nnFeatDim)
 	inT, err := ort.NewEmptyTensor[float32](inShape)
 	if err != nil {
 		return nil, fmt.Errorf("input tensor: %w", err)
@@ -263,33 +264,77 @@ func (d *NNDetector) MaybeReloadHead() {
 // per-pattern logo trust. For a legacy 1280-weight head, logoConf is
 // silently ignored — caller can still blend externally via NNWeight.
 func (d *NNDetector) Confidence(pixels []byte, logoConf float64) float64 {
-	preprocess(pixels, d.frameW, d.frameH, d.inTensor.GetData())
-	if err := d.session.Run(); err != nil {
+	r := d.ConfidenceBatch([][]byte{pixels}, []float64{logoConf})
+	if len(r) == 0 {
 		return 0.5
+	}
+	return r[0]
+}
+
+// ConfidenceBatch runs ONNX inference on up to nnBatch frames in
+// one session.Run call (CoreML batches matmul efficiently on
+// M-series GPUs). The session was created with a fixed batch
+// dimension of nnBatch; partial batches are zero-padded and only
+// the first len(framesPixels) results are returned. Caller must
+// pass framesPixels and logoConfs of equal length, ≤ nnBatch.
+func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs []float64) []float64 {
+	n := len(framesPixels)
+	if n == 0 {
+		return nil
+	}
+	if n > nnBatch {
+		// Caller error — split into multiple calls upstream.
+		n = nnBatch
+		framesPixels = framesPixels[:nnBatch]
+		logoConfs = logoConfs[:nnBatch]
+	}
+	in := d.inTensor.GetData()
+	stride := 3 * nnInputH * nnInputW
+	for i := 0; i < n; i++ {
+		preprocess(framesPixels[i], d.frameW, d.frameH,
+			in[i*stride:(i+1)*stride])
+	}
+	// Zero-pad unused slots so leftover data from a previous call
+	// can't leak into this batch's results.
+	for i := n; i < nnBatch; i++ {
+		clear(in[i*stride : (i+1)*stride])
+	}
+	if err := d.session.Run(); err != nil {
+		out := make([]float64, n)
+		for i := range out {
+			out[i] = 0.5
+		}
+		return out
 	}
 	feats := d.outTensor.GetData()
 	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]float64, n)
 	if !d.headLoaded {
-		d.mu.RUnlock()
-		return 0.5
-	}
-	logit := d.headBias
-	for i := 0; i < nnFeatDim; i++ {
-		logit += d.headW[i] * feats[i]
+		for i := range out {
+			out[i] = 0.5
+		}
+		return out
 	}
 	chanBase := nnFeatDim
 	if d.headWithLogo {
-		logit += d.headW[nnFeatDim] * float32(logoConf)
 		chanBase = nnFeatDim + 1
 	}
-	if d.headWithChan && d.channelIdx >= 0 {
-		// Sparse one-hot: only the matching slot fires (= 1.0).
-		// Unknown slug → channelIdx = -1 → no channel contribution
-		// at all (effectively all-zero one-hot).
-		logit += d.headW[chanBase+d.channelIdx]
+	for i := 0; i < n; i++ {
+		logit := d.headBias
+		off := i * nnFeatDim
+		for j := 0; j < nnFeatDim; j++ {
+			logit += d.headW[j] * feats[off+j]
+		}
+		if d.headWithLogo {
+			logit += d.headW[nnFeatDim] * float32(logoConfs[i])
+		}
+		if d.headWithChan && d.channelIdx >= 0 {
+			logit += d.headW[chanBase+d.channelIdx]
+		}
+		out[i] = sigmoid(logit)
 	}
-	d.mu.RUnlock()
-	return sigmoid(logit)
+	return out
 }
 
 // Close releases ORT resources. Call when shutting down the

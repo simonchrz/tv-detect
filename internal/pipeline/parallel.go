@@ -172,6 +172,25 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	}
 
 	count := 0
+	// NN is the dominant per-frame cost — batch it. CoreML on M-series
+	// gets 2-4× throughput from batched matmul. We accumulate up to
+	// nnBatchSize frames + their logoConfs, run inference once, append
+	// confidences in order. Frame pixels must be COPIED into the buffer
+	// because the decoder reuses its slice for the next frame.
+	const nnBatchSize = 8
+	var (
+		nnPxBuf   [][]byte
+		nnLogoBuf []float64
+	)
+	flushNN := func() {
+		if nn == nil || len(nnPxBuf) == 0 {
+			return
+		}
+		out.nnConfs = append(out.nnConfs,
+			toNNConfs(nn.ConfidenceBatch(nnPxBuf, nnLogoBuf))...)
+		nnPxBuf = nnPxBuf[:0]
+		nnLogoBuf = nnLogoBuf[:0]
+	}
 	for f := range d.Frames() {
 		black.Push(f.Index, f.Pixels)
 		scene.Push(f.Index, f.Pixels)
@@ -184,7 +203,13 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			out.logoConfs = append(out.logoConfs, logoConf)
 		}
 		if nn != nil {
-			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels, logoConf))
+			pxCopy := make([]byte, len(f.Pixels))
+			copy(pxCopy, f.Pixels)
+			nnPxBuf = append(nnPxBuf, pxCopy)
+			nnLogoBuf = append(nnLogoBuf, logoConf)
+			if len(nnPxBuf) == nnBatchSize {
+				flushNN()
+			}
 		}
 		if bumper != nil {
 			// Subsample: stride>1 means we only compute bumper IoU on
@@ -206,6 +231,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 		}
 		count++
 	}
+	flushNN() // any tail frames waiting in the batch buffer
 	black.Finish()
 	if err := d.Err(); err != nil {
 		out.err = err
@@ -216,6 +242,12 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	out.sceneCuts = scene.Cuts()
 	return out
 }
+
+// toNNConfs is a small adapter — the NN detector returns []float64
+// already, but we keep this boundary so future detectors can return
+// other shapes (e.g. probability + uncertainty) without touching
+// every caller.
+func toNNConfs(in []float64) []float64 { return in }
 
 // merge stitches chunk-local results into full-file-timeline events
 // and a single logo-confidence array. Blackframe runs that span a

@@ -56,6 +56,7 @@ func main() {
 		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as channel-bumper reference frames (e.g. RTL's 'Mein RTL' end-of-ad-block card). All templates are matched per frame; max score wins. Color variants of the same animation should be added together.")
 		bumperSnapS     = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
 		bumperThresh    = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
+		bumperStride    = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
 		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
 		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
 		nnChannelSlug   = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
@@ -186,6 +187,7 @@ func main() {
 		LogoTemplate:    tmpl,
 		LogoYOffset:     *logoYOffset,
 		BumperTemplates: parseBumperTemplates(*bumperTemplates),
+		BumperStride:    *bumperStride,
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 )
 
 // Frame is one decoded video frame.
@@ -58,6 +59,15 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 	}
 
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
+	// VideoToolbox MPEG-2 / H.264 hardware decode on macOS is 5-10×
+	// faster than libavcodec software decode on M-series. Output still
+	// piped to user-space as rgb24 (we need pixel access), but the
+	// decode itself runs on the GPU's media engine. Linux containers
+	// fall through to software (would need v4l2m2m on the Pi which is
+	// flaky for MPEG-2). The flag must come BEFORE -i.
+	if runtime.GOOS == "darwin" {
+		args = append(args, "-hwaccel", "videotoolbox")
+	}
 	if opts.StartS > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", opts.StartS))
 	}

@@ -26,6 +26,7 @@ type Opts struct {
 	LogoTemplate    *logotemplate.Template // nil = skip logo
 	LogoYOffset     int                    // shift template y-coords by N pixels (letterbox correction)
 	BumperTemplates []string               // PNG paths; nil/empty = skip bumper detection
+	BumperStride    int                    // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
 	NNBackbonePath  string                 // "" = skip NN
 	NNHeadPath      string                 // ignored if backbone is empty
 	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
@@ -186,7 +187,22 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			out.nnConfs = append(out.nnConfs, nn.Confidence(f.Pixels, logoConf))
 		}
 		if bumper != nil {
-			out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
+			// Subsample: stride>1 means we only compute bumper IoU on
+			// every Nth frame; the rest get 0 (= no match). Boundary
+			// snap walks the array looking for peaks, so as long as
+			// the bumper window (~2-3s) hits at least one sampled
+			// frame, snap still works. At stride 5 + 25fps, the worst-
+			// case sampling phase miss is 200ms — well below the
+			// snap radius (90s) we configure in the daemon.
+			s := opts.BumperStride
+			if s <= 0 {
+				s = 1
+			}
+			if count%s == 0 {
+				out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
+			} else {
+				out.bumperConfs = append(out.bumperConfs, 0)
+			}
 		}
 		count++
 	}

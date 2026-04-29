@@ -106,11 +106,14 @@ if [ -s "$SUMMARY" ] && [ -x "$TN" ]; then
          | head -4 \
          | tr '\n' '|' \
          | sed 's/|/ · /g; s/ · $//')
+  # No -sender: setting it (e.g. com.apple.Safari) re-routes the click
+  # to the spoofed app and disables the -open URL action. We want the
+  # banner to ACTUALLY open /learning when tapped, so terminal-notifier
+  # stays the owner of the click handler.
   "$TN" -title "$TITLE" -subtitle "Klick → /learning" \
     -message "$BODY" \
     -open "https://raspberrypi5lan:8443/learning" \
-    -group tv-detect-daily \
-    -sender com.apple.Safari
+    -group tv-detect-daily
   echo "notification posted (full report: $SUMMARY)"
 elif [ -s "$SUMMARY" ]; then
   echo "terminal-notifier missing at $TN — install via 'brew install terminal-notifier'"

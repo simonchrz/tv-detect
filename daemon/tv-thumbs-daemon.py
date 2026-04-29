@@ -573,9 +573,12 @@ def process_detect(uuid):
            # (validated on GZSZ: 1146→1099, user truth 1099.82).
            # No-op on broadcasters that always air same aspect.
            "--letterbox-snap", "90"]
-    if cfg.get("start_extend_s", 0) > 0:
+    # Both extend values are now SIGNED — positive grows the block in
+    # the natural direction (earlier start / later end), negative
+    # shrinks. Forward to tv-detect verbatim if non-zero.
+    if cfg.get("start_extend_s", 0) != 0:
         cmd += ["--start-extend", str(cfg["start_extend_s"])]
-    if cfg.get("end_extend_s", 0) > 0:
+    if cfg.get("end_extend_s", 0) != 0:
         cmd += ["--end-extend", str(cfg["end_extend_s"])]
     if cfg.get("min_block_s") and cfg.get("max_block_s"):
         cmd += ["--min-block-sec", str(cfg["min_block_s"]),

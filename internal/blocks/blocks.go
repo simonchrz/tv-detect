@@ -281,19 +281,37 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
 		blocks = splitLongBlocks(blocks, opts.MaxBlockS, black)
 	}
 
-	// Step 5: per-block boundary extension from learned channel drift.
-	// Cap to neighbouring blocks (or 0 / total duration) so we never
-	// produce overlap or negative starts.
-	if opts.StartExtendS > 0 || opts.EndExtendS > 0 {
+	// Step 5: per-block boundary correction from learned channel/show
+	// drift. SIGNED — positive StartExtendS pulls the block START
+	// EARLIER (extend backward), negative pushes it LATER (shrink
+	// from the front). Same symmetry for EndExtendS: positive extends
+	// forward, negative pulls back. Per-show drift learning may set
+	// either sign depending on which way the user systematically
+	// trims.
+	//
+	// Clamps:
+	//   START — between previous block's END (or 0) and current END
+	//           minus MinBlockS (don't shrink below the min-block size).
+	//   END   — between current START plus MinBlockS and next block's
+	//           START (or recording duration).
+	if opts.StartExtendS != 0 || opts.EndExtendS != 0 {
 		totalS := float64(nFrames) / opts.FPS
+		minDur := opts.MinBlockS
+		if minDur <= 0 {
+			minDur = 1.0
+		}
 		for i := range blocks {
 			ns := blocks[i].StartS - opts.StartExtendS
 			minStart := 0.0
 			if i > 0 {
 				minStart = blocks[i-1].EndS
 			}
+			maxStart := blocks[i].EndS - minDur
 			if ns < minStart {
 				ns = minStart
+			}
+			if ns > maxStart {
+				ns = maxStart
 			}
 			blocks[i].StartS = ns
 
@@ -302,8 +320,12 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
 			if i+1 < len(blocks) {
 				maxEnd = blocks[i+1].StartS
 			}
+			minEnd := blocks[i].StartS + minDur
 			if ne > maxEnd {
 				ne = maxEnd
+			}
+			if ne < minEnd {
+				ne = minEnd
 			}
 			blocks[i].EndS = ne
 		}

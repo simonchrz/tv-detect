@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.user.tv-thumbs-daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/simon/bin/tv-thumbs-daemon.py</string>
+  </array>
+  <!-- Long-running daemon: poll loop runs forever -->
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- Talk to gateway directly on internal HTTP port (8080), not via
+       Caddy/TLS on 8443. Saves ~40% Caddy CPU on bulk transfers
+       (TLS encrypt for 800 MB tar/PUT was the dominant cost) and
+       removes the extra reverse-proxy hop. LAN-only traffic anyway. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GATEWAY</key><string>http://raspberrypi5lan:8080</string>
+    <!-- 3 detect jobs in parallel; each tv-detect uses --workers 8//3 = 2.
+         Higher (4+) hits CPU contention, lower throughput per measurement. -->
+    <key>DETECT_PARALLEL</key><string>3</string>
+    <!-- Cache enough source files locally that bulk-redetects don't
+         re-pull from Pi. ~1-2 GB per recording, 100 recordings ≈ 150 GB. -->
+    <key>SOURCE_CACHE_MAX_GB</key><string>150</string>
+    <!-- Speaker fingerprint orchestration: extract embeddings on
+         first detect, build per-show centroid (or single-episode if
+         only one usable), compute speaker.csv, pass --speaker-csv +
+         --speaker-weight to tv-detect. Net IoU effect across 95
+         recordings was +0.00 (3 wins / 89 same / 3 losses) but the
+         wins are real for cast-stable shows (Big Bang Theory, taff,
+         Desperate Housewives). Disable via SPEAKER_ENABLE=0 if it
+         ever causes a regression. -->
+    <key>SPEAKER_ENABLE</key><string>1</string>
+    <key>SPEAKER_WEIGHT</key><string>0.3</string>
+  </dict>
+  <!-- Throttle restart so a crash loop doesn't burn CPU -->
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
+</dict>
+</plist>

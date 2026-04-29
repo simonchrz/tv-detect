@@ -89,20 +89,29 @@ L.append("Details: $GATEWAY_HTTPS/learning")
 print("\n".join(L))
 PY
 
-# macOS notification via osascript — replaces the never-arriving
-# postfix mail. The notification banner shows the most-relevant
-# headline numbers (Test IoU, Drift, neue Aufnahmen, offene Targets).
-# Full plain-text report stays at $SUMMARY for follow-up. Click on
-# the banner does nothing (no action handler) — open /learning
-# manually if you want details.
-if [ -s "$SUMMARY" ]; then
+# macOS notification — replaces the never-arriving postfix mail.
+# Uses terminal-notifier (brew install) instead of osascript so the
+# banner is CLICKABLE and opens the /learning page in the default
+# browser. Headline numbers (Test IoU, Drift, Neu in 24 h, Aktive
+# Targets) appear in the banner body; full plain-text report stays
+# at $SUMMARY for follow-up. -sender com.apple.Safari makes Safari
+# (rather than the generic Skript-Editor icon) appear as the
+# notification's app, which both looks right and gives the click
+# action a reasonable fallback target.
+TN=/opt/homebrew/bin/terminal-notifier
+if [ -s "$SUMMARY" ] && [ -x "$TN" ]; then
   TITLE="tv-detect Tagesbericht $(date +%F)"
   BODY=$(grep -E "Test IoU|Neu in 24 h|Aktive Targets|Drift vs" "$SUMMARY" \
          | sed 's/  */ /g; s/^ *//' \
          | head -4 \
-         | sed 's/"/\\"/g' \
-         | awk 'BEGIN{ORS="\\n"} {print}')
-  /usr/bin/osascript -e \
-    "display notification \"$BODY\" with title \"$TITLE\" subtitle \"Details: /learning\""
+         | tr '\n' '|' \
+         | sed 's/|/ · /g; s/ · $//')
+  "$TN" -title "$TITLE" -subtitle "Klick → /learning" \
+    -message "$BODY" \
+    -open "https://raspberrypi5lan:8443/learning" \
+    -group tv-detect-daily \
+    -sender com.apple.Safari
   echo "notification posted (full report: $SUMMARY)"
+elif [ -s "$SUMMARY" ]; then
+  echo "terminal-notifier missing at $TN — install via 'brew install terminal-notifier'"
 fi

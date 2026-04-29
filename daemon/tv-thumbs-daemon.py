@@ -56,6 +56,7 @@ MODEL_CACHE.mkdir(parents=True, exist_ok=True)
 # Mac NVMe (~3 GB/s) instead of LAN gigabit (~110 MB/s) — 30× faster
 # for any re-detect (head-bin invalidation, accidental marker, etc).
 # LRU-evicted at SOURCE_CACHE_MAX_GB so the cache doesn't fill the SSD.
+SNAPSHOT_MARKER = Path.home() / ".cache" / "tv-detect-daemon" / "snapshot-requested"
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 SOURCE_CACHE.mkdir(parents=True, exist_ok=True)
 SOURCE_CACHE_MAX_GB = int(os.environ.get("SOURCE_CACHE_MAX_GB", "60"))
@@ -665,6 +666,29 @@ def main():
             with detect_lock:
                 detect_in_flight.discard(uuid)
 
+    def _maybe_fire_snapshot():
+        """Per-show IoU snapshot trigger. Set by tv-train-head.sh dropping
+        a marker file with a desired timestamp; we fire the gateway
+        endpoint once the bulk-redetect after the head update is done
+        (= no detect-pending AND no in-flight). Stateless — marker
+        deleted on success so the next retrain just drops it again.
+        """
+        if not SNAPSHOT_MARKER.exists():
+            return
+        try:
+            ts = SNAPSHOT_MARKER.read_text().strip() or time.strftime("%Y%m%dT%H%M%S")
+        except Exception:
+            ts = time.strftime("%Y%m%dT%H%M%S")
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/api/internal/snapshot-per-show-iou?ts={ts}",
+                method="POST")
+            r = urllib.request.urlopen(req, timeout=30, context=CTX).read().decode()
+            print(f"  snapshot fired (ts={ts}): {r[:100]}", flush=True)
+            SNAPSHOT_MARKER.unlink()
+        except Exception as e:
+            print(f"  snapshot fire err: {e}", flush=True)
+
     cycle = 0
     while True:
         cycle += 1
@@ -684,6 +708,11 @@ def main():
             time.sleep(30); continue
         with detect_lock:
             in_flight_n = len(detect_in_flight)
+        # Per-show IoU snapshot — only when bulk-redetect is fully drained
+        # (otherwise the snapshot would record stale-ads.json IoU=0 for
+        # most rows). Marker file dropped by tv-train-head.sh.
+        if not detect and in_flight_n == 0:
+            _maybe_fire_snapshot()
         if thumbs or hls or detect or in_flight_n or cycle % 12 == 1:
             print(f"  [cycle {cycle}] thumbs={len(thumbs)} "
                   f"hls={len(hls)} detect={len(detect)} "

@@ -84,5 +84,28 @@ deleted=$(find "$HOME/.cache/tvd-features" -name "*.npy" -atime +60 -print -dele
 if [ "$deleted" -gt 0 ]; then
   echo "cache cleanup: pruned $deleted stale .npy file(s)"
 fi
+# Per-show IoU snapshot. The new head.bin invalidates all auto-cutlists
+# so the post-train daemon bulk-redetect must drain BEFORE the snapshot
+# is meaningful (otherwise most ads.json files are stale → IoU=0). Wait
+# up to 3 hours for queue-empty, then trigger. Run in background so
+# train-head exits quickly; the snapshot trigger doesn't gate retraining.
+if [ "$rc" -eq 0 ]; then
+  ( ts="$(date '+%Y%m%dT%H%M%S')"
+    deadline=$((SECONDS + 10800))
+    while [ $SECONDS -lt $deadline ]; do
+      pending=$(curl -s -m 5 "http://raspberrypi5lan:8080/api/internal/detect-pending" 2>/dev/null \
+        | python3 -c "import json,sys; print(len(json.load(sys.stdin)['pending']))" 2>/dev/null)
+      if [ "$pending" = "0" ]; then
+        curl -s -m 30 -X POST "http://raspberrypi5lan:8080/api/internal/snapshot-per-show-iou?ts=$ts" \
+          | head -c 200 >> "$LOG"; echo >> "$LOG"
+        echo "snapshot taken (ts=$ts)" >> "$LOG"
+        exit 0
+      fi
+      sleep 60
+    done
+    echo "snapshot timeout — queue never drained" >> "$LOG"
+  ) &
+fi
+
 echo "train-head exit=$rc"
 exit $rc

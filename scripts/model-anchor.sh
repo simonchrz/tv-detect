@@ -117,6 +117,13 @@ cmd_create() {
   cp "$MODELS_DIR/backbone.onnx" "$stage/backbone.onnx"
   [ -f "$MODELS_DIR/head.history.json" ] && \
     cp "$MODELS_DIR/head.history.json" "$stage/head.history.json"
+  # Platt-calibration sidecar (head.calibration.json) — written by
+  # train-head.py since 2026-04-30. Optional: legacy heads have no
+  # sidecar and detection still works (calibrated_proba falls back
+  # to raw clf.predict_proba). Bundle when present so the anchor is
+  # bit-for-bit reproducible including the calibration constants.
+  [ -f "$MODELS_DIR/head.calibration.json" ] && \
+    cp "$MODELS_DIR/head.calibration.json" "$stage/head.calibration.json"
 
   local body; body=$(mktemp)
   {
@@ -143,15 +150,15 @@ cmd_create() {
   git push origin "$tag"
 
   echo "→ creating GitHub release $tag with bundled artefacts..."
+  # Build the asset list dynamically so optional sidecars don't
+  # break the upload when missing on legacy installs.
+  local assets=("$stage/head.bin" "$stage/backbone.onnx")
+  [ -f "$stage/head.history.json" ]     && assets+=("$stage/head.history.json")
+  [ -f "$stage/head.calibration.json" ] && assets+=("$stage/head.calibration.json")
   gh release create "$tag" \
     --title "Model anchor: $raw_tag" \
     --notes-file "$body" \
-    "$stage/head.bin" "$stage/backbone.onnx" \
-    ${stage}/head.history.json 2>/dev/null || \
-  gh release create "$tag" \
-    --title "Model anchor: $raw_tag" \
-    --notes-file "$body" \
-    "$stage/head.bin" "$stage/backbone.onnx"
+    "${assets[@]}"
 
   rm -f "$body"
   echo "✓ anchor created: $tag"
@@ -173,7 +180,7 @@ cmd_install() {
 
   local ts; ts=$(date +%s)
   mkdir -p "$MODELS_DIR"
-  for f in head.bin backbone.onnx head.history.json; do
+  for f in head.bin backbone.onnx head.history.json head.calibration.json; do
     [ -f "$MODELS_DIR/$f" ] && cp "$MODELS_DIR/$f" "$MODELS_DIR/$f.bak.$ts"
     [ -f "$stage/$f" ] && cp "$stage/$f" "$MODELS_DIR/$f"
   done

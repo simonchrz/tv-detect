@@ -1456,6 +1456,72 @@ def main():
     print(f"train acc {train_acc*100:.1f}%  L2={float(np.linalg.norm(clf.coef_)):.2f}  "
           f"bias={float(clf.intercept_[0]):+.3f}")
 
+    # ── Platt calibration ────────────────────────────────────────
+    # Fit σ(A * logit + B) on the HOLD-OUT test set against true
+    # labels. Logistic-regression probabilities tend to be
+    # over-confident: a frame the model says is 95 % ad is wrong
+    # more than 5 % of the time. Calibrating maps the raw logits
+    # to probabilities that actually equal the empirical hit-rate.
+    # The active-learning step downstream uses these calibrated
+    # probs to surface frames where the model is GENUINELY unsure
+    # (not just close to 0.5 by accident of the linear-head's
+    # over-confidence). Saved as head.calibration.json sidecar
+    # next to head.bin — Go detector reads weights as before, the
+    # sidecar is opt-in for code paths that want calibrated output.
+    calibration = None
+    if test_recs:
+        X_test_parts = []; y_test_parts = []
+        for uuid, title, ads, X, y, *_ in test_recs:
+            if X is None or len(X) == 0:
+                continue
+            expected_dim = clf.coef_.shape[1]
+            if X.shape[1] < expected_dim:
+                X = np.concatenate([X, np.full(
+                    (X.shape[0], expected_dim - X.shape[1]),
+                    0.5, dtype=X.dtype)], axis=1)
+            X_test_parts.append(X)
+            y_test_parts.append(y)
+        if X_test_parts:
+            X_test = np.concatenate(X_test_parts)
+            y_test = np.concatenate(y_test_parts)
+            logits_test = clf.decision_function(X_test)
+            # Single-feature LR fits A and B in σ(A*logit + B).
+            # Reshape (n,) → (n,1) so sklearn treats it as 1-D feature.
+            cal_clf = LogisticRegression(max_iter=2000, C=1e6, verbose=0)
+            cal_clf.fit(logits_test.reshape(-1, 1), y_test)
+            A = float(cal_clf.coef_[0][0])
+            B = float(cal_clf.intercept_[0])
+            # Quality: Brier score before vs after. Brier = mean
+            # squared error of predicted prob vs label; calibration
+            # SHOULD improve it (lower = better).
+            raw_proba = 1.0 / (1.0 + np.exp(-logits_test))
+            cal_proba = 1.0 / (1.0 + np.exp(-(A * logits_test + B)))
+            brier_raw = float(np.mean((raw_proba - y_test) ** 2))
+            brier_cal = float(np.mean((cal_proba - y_test) ** 2))
+            calibration = {
+                "method": "platt",
+                "A": A, "B": B,
+                "n_calibration_frames": int(len(y_test)),
+                "n_calibration_recs": len(test_recs),
+                "brier_raw": brier_raw,
+                "brier_calibrated": brier_cal,
+                "improvement": brier_raw - brier_cal,
+            }
+            arrow = "✓" if brier_cal < brier_raw else "✗"
+            print(f"calibration: Platt A={A:+.3f} B={B:+.3f}  "
+                  f"Brier {brier_raw:.4f} → {brier_cal:.4f} {arrow}")
+
+    def calibrated_proba(X):
+        """Apply Platt scaling on top of clf logits when calibration
+        is available; fall back to raw predict_proba otherwise. Used
+        by the active-learning surface step so 'uncertainty' reflects
+        the model's true uncertainty, not the logistic-head's
+        over-confidence."""
+        if calibration is None:
+            return clf.predict_proba(X)[:, 1]
+        z = clf.decision_function(X)
+        return 1.0 / (1.0 + np.exp(-(calibration["A"] * z + calibration["B"])))
+
     # Evaluate on held-out recordings — both raw (matches a deploy
     # without --nn-smooth) and 10s-smoothed (matches the new default).
     metrics_smooth = None
@@ -1781,7 +1847,10 @@ def main():
                     X = np.concatenate([X, np.full(
                         (X.shape[0], expected_dim - X.shape[1]),
                         0.5, dtype=X.dtype)], axis=1)
-                proba = clf.predict_proba(X)[:, 1]
+                # Use calibrated probabilities so "uncertainty"
+                # reflects the model's true confidence, not the
+                # over-confidence of an uncalibrated logistic head.
+                proba = calibrated_proba(X)
                 unc = 1.0 - 2.0 * np.abs(proba - 0.5)
                 top_unc = set(np.argsort(-unc)[:n_unc].tolist())
                 top_div = set()
@@ -1901,6 +1970,17 @@ def main():
         print(f"\nDEPLOYED → {args.output} ({os.path.getsize(args.output)} B)")
         print(f"  archive: {archive_path.name}")
         print(f"  reason: {reason}")
+        # Calibration sidecar: read by the gateway's active-learning
+        # endpoints and (eventually) by the Go detector. Written
+        # next to head.bin so it stays version-locked with the head
+        # that produced the calibration. No-op when test_recs was
+        # empty or refit dimensions differ.
+        if calibration is not None:
+            calib_path = Path(args.output).with_suffix(".calibration.json")
+            calib_out = dict(calibration)
+            calib_out["ts"] = ts
+            calib_path.write_text(json.dumps(calib_out, indent=2))
+            print(f"  calibration sidecar: {calib_path.name}")
     else:
         print(f"\nREJECTED — kept previous {args.output}")
         print(f"  candidate archived as {archive_path.name}")

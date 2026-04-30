@@ -30,6 +30,7 @@ func main() {
 		output         = flag.String("output", "summary", "output format: summary | cutlist")
 		minBlockSec    = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
 		maxBlockSec    = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
+		maxBlockFrac   = flag.Float64("max-block-fraction", 0.5, "drop any final block longer than this fraction of total recording duration (0 = off). Catches state-machine runaway false positives where a sustained logo-washout opens a block that never closes.")
 		minShowSegSec  = flag.Float64("min-show-segment", 60, "min show between blocks before merging — also sets how long logo-present is required to declare block end")
 		maxAdGapSec    = flag.Float64("max-ad-gap", 30, "post-refine merge: glue adjacent ad blocks if the gap between them is shorter than this (catches promo slates between ad break halves; 0 disables)")
 		startExtendS   = flag.Float64("start-extend", 0, "pull each detected block's start back by N seconds (channel-specific systematic correction from user-feedback boundary drift; capped at the prior block's end)")
@@ -55,7 +56,8 @@ func main() {
 		emitLetterbox   = flag.Bool("emit-letterbox", false, "print detected letterbox transitions (onset/offset) to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
 		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
-		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as channel-bumper reference frames (e.g. RTL's 'Mein RTL' end-of-ad-block card). All templates are matched per frame; max score wins. Color variants of the same animation should be added together.")
+		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
+		bumperStartTpls = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
 		bumperSnapS     = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
 		bumperThresh    = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
 		bumperStride    = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
@@ -190,8 +192,9 @@ func main() {
 		SceneThreshold: *sceneThreshold,
 		LogoTemplate:    tmpl,
 		LogoYOffset:     *logoYOffset,
-		BumperTemplates: parseBumperTemplates(*bumperTemplates),
-		BumperStride:    *bumperStride,
+		BumperTemplates:      parseBumperTemplates(*bumperTemplates),
+		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
+		BumperStride:         *bumperStride,
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,
@@ -293,6 +296,7 @@ func main() {
 		FPS:              res.FPS,
 		MinBlockS:        *minBlockSec,
 		MaxBlockS:        *maxBlockSec,
+		MaxBlockFraction: *maxBlockFrac,
 		MinShowSegmentS:  *minShowSegSec,
 		MinAbsentToOpenS: *minAbsentS,
 		LogoThreshold:    *logoThreshold,
@@ -311,7 +315,7 @@ func main() {
 		BumperThreshold:  *bumperThresh,
 		LetterboxSnapS:   *letterboxSnapS,
 		SpeakerWeight:    *speakerWeight,
-	}, res.LogoConfs, res.NNConfs, res.BumperConfs, speakerConfFrames,
+	}, res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
 		res.Blackframes, sil.events,
 		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
 

@@ -25,8 +25,9 @@ type Opts struct {
 	SceneThreshold float64
 	LogoTemplate    *logotemplate.Template // nil = skip logo
 	LogoYOffset     int                    // shift template y-coords by N pixels (letterbox correction)
-	BumperTemplates []string               // PNG paths; nil/empty = skip bumper detection
-	BumperStride    int                    // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
+	BumperTemplates      []string          // PNG paths for END-of-ad-block reference frames; nil/empty = skip
+	BumperStartTemplates []string          // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
+	BumperStride         int               // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
 	NNBackbonePath  string                 // "" = skip NN
 	NNHeadPath      string                 // ignored if backbone is empty
 	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
@@ -43,8 +44,9 @@ type Result struct {
 	IFrames     []float64 // ascending I-frame timestamps from ffprobe
 	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
 	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
-	BumperConfs []float64 // per-frame max bumper match score, nil if no templates
-	Letterbox   []signals.LetterboxEvent
+	BumperConfs      []float64 // per-frame max END-bumper match score, nil if no templates
+	BumperStartConfs []float64 // per-frame max START-bumper match score, nil if no start templates
+	Letterbox        []signals.LetterboxEvent
 }
 
 // chunkPlan describes one worker's time-range slice.
@@ -63,8 +65,9 @@ type chunkRes struct {
 	sceneCuts   []signals.SceneCut
 	logoConfs   []float64
 	nnConfs     []float64
-	bumperConfs []float64
-	letterbox   []signals.LetterboxEvent
+	bumperConfs      []float64
+	bumperStartConfs []float64
+	letterbox        []signals.LetterboxEvent
 	err         error
 }
 
@@ -112,7 +115,8 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	return merge(results, info,
 		opts.LogoTemplate != nil,
 		opts.NNBackbonePath != "",
-		len(opts.BumperTemplates) > 0), nil
+		len(opts.BumperTemplates) > 0,
+		len(opts.BumperStartTemplates) > 0), nil
 }
 
 func planChunks(totalS float64, workers int) []chunkPlan {
@@ -159,6 +163,14 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	var bumper *signals.BumperDetector
 	if len(opts.BumperTemplates) > 0 {
 		bumper, err = signals.NewBumperDetector(opts.BumperTemplates, d.Width, d.Height, 0)
+		if err != nil {
+			out.err = err
+			return out
+		}
+	}
+	var bumperStart *signals.BumperDetector
+	if len(opts.BumperStartTemplates) > 0 {
+		bumperStart, err = signals.NewBumperDetector(opts.BumperStartTemplates, d.Width, d.Height, 0)
 		if err != nil {
 			out.err = err
 			return out
@@ -215,7 +227,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 				flushNN()
 			}
 		}
-		if bumper != nil {
+		if bumper != nil || bumperStart != nil {
 			// Subsample: stride>1 means we only compute bumper IoU on
 			// every Nth frame; the rest get 0 (= no match). Boundary
 			// snap walks the array looking for peaks, so as long as
@@ -227,10 +239,20 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			if s <= 0 {
 				s = 1
 			}
-			if count%s == 0 {
-				out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
-			} else {
-				out.bumperConfs = append(out.bumperConfs, 0)
+			compute := count%s == 0
+			if bumper != nil {
+				if compute {
+					out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
+				} else {
+					out.bumperConfs = append(out.bumperConfs, 0)
+				}
+			}
+			if bumperStart != nil {
+				if compute {
+					out.bumperStartConfs = append(out.bumperStartConfs, bumperStart.Confidence(f.Pixels))
+				} else {
+					out.bumperStartConfs = append(out.bumperStartConfs, 0)
+				}
 			}
 		}
 		count++
@@ -259,7 +281,7 @@ func toNNConfs(in []float64) []float64 { return in }
 // chunk boundary are reunited; suspicious scene-cuts at the very
 // first frame of chunks 2..N are dropped (they're artifacts of the
 // decoder starting fresh, not real content changes).
-func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper bool) *Result {
+func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBumperStart bool) *Result {
 	r := &Result{
 		FPS:    info.FPS,
 		Width:  info.Width,
@@ -298,6 +320,9 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper bool) 
 		}
 		if hasBumper {
 			r.BumperConfs = append(r.BumperConfs, c.bumperConfs...)
+		}
+		if hasBumperStart {
+			r.BumperStartConfs = append(r.BumperStartConfs, c.bumperStartConfs...)
 		}
 		// Drop the very first letterbox event of chunks 2..N — the
 		// detector emits a state-confirmation as soon as it has seen

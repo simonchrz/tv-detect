@@ -28,7 +28,7 @@ func TestFormBasicAdBlock(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 15000}, {22500, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
 	}
@@ -44,7 +44,7 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 630, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("30s gap should be filtered, got %+v", blocks)
 	}
@@ -65,7 +65,7 @@ func TestFormBoundaryRefineToBlackframe(t *testing.T) {
 		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, nil, black, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, nil, nil, black, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}
@@ -148,6 +148,39 @@ func TestSnapToBumper(t *testing.T) {
 	}
 }
 
+func TestSnapToBumperStart(t *testing.T) {
+	// Start-bumper peaks 0.95 at frames 100..120 (= 4.0 .. 4.8 s).
+	// snapToBumperStart returns the EARLIEST high-conf frame in
+	// window: frame 100 / 25 = 4.0 s — that's the first ad frame.
+	fps := 25.0
+	conf := make([]float64, 250)
+	for i := 100; i <= 120; i++ {
+		conf[i] = 0.95
+	}
+	cases := []struct {
+		name      string
+		t         float64
+		radius    float64
+		threshold float64
+		want      float64
+	}{
+		{"start inside bumper window", 4.5, 5, 0.85, 4.0},
+		{"start before bumper window", 2.0, 5, 0.85, 4.0},
+		{"start after bumper window", 7.0, 5, 0.85, 4.0},
+		{"radius too small — passthrough", 9.0, 0.5, 0.85, 9.0},
+		{"threshold too high — passthrough", 4.5, 5, 0.99, 4.5},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := snapToBumperStart(c.t, conf, fps, c.radius, c.threshold)
+			if !near(got, c.want, 0.05) {
+				t.Errorf("snapToBumperStart(%.1f, _, %.1f, %.2f) = %.3f, want %.3f",
+					c.t, c.radius, c.threshold, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRefineBoundaryVotingMultiSignalAgreement(t *testing.T) {
 	// All three sources cluster around t=120: blackframe at 120.0,
 	// silence ending at 120.5, scene-cut at 119.8. Weighted vote
@@ -194,6 +227,35 @@ func TestRefineBoundaryVotingDirectionalPenalty(t *testing.T) {
 	}
 }
 
+func TestMaxBlockFractionDropsRunaway(t *testing.T) {
+	// 30 min recording where the entire show stretch is logo-absent
+	// (= sixx-style washout pathology). The state machine opens one
+	// giant block covering ~95 % of the recording. With the default
+	// MaxBlockFraction=0.5 cap this block must be dropped, leaving an
+	// empty block list rather than emitting a 28-min false positive.
+	fps := 25.0
+	nFrames := 25 * 1800
+	// Logo only present in the first and last 30 s — everything in
+	// between is "absent" (= washout).
+	logo := makeLogo(nFrames, [][2]int{{0, 25 * 30}, {25 * 1770, nFrames}})
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	if len(blocks) != 0 {
+		t.Errorf("runaway block (>50%% of recording) must be dropped, got %+v", blocks)
+	}
+	// Sanity: with the cap loosened, the same input should yield
+	// exactly the runaway block — proves the only thing changed is
+	// the new filter, not some other behaviour.
+	blocks = Form(Opts{FPS: fps, MaxBlockFraction: 1.0},
+		logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	if len(blocks) != 1 {
+		t.Fatalf("with cap loosened, want 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Duration() < 1500 {
+		t.Errorf("loosened-cap block should span most of recording, got %.0fs",
+			blocks[0].Duration())
+	}
+}
+
 func TestStartEndExtendCappedToNeighbours(t *testing.T) {
 	fps := 25.0
 	nFrames := 25 * 1000
@@ -206,7 +268,7 @@ func TestStartEndExtendCappedToNeighbours(t *testing.T) {
 		StartExtendS: 50,
 		EndExtendS:   50,
 		MinBlockS:    50, // allow shorter blocks for the test
-	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d", len(blocks))
 	}
@@ -233,7 +295,7 @@ func TestStartEndExtendCappedAtBoundaries(t *testing.T) {
 		StartExtendS: 60,
 		EndExtendS:   60,
 		MinBlockS:    50,
-	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}

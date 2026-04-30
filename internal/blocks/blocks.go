@@ -22,6 +22,7 @@ type Opts struct {
 	FPS              float64
 	MinBlockS        float64 // ignore blocks shorter than this (default 60)
 	MaxBlockS        float64 // split blocks longer than this (default 900)
+	MaxBlockFraction float64 // 0..1; reject any block longer than this fraction of total recording duration (default 0.5; pass a large value like 1.0 to effectively disable). Catches state-machine runaway false-positives where a sustained logo washout (e.g. white sixx logo over white sky for several minutes) opens a block that never closes — splitLongBlocks can only split when blackframes exist inside, so a pure-show stretch with no internal cuts stays as one giant block. Real ad blocks essentially never exceed 50 % of a recording, so dropping anything bigger is safe.
 	MinShowSegmentS  float64 // merge ad blocks separated by less show than this (default 60)
 	MinAbsentToOpenS float64 // require this many seconds of continuous logo-absent to open a block (default 5)
 	LogoThreshold    float64 // per-frame logo confidence < this counts as "absent" (default 0.10)
@@ -33,8 +34,8 @@ type Opts struct {
 	MaxAdGapS        float64 // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this (default 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
 	StartExtendS     float64 // pull each block's StartS back by this many seconds. Channel-specific systematic correction: users on some channels (RTL) consistently shift block-starts earlier than auto-detected, suggesting tv-detect's logo-loss latency runs late at the head of an ad break. Set per-channel from boundary-drift feedback; capped at the previous block's end (or 0 for the first block) so blocks never overlap.
 	EndExtendS       float64 // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
-	BumperSnapS      float64 // post-refine snap each block END to the latest bumper-match peak (channel station-id card) within ±this seconds. 0 = off (default 10). Strongest single ad-end signal we have when a per-channel bumper template is loaded — unlike logo/scene-cut/I-frame refinement, this is a deterministic channel-specific marker, not statistical inference. Block STARTS are NOT snapped (bumpers mark ad→show transitions, not show→ad).
-	BumperThreshold  float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Only applied when BumperConfs is non-empty.
+	BumperSnapS      float64 // post-refine snap each block boundary to the bumper-match peak within ±this seconds. 0 = off (default 10). Strongest deterministic boundary signal — a per-channel bumper template ("WIE SIXX IST DAS DENN?", "Mein RTL", etc) is a programmer-placed semantic marker, not statistical inference. Used for BOTH ends: end-bumpers (passed via the bumperConf positional arg) snap block END to the LATEST high-conf frame; start-bumpers (passed via startBumperConf) snap block START to the EARLIEST high-conf frame. Same window/threshold for both kinds — the distinction is only which boundary they target.
+	BumperThreshold  float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Applied to both end- and start-bumper-conf streams.
 	SpeakerWeight   float64  // 0..1 weight of speaker-fingerprint evidence vs logo+NN (default 0; pass --speaker-weight 0.3 to engage). When > 0 and SpeakerConfs is len(logoConf), per-frame "show-likelihood" is re-blended:  score = (1-SpeakerWeight)*old_score + SpeakerWeight*speaker — orthogonal signal to logo/NN/letterbox. Useful for shows with persistent recurring speakers (soap operas, court shows) where ad voice-overs are reliably distinct from the show's cast.
 	IFrameSnapS      float64 // post-refine snap each boundary to the nearest I-frame within ±this seconds. 0 = off (default 5). Real ad-inserts almost always align with encoder I-frames; snapping here gives sub-second precision regardless of how coarse the rough boundary was.
 	LogoCrossRefineS float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
@@ -57,7 +58,7 @@ type Opts struct {
 // so NNWeight=0 reproduces the logo-only behaviour and NNWeight=1
 // makes the NN authoritative. Length of nnConf must match logoConf
 // (the pipeline guarantees this when both detectors run).
-func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
+func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf []float64,
 	black []signals.BlackEvent,
 	silence []signals.SilenceEvent, scenes []signals.SceneCut,
 	letterbox []signals.LetterboxEvent,
@@ -240,10 +241,18 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
 				logoConf, opts.LogoThreshold, opts.FPS, false)
 		}
 		// Bumper snap is deterministic — overrides everything above for
-		// the END boundary when a high-confidence channel bumper sits
-		// nearby. Only END (bumper marks ad→show transition).
+		// the matching boundary when a high-confidence channel bumper
+		// sits nearby. End-bumpers (e.g. sixx "WIE SIXX IST DAS DENN?")
+		// mark ad→show; start-bumpers (e.g. sixx "WERBUNG"-card) mark
+		// show→ad. Each kind only snaps its own boundary — using a
+		// start-bumper hit to pull the block END would be semantically
+		// wrong even if the match is high-confidence.
 		if opts.BumperSnapS > 0 && len(bumperConf) > 0 {
 			endS = snapToBumper(endS, bumperConf,
+				opts.FPS, opts.BumperSnapS, opts.BumperThreshold)
+		}
+		if opts.BumperSnapS > 0 && len(startBumperConf) > 0 {
+			startS = snapToBumperStart(startS, startBumperConf,
 				opts.FPS, opts.BumperSnapS, opts.BumperThreshold)
 		}
 		if endS-startS < opts.MinBlockS {
@@ -271,6 +280,28 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, speakerConf []float64,
 			merged = append(merged, b)
 		}
 		blocks = merged
+	}
+
+	// Step 3.6: drop runaway false-positive blocks BEFORE the long-block
+	// split. State-machine pathology — a sustained logo-absence stretch
+	// (sixx white-on-white washout, long outdoor scenes on light
+	// background, etc) opens a block that never closes. If we let
+	// splitLongBlocks run first, a 2400 s runaway gets carved into 3 ×
+	// 800 s sub-blocks via blackframes; each survives the per-block cap
+	// individually, and we end up with 3 false-positives instead of one.
+	// Cutting BEFORE the split kills the whole runaway tree at once.
+	// Real ad blocks essentially never exceed 50 % of a recording.
+	if opts.MaxBlockFraction > 0 && nFrames > 0 {
+		totalS := float64(nFrames) / opts.FPS
+		cap := totalS * opts.MaxBlockFraction
+		filtered := blocks[:0]
+		for _, b := range blocks {
+			if b.Duration() > cap {
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		blocks = filtered
 	}
 
 	// Step 4: split overly long blocks at internal hard cuts (blackframe
@@ -469,6 +500,9 @@ func defaults(o *Opts) {
 	}
 	if o.MaxBlockS <= 0 {
 		o.MaxBlockS = 900
+	}
+	if o.MaxBlockFraction <= 0 {
+		o.MaxBlockFraction = 0.5
 	}
 	if o.MinShowSegmentS <= 0 {
 		o.MinShowSegmentS = 60
@@ -699,6 +733,34 @@ func snapToLetterbox(t float64, events []signals.LetterboxEvent, r float64, isSt
 		}
 	}
 	return bestT
+}
+
+// snapToBumperStart looks for the EARLIEST frame in [t-r, t+r] where
+// a start-bumper match score exceeds threshold and returns its
+// position (= first ad frame). Start-bumpers (announcer cards like
+// sixx "WERBUNG"-with-presenter) are typically the very first visual
+// of the ad break, so the real ad-start IS the bumper-start frame —
+// no +1 offset like the end-bumper case. Returns t unchanged when no
+// peak is found in the window.
+func snapToBumperStart(t float64, bumperConf []float64, fps, r, threshold float64) float64 {
+	if len(bumperConf) == 0 || r <= 0 || fps <= 0 {
+		return t
+	}
+	iCenter := int(t * fps)
+	iLo := iCenter - int(r*fps)
+	iHi := iCenter + int(r*fps)
+	if iLo < 0 {
+		iLo = 0
+	}
+	if iHi >= len(bumperConf) {
+		iHi = len(bumperConf) - 1
+	}
+	for i := iLo; i <= iHi; i++ {
+		if bumperConf[i] > threshold {
+			return float64(i) / fps
+		}
+	}
+	return t
 }
 
 // snapToBumper looks for the LATEST frame in [t-r, t+r] where the

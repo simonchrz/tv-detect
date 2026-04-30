@@ -537,23 +537,36 @@ def process_detect(uuid):
     # Per-channel bumper templates (channel station-id cards). One Pi
     # endpoint lists all PNGs configured for the slug; we download each
     # into MODEL_CACHE / "bumpers" / slug / <name>.png and pass the
-    # comma-separated paths to tv-detect. No-op if the channel has no
-    # templates configured.
+    # comma-separated paths to tv-detect. Two independent kinds:
+    #   - end-bumpers   (channel-root or .../<slug>/end/) → --bumper-templates
+    #   - start-bumpers (.../<slug>/start/)               → --bumper-templates-start
+    # Each goes through its own per-frame conf stream in tv-detect so
+    # a start-bumper hit can't pull a block end and vice versa.
     bumper_paths = []
+    bumper_start_paths = []
     if slug:
         try:
             blist = http_get_json(
-                f"{GATEWAY}/api/internal/detect-bumpers/{slug}"
-            ).get("templates", [])
+                f"{GATEWAY}/api/internal/detect-bumpers/{slug}")
             bdir = MODEL_CACHE / "bumpers" / slug
             bdir.mkdir(parents=True, exist_ok=True)
-            for entry in blist:
-                local = bdir / entry["name"]
+            for entry in blist.get("templates", []):
+                local = bdir / "end" / entry["name"]
+                local.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     http_download(f"{GATEWAY}{entry['url']}", local)
                     bumper_paths.append(str(local))
                 except Exception as e:
-                    print(f"  detect {uuid[:8]}: bumper fetch {entry['name']} "
+                    print(f"  detect {uuid[:8]}: bumper fetch end/{entry['name']} "
+                          f"err: {e}", flush=True)
+            for entry in blist.get("start_templates", []):
+                local = bdir / "start" / entry["name"]
+                local.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    http_download(f"{GATEWAY}{entry['url']}", local)
+                    bumper_start_paths.append(str(local))
+                except Exception as e:
+                    print(f"  detect {uuid[:8]}: bumper fetch start/{entry['name']} "
                           f"err: {e}", flush=True)
         except Exception as e:
             print(f"  detect {uuid[:8]}: bumper-list err: {e}",
@@ -594,14 +607,26 @@ def process_detect(uuid):
                   flush=True)
     else:
         cmd += ["--auto-train", "5"]
-    if bumper_paths:
+    if bumper_paths or bumper_start_paths:
         # Snap radius 90s — empirically the model under-predicts ad-end
         # by ~60-65s on RTL Spielfilm; 60 was JUST too tight to catch
-        # 3 of 4 JC bumpers. 90 catches all four cleanly.
-        cmd += ["--bumper-templates", ",".join(bumper_paths),
-                "--bumper-snap", "90"]
-        print(f"  detect {uuid[:8]}: {len(bumper_paths)} bumper "
-              f"template(s) loaded for {slug}", flush=True)
+        # 3 of 4 JC bumpers. 90 catches all four cleanly. Same window
+        # used for both kinds — the snap direction differs (end picks
+        # latest match, start picks earliest), not the radius.
+        # Threshold per-channel: gateway returns 0.75 default (= helps
+        # missed_bumper cases) with channel-specific overrides for
+        # senders whose template set is too generic to tolerate the
+        # lower bar (RTL). Backwards-compatible default 0.75 if the
+        # gateway hasn't been updated yet.
+        bt = float(cfg.get("bumper_threshold", 0.75))
+        cmd += ["--bumper-snap", "90", "--bumper-threshold", str(bt)]
+        if bumper_paths:
+            cmd += ["--bumper-templates", ",".join(bumper_paths)]
+        if bumper_start_paths:
+            cmd += ["--bumper-templates-start", ",".join(bumper_start_paths)]
+        print(f"  detect {uuid[:8]}: {len(bumper_paths)} end + "
+              f"{len(bumper_start_paths)} start bumper(s) for {slug}",
+              flush=True)
 
     # Speaker-fingerprint orchestration (only if SPEAKER_ENABLE=1).
     # Three-step: extract embeddings → update show centroid → compute
@@ -661,6 +686,17 @@ def main():
     detect_lock = threading.Lock()
 
     def _run_detect(uuid):
+        # Tell the gateway we just picked this job up so the recordings
+        # page can render the 🔍 badge. Best-effort — the cutlist-uploaded
+        # call at the end clears the entry, and stale entries auto-expire
+        # gateway-side after 10 min.
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/api/internal/detect-started/{uuid}",
+                method="POST")
+            urllib.request.urlopen(req, timeout=5, context=CTX).read()
+        except Exception:
+            pass
         try:
             process_detect(uuid)
         except Exception as e:

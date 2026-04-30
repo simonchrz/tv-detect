@@ -20,12 +20,23 @@ echo "=== $(date '+%F %T') ==="
 # (where tv-detect lives if invoked via the Python path).
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
-# SMB mount: tv-comskip.sh handles this every minute, so it's almost
-# always already mounted. Sanity-check anyway — the train-head.py
-# script reads recordings from $MOUNT/hls/_rec_*.
+# SMB mount: macOS sleep/wake or any brief network blip can leave the
+# mount-point alive but pointing to a dead CIFS connection — so we
+# don't trust "is the directory there", we actively re-mount when
+# needed. mount-pi-tv.sh is idempotent (no-op if already up) and pulls
+# the password from login-keychain, so this works under launchd's
+# limited environment too.
 if ! mount | grep -q "on $MOUNT ("; then
-  echo "SMB not mounted at $MOUNT — skipping (tv-comskip.sh will mount soon)"
-  exit 0
+  echo "SMB not mounted at $MOUNT — running mount-pi-tv.sh"
+  if [ -x "$HOME/bin/mount-pi-tv.sh" ]; then
+    "$HOME/bin/mount-pi-tv.sh" || {
+      echo "mount-pi-tv.sh failed — bailing"
+      exit 1
+    }
+  else
+    echo "mount-pi-tv.sh missing — bailing"
+    exit 1
+  fi
 fi
 
 if [ ! -x "$VENV_PY" ]; then

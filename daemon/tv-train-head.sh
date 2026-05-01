@@ -9,7 +9,6 @@ LOG="$HOME/Library/Logs/tv-train-head.log"
 MOUNT="$HOME/mnt/pi-tv"
 VENV_PY="$HOME/ml/tv-classifier/.venv/bin/python"
 SCRIPT="$HOME/src/tv-detect/scripts/train-head.py"
-LOCAL_CACHE="$HOME/local-tv-cache"
 
 exec >>"$LOG" 2>&1
 echo "=== $(date '+%F %T') ==="
@@ -57,9 +56,11 @@ fi
 # them up V2-style — high prio first, background backfill once idle.
 # Nightly head changes propagate automatically.
 
-# --source-root prefers local SSD copy of recordings (3-4× faster
-# feature extraction than SMB streaming). Recordings only on SMB
-# are still picked up via the script's fallback to $MOUNT/hls/...
+# Source-cache hit-rate: train-head defaults --daemon-cache to
+# ~/.cache/tv-detect-daemon/source/, populated by tv-thumbs-daemon
+# (detect-driven + 30-min prefetch loop). With SOURCE_CACHE_MAX_GB=300
+# the full Pi corpus fits locally → SMB fallback only kicks in for
+# brand-new recordings the daemon hasn't pulled yet.
 
 # Training-active marker for the /learning page banner. Posted via
 # HTTP (no SMB needed) so the gateway can show "Training läuft seit
@@ -74,7 +75,6 @@ TRAIN_START_TS=$(date +%s)
 
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
-    --source-root "$LOCAL_CACHE" \
     --surface-uncertain 6 \
     --with-logo \
     --with-audio \

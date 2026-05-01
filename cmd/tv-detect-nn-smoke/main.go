@@ -43,7 +43,7 @@ func main() {
 	count := 0
 	sum := 0.0
 	for f := range d.Frames() {
-		c := nn.Confidence(f.Pixels, 0.5) // smoke tool has no logo signal — pass neutral 0.5
+		c := nn.Confidence(f.Pixels, 0.5, 0.5) // smoke tool has no logo/audio signal — pass neutral 0.5 for both
 		sum += c
 		count++
 		if count%500 == 0 {

@@ -58,6 +58,7 @@ func main() {
 		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
 		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
 		bumperStartTpls = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
+		withAudio       = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
 		bumperSnapS     = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
 		bumperThresh    = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
 		bumperStride    = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
@@ -195,6 +196,7 @@ func main() {
 		BumperTemplates:      parseBumperTemplates(*bumperTemplates),
 		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
 		BumperStride:         *bumperStride,
+		WithAudio:            *withAudio,
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,

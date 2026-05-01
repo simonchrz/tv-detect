@@ -26,26 +26,36 @@ type NNDetector struct {
 	headPath  string
 
 	mu          sync.RWMutex
-	headW       []float32 // 1280 / 1281 / 1286 / 1287 depending on format
+	headW       []float32 // 1280..1288 weights, depending on format
 	headBias    float32
 	headMtime   int64 // last mtime; reload when it changes
 	headLoaded  bool
-	headWithLogo bool // true → weights[1280] = logo-conf coefficient
-	headWithChan bool // true → weights[1280+(0|1) .. +6) = channel one-hot
+	headWithLogo  bool // true → weights[1280] = logo-conf coefficient
+	headWithChan  bool // true → weights[1280+(0|1) .. +6) = channel one-hot
+	headWithAudio bool // true → trailing weight = audio RMS (per-second, [0,1] normalised)
 
 	channelIdx int  // index into nnChannels for our recording, or -1
 }
 
 // Backbone tensor shape: (1, 3, 224, 224). Output: (1, 1280).
 //
-// Four head formats are supported, distinguished at load time by the
+// Six head formats are supported, distinguished at load time by the
 // raw-bytes length of head.bin. Weights are little-endian float32
-// packed back-to-back, followed by a single float32 bias.
+// packed back-to-back, followed by a single float32 bias. Order
+// matches scripts/train-head.py's featurize_recording: backbone,
+// then optional logo, channel, audio (in that order).
 //
 //   - LEGACY                   (5124 B): backbone only, 1280 weights.
-//   - +LOGO                    (5128 B): backbone (1280) + logo conf (1).
-//   - +CHAN                    (5148 B): backbone (1280) + channel one-hot (6).
-//   - +LOGO+CHAN               (5152 B): backbone + logo + channel = 1287 weights.
+//   - +LOGO                    (5128 B): backbone (1280) + logo (1).
+//   - +CHAN                    (5148 B): backbone (1280) + chan (6).
+//   - +LOGO+CHAN               (5152 B): backbone + logo + chan = 1287 weights.
+//   - +LOGO+AUDIO              (5132 B): backbone + logo + audio = 1282 weights.
+//   - +LOGO+CHAN+AUDIO         (5156 B): backbone + logo + chan + audio = 1288 weights.
+//
+// Audio (= per-second normalised RMS, [0,1]) is only ever combined
+// WITH logo because a bare +AUDIO would collide on size with +LOGO.
+// Detection of the format is purely by file size — keep these
+// distinct.
 //
 // nnChannels MUST be appended-to-only — re-ordering or inserting
 // breaks every previously trained head. The Python trainer
@@ -210,12 +220,14 @@ func (d *NNDetector) reloadHead() error {
 	// Auto-detect head format by raw size. Four shapes possible —
 	// see nnChannels comment block for the layout matrix.
 	nC := len(nnChannels)
-	legacyBytes  := (nnFeatDim + 1) * 4              // 5124
-	withLogoBytes := (nnFeatDim + 1 + 1) * 4          // 5128
-	withChanBytes := (nnFeatDim + nC + 1) * 4         // 5148
-	withBothBytes := (nnFeatDim + 1 + nC + 1) * 4     // 5152
+	legacyBytes        := (nnFeatDim + 1) * 4                 // 5124
+	withLogoBytes      := (nnFeatDim + 1 + 1) * 4             // 5128
+	withChanBytes      := (nnFeatDim + nC + 1) * 4            // 5148
+	withLogoChanBytes  := (nnFeatDim + 1 + nC + 1) * 4        // 5152
+	withLogoAudioBytes := (nnFeatDim + 1 + 1 + 1) * 4         // 5132
+	withAllBytes       := (nnFeatDim + 1 + nC + 1 + 1) * 4    // 5156
 	var headDim int
-	var withLogo, withChan bool
+	var withLogo, withChan, withAudio bool
 	switch len(raw) {
 	case legacyBytes:
 		headDim = nnFeatDim
@@ -223,13 +235,17 @@ func (d *NNDetector) reloadHead() error {
 		headDim, withLogo = nnFeatDim+1, true
 	case withChanBytes:
 		headDim, withChan = nnFeatDim+nC, true
-	case withBothBytes:
+	case withLogoChanBytes:
 		headDim, withLogo, withChan = nnFeatDim+1+nC, true, true
+	case withLogoAudioBytes:
+		headDim, withLogo, withAudio = nnFeatDim+1+1, true, true
+	case withAllBytes:
+		headDim, withLogo, withChan, withAudio = nnFeatDim+1+nC+1, true, true, true
 	default:
-		return fmt.Errorf("head file size %d, expected %d/%d/%d/%d "+
-			"(legacy / +logo / +chan / +logo+chan)",
-			len(raw), legacyBytes, withLogoBytes,
-			withChanBytes, withBothBytes)
+		return fmt.Errorf("head file size %d, expected %d/%d/%d/%d/%d/%d "+
+			"(legacy / +logo / +chan / +logo+chan / +logo+audio / +all)",
+			len(raw), legacyBytes, withLogoBytes, withChanBytes,
+			withLogoChanBytes, withLogoAudioBytes, withAllBytes)
 	}
 	weights := make([]float32, headDim)
 	for i := 0; i < headDim; i++ {
@@ -244,6 +260,7 @@ func (d *NNDetector) reloadHead() error {
 	d.headLoaded = true
 	d.headWithLogo = withLogo
 	d.headWithChan = withChan
+	d.headWithAudio = withAudio
 	d.mu.Unlock()
 	return nil
 }
@@ -276,8 +293,8 @@ func (d *NNDetector) MaybeReloadHead() {
 // this is used as the 1281st input feature so the head can learn
 // per-pattern logo trust. For a legacy 1280-weight head, logoConf is
 // silently ignored — caller can still blend externally via NNWeight.
-func (d *NNDetector) Confidence(pixels []byte, logoConf float64) float64 {
-	r := d.ConfidenceBatch([][]byte{pixels}, []float64{logoConf})
+func (d *NNDetector) Confidence(pixels []byte, logoConf, rmsConf float64) float64 {
+	r := d.ConfidenceBatch([][]byte{pixels}, []float64{logoConf}, []float64{rmsConf})
 	if len(r) == 0 {
 		return 0.5
 	}
@@ -290,7 +307,7 @@ func (d *NNDetector) Confidence(pixels []byte, logoConf float64) float64 {
 // dimension of nnBatch; partial batches are zero-padded and only
 // the first len(framesPixels) results are returned. Caller must
 // pass framesPixels and logoConfs of equal length, ≤ nnBatch.
-func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs []float64) []float64 {
+func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs []float64) []float64 {
 	n := len(framesPixels)
 	if n == 0 {
 		return nil
@@ -300,6 +317,9 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs []float64)
 		n = nnBatch
 		framesPixels = framesPixels[:nnBatch]
 		logoConfs = logoConfs[:nnBatch]
+		if rmsConfs != nil {
+			rmsConfs = rmsConfs[:nnBatch]
+		}
 	}
 	in := d.inTensor.GetData()
 	stride := 3 * nnInputH * nnInputW
@@ -329,9 +349,24 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs []float64)
 		}
 		return out
 	}
+	// Layout (matches train-head.py featurize_recording order):
+	//   [0..1280)        backbone
+	//   [1280]           logo  (if headWithLogo)
+	//   [1280+(0|1) ..]  chan one-hot (if headWithChan, len=nC)
+	//   [tail]           audio (if headWithAudio) — appended LAST
 	chanBase := nnFeatDim
 	if d.headWithLogo {
 		chanBase = nnFeatDim + 1
+	}
+	audioIdx := -1
+	if d.headWithAudio {
+		audioIdx = nnFeatDim
+		if d.headWithLogo {
+			audioIdx++
+		}
+		if d.headWithChan {
+			audioIdx += len(nnChannels)
+		}
 	}
 	for i := 0; i < n; i++ {
 		logit := d.headBias
@@ -344,6 +379,16 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs []float64)
 		}
 		if d.headWithChan && d.channelIdx >= 0 {
 			logit += d.headW[chanBase+d.channelIdx]
+		}
+		if d.headWithAudio {
+			// Caller may pass nil rmsConfs for legacy heads — treat
+			// as neutral 0.5 so a missing audio stream doesn't bias
+			// predictions toward show or ad.
+			rms := 0.5
+			if rmsConfs != nil && i < len(rmsConfs) {
+				rms = rmsConfs[i]
+			}
+			logit += d.headW[audioIdx] * float32(rms)
 		}
 		out[i] = sigmoid(logit)
 	}

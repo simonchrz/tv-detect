@@ -28,6 +28,7 @@ type Opts struct {
 	BumperTemplates      []string          // PNG paths for END-of-ad-block reference frames; nil/empty = skip
 	BumperStartTemplates []string          // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
 	BumperStride         int               // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
+	WithAudio            bool              // extract per-second audio RMS once at pipeline start and pass into NN.ConfidenceBatch as the (rms) feature. Required for +AUDIO heads (1282/1288 weights). Skipped when the loaded head doesn't have an audio dim — caller can leave this false to save the ffmpeg pass.
 	NNBackbonePath  string                 // "" = skip NN
 	NNHeadPath      string                 // ignored if backbone is empty
 	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
@@ -90,13 +91,23 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	}
 	plans := planChunks(info.DurationS, w)
 
+	// Audio RMS is per-recording (one ffmpeg pass over the whole
+	// stream) — extract it once here, then each chunk worker indexes
+	// into the same slice. Cheap (~5-10 s on a 1 h recording) and
+	// avoids 4× duplicated ffmpeg passes if every chunk did its own.
+	var audioRMS []float32
+	if opts.WithAudio {
+		audioRMS = signals.ExtractAudioRMSPerSecond(
+			ctx, opts.Input, int(info.DurationS)+1)
+	}
+
 	resCh := make(chan chunkRes, len(plans))
 	var wg sync.WaitGroup
 	for _, p := range plans {
 		wg.Add(1)
 		go func(p chunkPlan) {
 			defer wg.Done()
-			r := runChunk(ctx, opts, p, info)
+			r := runChunk(ctx, opts, p, info, audioRMS)
 			resCh <- r
 		}(p)
 	}
@@ -134,7 +145,7 @@ func planChunks(totalS float64, workers int) []chunkPlan {
 	return plans
 }
 
-func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chunkRes {
+func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, audioRMS []float32) chunkRes {
 	out := chunkRes{index: p.index, startS: p.startS}
 	d, err := decode.NewDecoder(ctx, decode.DecodeOpts{
 		Input:  opts.Input,
@@ -196,15 +207,25 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 	var (
 		nnPxBuf   [][]byte
 		nnLogoBuf []float64
+		nnRmsBuf  []float64
 	)
 	flushNN := func() {
 		if nn == nil || len(nnPxBuf) == 0 {
 			return
 		}
+		// Pass nnRmsBuf only when audio is in play; nil signals the
+		// nn detector to use a neutral 0.5 if its head expects an
+		// audio dim but we have no data (=  recording with no audio
+		// stream).
+		var rmsArg []float64
+		if len(audioRMS) > 0 {
+			rmsArg = nnRmsBuf
+		}
 		out.nnConfs = append(out.nnConfs,
-			toNNConfs(nn.ConfidenceBatch(nnPxBuf, nnLogoBuf))...)
+			toNNConfs(nn.ConfidenceBatch(nnPxBuf, nnLogoBuf, rmsArg))...)
 		nnPxBuf = nnPxBuf[:0]
 		nnLogoBuf = nnLogoBuf[:0]
+		nnRmsBuf = nnRmsBuf[:0]
 	}
 	for f := range d.Frames() {
 		black.Push(f.Index, f.Pixels)
@@ -223,6 +244,19 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info) chu
 			copy(pxCopy, f.Pixels)
 			nnPxBuf = append(nnPxBuf, pxCopy)
 			nnLogoBuf = append(nnLogoBuf, logoConf)
+			// Per-frame audio RMS = the per-second value at the
+			// frame's wall-clock second. audioRMS is indexed by
+			// absolute seconds across the recording; chunk's startS
+			// + frame-local seconds gives that. Out-of-range falls
+			// back to 0.5 (matches Python neutral fallback).
+			rms := 0.5
+			if len(audioRMS) > 0 {
+				absSec := int(p.startS + float64(f.Index)/d.FPS)
+				if absSec >= 0 && absSec < len(audioRMS) {
+					rms = float64(audioRMS[absSec])
+				}
+			}
+			nnRmsBuf = append(nnRmsBuf, rms)
 			if len(nnPxBuf) == nnBatchSize {
 				flushNN()
 			}

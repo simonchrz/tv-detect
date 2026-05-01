@@ -765,7 +765,7 @@ def main():
                     help="sample-weight for pseudo-labelled frames. 0.3× = "
                          "60%% of an auto-only frame (1.0×), 15%% of a user-"
                          "confirmed frame (2.0×). Conservative — pseudo labels "
-                         "are very accurate (~99%) but uniform low weight "
+                         "are very accurate (~99%%) but uniform low weight "
                          "limits damage from any rare wrong ones.")
     ap.add_argument("--co-train", action="store_true",
                     help="train two extra heads alongside the production "
@@ -858,10 +858,10 @@ def main():
                          "frames the hygiene filter is allowed to drop. "
                          "Above this, the recording is left untouched "
                          "(teacher more likely wrong than labels).")
-    ap.add_argument("--source-root", default="",
-                    help="alternative root for .ts files (e.g. local SSD "
-                         "cache). Falls back to <hls-root>/.. if a "
-                         "particular .ts isn't found there.")
+    ap.add_argument("--daemon-cache",
+                    default=str(Path.home() / ".cache/tv-detect-daemon/source"),
+                    help="UUID-keyed .ts cache populated by tv-thumbs-daemon "
+                         "(detect + prefetch). Checked before SMB fallback.")
     args = ap.parse_args()
 
     # --co-train forces the feature flags it needs (otherwise the
@@ -1001,21 +1001,16 @@ def main():
             continue
         base = base_txts[0].stem.replace(".cskp", "")
         title = base.split(" $")[0]
+        # tv-thumbs-daemon caches every detect-fetched .ts AND runs a
+        # background prefetch loop to fill the gaps under
+        # ~/.cache/tv-detect-daemon/source/<uuid>.ts (UUID-keyed, LRU
+        # at SOURCE_CACHE_MAX_GB, orphan-GC). With cap=300 GB the
+        # entire Pi corpus fits, so SMB fallback only triggers when
+        # the daemon hasn't yet pulled a brand-new recording.
         src = None
-        if args.source_root:
-            cand = Path(args.source_root) / title / f"{base}.ts"
-            if cand.exists():
-                src = cand
-        # tv-thumbs-daemon caches every detect-fetched .ts under
-        # ~/.cache/tv-detect-daemon/source/<uuid>.ts (LRU @ 150 GB,
-        # orphan-GC). Same physical files as path-keyed --source-root,
-        # just keyed by UUID. Checking it second turns ~85% SMB-fallback
-        # reads into local NVMe reads when the daemon has been active.
-        if src is None:
-            cand = (Path.home() / ".cache/tv-detect-daemon/source"
-                    / f"{uuid}.ts")
-            if cand.exists():
-                src = cand
+        cand = Path(args.daemon_cache) / f"{uuid}.ts"
+        if cand.exists():
+            src = cand
         if src is None:
             cand = Path(args.hls_root).parent / title / f"{base}.ts"
             if cand.exists():

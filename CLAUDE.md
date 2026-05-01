@@ -409,10 +409,11 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   pseudo_labels.json -newer X | wc` and rely on the next nightly,
   or `rm` them — no data loss either way (they're regenerated).
 
-- **Rebatch ↔ training has a feedback risk.** Rebuilding `tv-detect`
-  changes its mtime → `tv-train-head.sh` runs `tv-detect-rebatch.sh`
-  → ALL `ads.json` files get regenerated with the new binary. Smart-
-  merge with user labels then changes which auto blocks survive in
+- **Re-detect ↔ training has a feedback risk.** A new `head.bin` from
+  nightly training trips the V2 invalidation path in the gateway
+  (`_rec_prewarm_once`): test-set UUIDs get high-prio markers, the
+  rest low-prio, daemon regenerates all `ads.json`. Smart-merge with
+  user labels then changes which auto blocks survive in the next
   training, even when the user's edits are unchanged. Recovery: the
   old `ads_user.json` is still authoritative, retraining stabilises
   within 1–2 runs. NEVER delete `ads_user.json` to "force a clean

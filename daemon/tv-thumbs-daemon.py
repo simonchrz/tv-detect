@@ -86,6 +86,86 @@ SPEAKER_PYTHON = os.environ.get(
     "/Users/simon/ml/tv-classifier/.venv/bin/python")
 SPEAKER_SCRIPTS = Path("/Users/simon/src/tv-detect/scripts")
 
+# Whisper post-processor orchestration (default OFF). When WHISPER_ENABLE=1
+# the daemon does an extra step after tv-detect:
+#   1. tv-whisper-classify.py: .ts → per-window ad-prob JSON
+#      (~50 s on M-series Mac with base model + 4 workers)
+#   2. tv-whisper-postprocess.py: pipes the raw cutlist through, applies
+#      FP-killer / boundary-extend / missed-adder rules from
+#      tv-whisper-eval.py, emits refined cutlist for upload
+# Empirically validated 2026-05-01 on n=9 reviewed: +5.4% mean symmetric
+# Block-IoU, 3 helped / 0 hurt / 6 unchanged. Most gain from boundary-
+# extend on truncated ad-block ends (Charmed +10.6%, The Middle +21.7%).
+# Pass-through-safe: any error preserves the raw cutlist.
+WHISPER_ENABLE = os.environ.get("WHISPER_ENABLE", "0") == "1"
+WHISPER_PYTHON = os.environ.get(
+    "WHISPER_PYTHON",
+    "/Users/simon/ml/tv-classifier/.venv/bin/python")
+WHISPER_SCRIPTS = Path("/Users/simon/src/tvheadend/mac-daemon")
+WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
+if WHISPER_ENABLE:
+    WHISPER_CACHE.mkdir(parents=True, exist_ok=True)
+
+
+def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
+    """Run whisper-classify (idempotent — cached per-uuid) then pipe the
+    raw cutlist through tv-whisper-postprocess. Returns refined cutlist
+    on success, raw cutlist on any error. Adds ~50 s wallclock per
+    detect on the first run; cached runs cost ~3 s (postprocess only)."""
+    if not WHISPER_ENABLE:
+        return raw_cutlist
+    if not src_path or not Path(src_path).is_file():
+        return raw_cutlist
+    whisper_path = WHISPER_CACHE / f"{uuid}.whisper.json"
+    classify_py = WHISPER_SCRIPTS / "tv-whisper-classify.py"
+    postprocess_py = WHISPER_SCRIPTS / "tv-whisper-postprocess.py"
+    if not classify_py.is_file() or not postprocess_py.is_file():
+        return raw_cutlist
+    # Step 1: ensure whisper.json exists (idempotent, returns 0 if fresh)
+    try:
+        r = subprocess.run(
+            [WHISPER_PYTHON, str(classify_py),
+             "--src", str(src_path), "--output", str(whisper_path)],
+            capture_output=True, timeout=300)
+        if r.returncode != 0 or not whisper_path.is_file():
+            err = r.stderr.decode(errors='replace') if r.stderr else ''
+            out = r.stdout.decode(errors='replace') if r.stdout else ''
+            print(f"  detect {uuid[:8]} whisper-classify rc={r.returncode}\n"
+                  f"    stderr (last 600): {err[-600:]}\n"
+                  f"    stdout (last 200): {out[-200:]}",
+                  flush=True)
+            return raw_cutlist
+    except Exception as e:
+        print(f"  detect {uuid[:8]} whisper-classify err: {e}", flush=True)
+        return raw_cutlist
+    # Step 2: pipe raw cutlist through postprocess
+    try:
+        diag_path = WHISPER_CACHE / f"{uuid}.postprocess.json"
+        r = subprocess.run(
+            [WHISPER_PYTHON, str(postprocess_py),
+             "--whisper", str(whisper_path), "--diag-out", str(diag_path)],
+            input=raw_cutlist.encode(),
+            capture_output=True, timeout=30)
+        if r.returncode != 0 or not r.stdout:
+            return raw_cutlist
+        # Diagnostic log line — only when something actually changed
+        try:
+            d = json.loads(diag_path.read_text())
+            n_rm = len(d.get("removed", []))
+            n_ext = len(d.get("extended", []))
+            n_add = len(d.get("added", []))
+            if n_rm or n_ext or n_add:
+                print(f"  detect {uuid[:8]} whisper-refined: "
+                      f"−{n_rm}fp, ⤇{n_ext}ext, +{n_add}new",
+                      flush=True)
+        except Exception:
+            pass
+        return r.stdout.decode(errors="replace")
+    except Exception as e:
+        print(f"  detect {uuid[:8]} whisper-postprocess err: {e}",
+              flush=True)
+        return raw_cutlist
+
 
 def _maybe_evict_source_cache():
     files = sorted(SOURCE_CACHE.glob("*.ts"),
@@ -718,6 +798,15 @@ def process_detect(uuid):
         _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
         return False
     cutlist = result.stdout
+    # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
+    # Re-fetch `local` via get_source: the bumper download loop above
+    # rebinds `local` to the LAST bumper PNG path it processed, which
+    # is wrong here. get_source is cached/idempotent so the second call
+    # is a stat() + return.
+    if WHISPER_ENABLE:
+        local_ts = get_source(uuid)
+        if local_ts:
+            cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
     try:
         http_post_stream(
             f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}",

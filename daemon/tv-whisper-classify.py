@@ -52,15 +52,49 @@ from pathlib import Path
 CLASSIFIER_PATH = Path.home() / ".cache/tv-whisper/classifier.pkl"
 WHISPER_MODEL_DIR = Path.home() / ".cache/whisper"
 FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 WHISPER_CLI = shutil.which("whisper-cli") or "/opt/homebrew/bin/whisper-cli"
 
 
 def probe_duration_s(src: Path) -> float:
-    """Returns float seconds via ffprobe. Raises on error."""
+    """Returns float seconds. Tries fast format=duration first; falls
+    back to slower stream=duration; final fallback is reading the last
+    packet's pts_time. Raises on total failure.
+
+    Some recordings (corrupted DVB streams, mid-recording cuts) report
+    'N/A' for format.duration, which would have crashed earlier."""
+    # Fast path: container-level duration metadata
     out = subprocess.check_output(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(src)], text=True, timeout=30)
-    return float(out.strip())
+        [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)], text=True, timeout=30).strip()
+    if out and out != "N/A":
+        try: return float(out)
+        except ValueError: pass
+    # Fallback: stream-level (= per-track) duration; pick max
+    out = subprocess.check_output(
+        [FFPROBE, "-v", "error", "-show_entries", "stream=duration",
+         "-of", "csv=p=0", str(src)], text=True, timeout=30).strip()
+    durations = [float(d) for d in out.splitlines()
+                 if d and d != "N/A" and d.replace(".", "").isdigit()]
+    if durations:
+        return max(durations)
+    # Final fallback: probe the last packet's pts_time (slow ~ proportional
+    # to duration — for a 90-min .ts on Apple Silicon ~5 s)
+    out = subprocess.check_output(
+        [FFPROBE, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "packet=pts_time", "-of", "csv=p=0",
+         "-read_intervals", "%+#1", str(src)], text=True, timeout=120).strip()
+    # That gave first-packet only; for the LAST one we need full scan
+    # (rare path; only when both fast probes returned N/A)
+    out = subprocess.check_output(
+        [FFPROBE, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "packet=pts_time", "-of", "csv=p=0",
+         str(src)], text=True, timeout=600).strip()
+    pts = [float(t) for t in out.splitlines()
+           if t and t != "N/A" and t.replace(".", "").replace("-", "").isdigit()]
+    if pts:
+        return max(pts)
+    raise RuntimeError(f"ffprobe could not determine duration for {src}")
 
 
 def extract_wav(src: Path, start_s: int, dur_s: int, dest: Path) -> bool:
@@ -88,7 +122,10 @@ def transcribe_one(args):
     out_txt = wav.with_suffix(".txt")
     if r.returncode != 0 or not out_txt.exists():
         return start_s, ""
-    text = out_txt.read_text().strip()
+    # whisper-cli can emit stray non-UTF-8 bytes on noisy audio (esp.
+    # when language detection misfires on music-only segments). Replace
+    # malformed bytes rather than fail the whole window.
+    text = out_txt.read_text(errors="replace").strip()
     # Drop intermediate files now to keep /tmp small during long runs
     try: wav.unlink()
     except OSError: pass

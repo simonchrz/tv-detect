@@ -53,23 +53,9 @@ fi
 # DETECT_OFFLOAD=mac on the Pi gateway means re-detection happens via
 # the HTTP daemon (~/bin/tv-thumbs-daemon.py). Pi's prewarm-loop
 # notices missing/stale cutlist files and writes .detect-requested
-# markers; daemon picks them up. So nightly head changes propagate
-# automatically as soon as the next prewarm cycle runs.
-#
-# Old tv-detect-rebatch.sh path (commented out) iterated all
-# recordings in one Mac-shell pass — disabled now that the daemon
-# handles incremental re-detection. Keep the script around for
-# manual one-off use if needed.
-#TVD_BIN="$HOME/.local/bin/tv-detect"
-#TVD_MARKER="$HOME/.cache/tvd-features/.last-binary-mtime"
-#mkdir -p "$(dirname "$TVD_MARKER")"
-#cur_mt=$(stat -f %m "$TVD_BIN" 2>/dev/null || echo 0)
-#last_mt=$(cat "$TVD_MARKER" 2>/dev/null || echo 0)
-#if [ "$cur_mt" != "$last_mt" ] && [ -x "$HOME/bin/tv-detect-rebatch.sh" ]; then
-#  echo "tv-detect mtime changed ($last_mt → $cur_mt) — running batch re-detect"
-#  "$HOME/bin/tv-detect-rebatch.sh" || echo "rebatch failed; continuing with stale labels"
-#  echo "$cur_mt" > "$TVD_MARKER"
-#fi
+# (test-set) + .detect-requested-low (rest) markers; daemon picks
+# them up V2-style — high prio first, background backfill once idle.
+# Nightly head changes propagate automatically.
 
 # --source-root prefers local SSD copy of recordings (3-4× faster
 # feature extraction than SMB streaming). Recordings only on SMB

@@ -1,0 +1,38 @@
+logoMinX=635
+logoMaxX=663
+logoMinY=44
+logoMaxY=72
+picWidth=720
+picHeight=576
+
+Combined Logo Mask
+‚
+                             
+                             
+                             
+                             
+               ||      ||    
+               |       ||    
+                        |    
+            |           |    
+            |           |    
+            |                
+            |                
+                             
+                             
+              ||      |      
+              |       |      
+              |       |      
+             |       ||      
+    -      -         ||      
+          --        ||       
+      ---           ||       
+                             
+                  --         
+                             
+                             
+           ---               
+                             
+                             
+                             
+                             

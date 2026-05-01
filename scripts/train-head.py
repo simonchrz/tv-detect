@@ -1006,6 +1006,16 @@ def main():
             cand = Path(args.source_root) / title / f"{base}.ts"
             if cand.exists():
                 src = cand
+        # tv-thumbs-daemon caches every detect-fetched .ts under
+        # ~/.cache/tv-detect-daemon/source/<uuid>.ts (LRU @ 150 GB,
+        # orphan-GC). Same physical files as path-keyed --source-root,
+        # just keyed by UUID. Checking it second turns ~85% SMB-fallback
+        # reads into local NVMe reads when the daemon has been active.
+        if src is None:
+            cand = (Path.home() / ".cache/tv-detect-daemon/source"
+                    / f"{uuid}.ts")
+            if cand.exists():
+                src = cand
         if src is None:
             cand = Path(args.hls_root).parent / title / f"{base}.ts"
             if cand.exists():

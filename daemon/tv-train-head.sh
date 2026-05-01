@@ -74,15 +74,37 @@ fi
 # --source-root prefers local SSD copy of recordings (3-4× faster
 # feature extraction than SMB streaming). Recordings only on SMB
 # are still picked up via the script's fallback to $MOUNT/hls/...
+
+# Training-active marker for the /learning page banner. Written to
+# the SMB-mounted models dir (= Pi sees it via the bind mount), so
+# the gateway can show "Training läuft seit N min" without needing
+# any IPC. trap removes it on exit (success OR crash) so a hung
+# script doesn't leave the banner stuck on. The mtime tells the
+# banner WHEN training started.
+TRAIN_MARKER="$MOUNT/hls/.tvd-models/.training-active"
+DURATIONS_FILE="$MOUNT/hls/.tvd-models/.training-durations.jsonl"
+echo "$$" > "$TRAIN_MARKER" 2>/dev/null || true
+trap 'rm -f "$TRAIN_MARKER" 2>/dev/null' EXIT
+TRAIN_START_TS=$(date +%s)
+
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
     --source-root "$LOCAL_CACHE" \
     --surface-uncertain 6 \
     --with-logo \
+    --with-audio \
     --with-minute-prior \
     --with-self-training \
     --write-pseudo-labels
 rc=$?
+
+# Persist the wall-time of this run to the history file so the
+# /learning banner can derive an ETA for future training runs as
+# median(last-N-durations) - elapsed. JSON-lines format = append-
+# only, gateway parses cheaply line-by-line.
+TRAIN_DUR=$(( $(date +%s) - TRAIN_START_TS ))
+echo "{\"ts\":\"$(date -u +%Y%m%dT%H%M%SZ)\",\"dur_s\":$TRAIN_DUR,\"rc\":$rc}" \
+    >> "$DURATIONS_FILE" 2>/dev/null || true
 
 # Cache hygiene: every recording experiment (different --with-* flags)
 # leaves orphan .npy files in tvd-features/ — bumped cache key, old

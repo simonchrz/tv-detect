@@ -576,7 +576,14 @@ def process_detect(uuid):
            "--nn-backbone", str(backbone_path),
            "--nn-head",     str(head_path),
            "--nn-weight",   "0.3",
-           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),
+           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),]
+    # --with-audio when the deployed head was trained with audio
+    # (gateway tells us via the cfg flag; based on head.bin size).
+    # Adds ~5-10 s ffmpeg pass per recording but unlocks the audio
+    # feature in NN inference.
+    if cfg.get("with_audio"):
+        cmd += ["--with-audio"]
+    cmd += [
            # Letterbox-snap with 90s window catches the RTL "Werbung"-
            # promo period that precedes the actual logo-loss: during
            # 16:9-letterboxed RTL self-promos the small RTL badge keeps

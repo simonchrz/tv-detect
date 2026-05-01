@@ -739,7 +739,7 @@ def main():
     while True:
         cycle += 1
         _maybe_gc_orphans()
-        thumbs = hls = detect = []
+        thumbs = hls = detect = detect_low = []
         try:
             thumbs = http_get_json(
                 f"{GATEWAY}/api/internal/thumbs-pending").get("pending", [])
@@ -754,14 +754,29 @@ def main():
             time.sleep(30); continue
         with detect_lock:
             in_flight_n = len(detect_in_flight)
-        # Per-show IoU snapshot — only when bulk-redetect is fully drained
+        # V2 low-prio queue: only fetch when high is fully drained AND
+        # no jobs in flight. This guarantees a freshly arriving manual
+        # /redetect (= high) always wins over background backfill,
+        # without needing preemption — the bg job just doesn't get
+        # picked next cycle. Worst case for high: one currently-running
+        # low job blocks the slot for ~3 min.
+        if not detect and in_flight_n == 0:
+            try:
+                detect_low = http_get_json(
+                    f"{GATEWAY}/api/internal/detect-pending-low"
+                    ).get("pending", [])
+            except Exception:
+                detect_low = []
+        # Per-show IoU snapshot — only when BOTH queues fully drained
         # (otherwise the snapshot would record stale-ads.json IoU=0 for
         # most rows). Marker file dropped by tv-train-head.sh.
-        if not detect and in_flight_n == 0:
+        if not detect and not detect_low and in_flight_n == 0:
             _maybe_fire_snapshot()
-        if thumbs or hls or detect or in_flight_n or cycle % 12 == 1:
+        if (thumbs or hls or detect or detect_low or in_flight_n
+                or cycle % 12 == 1):
             print(f"  [cycle {cycle}] thumbs={len(thumbs)} "
-                  f"hls={len(hls)} detect={len(detect)} "
+                  f"hls={len(hls)} detect={len(detect)}"
+                  f"+{len(detect_low)}bg "
                   f"in_flight={in_flight_n}/{DETECT_PARALLEL}",
                   flush=True)
         thumb_uuids = {j["uuid"] for j in thumbs}
@@ -790,6 +805,17 @@ def main():
             print(f"  → {uuid[:8]} detect=True (parallel slot)", flush=True)
             detect_executor.submit(_run_detect, uuid)
             available -= 1
+        # V2 low-prio: at most ONE bg job per cycle so we re-check high
+        # at the next poll (5s later). Reused _run_detect — gateway-side
+        # cutlist-uploaded clears whichever marker tier triggered it.
+        if available > 0 and detect_low and not detect:
+            j = detect_low[0]
+            uuid = j["uuid"]
+            if uuid not in already and uuid not in cooled:
+                with detect_lock:
+                    detect_in_flight.add(uuid)
+                print(f"  → {uuid[:8]} detect=True (bg slot)", flush=True)
+                detect_executor.submit(_run_detect, uuid)
 
         # HLS / thumbs stay sequential (cheap, doesn't benefit from parallel)
         for uuid in sorted((hls_uuids | thumb_uuids) - cooled):

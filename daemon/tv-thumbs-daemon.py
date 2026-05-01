@@ -102,6 +102,24 @@ def _maybe_evict_source_cache():
 _last_orphan_gc = 0.0
 ORPHAN_GC_INTERVAL_S = 3600  # once per hour
 
+# Source-cache prefetch — fills SOURCE_CACHE with .ts files for
+# recordings the user hasn't viewed/redetected recently. Without this,
+# train-head.py falls back to SMB for the long tail of older reviewed
+# recordings (~46/161 in this corpus). Cycle params chosen to keep
+# wall-clock impact gentle:
+#   * 1800 s between cycles = at most ~25 GB/h pulled (5 files × 5 GB)
+#   * 3 parallel HTTP fetches = saturates Gigabit cleanly while
+#     leaving headroom for live HLS streaming
+#   * skip when ANY detect job in flight (= they have priority on
+#     bandwidth + Pi disk IO)
+#   * skip when SOURCE_CACHE is within 10 GB of cap (LRU would just
+#     evict our fresh prefetches; let the active workload manage)
+PREFETCH_INTERVAL_S = 1800
+PREFETCH_PARALLEL   = 3
+PREFETCH_PER_CYCLE  = 5
+PREFETCH_HEADROOM_GB = 10
+_last_prefetch = 0.0
+
 
 def _maybe_gc_orphans():
     """Drop cached .ts whose recording has been deleted on the Pi.
@@ -134,6 +152,41 @@ def _maybe_gc_orphans():
     if n_removed:
         print(f"  orphan-gc: removed {n_removed} cached .ts "
               f"({bytes_removed/1e6:.0f} MB)", flush=True)
+
+
+def _maybe_prefetch_sources(in_flight_n):
+    """Background-fill SOURCE_CACHE with recordings train-head would
+    otherwise have to read via SMB. Skipped when any detect job is in
+    flight or the cache is already near cap."""
+    global _last_prefetch
+    if in_flight_n > 0:
+        return
+    now = time.time()
+    if now - _last_prefetch < PREFETCH_INTERVAL_S:
+        return
+    used_b = sum(f.stat().st_size for f in SOURCE_CACHE.glob("*.ts"))
+    if used_b > (SOURCE_CACHE_MAX_GB - PREFETCH_HEADROOM_GB) * 1024**3:
+        return
+    try:
+        valid = http_get_json(
+            f"{GATEWAY}/api/internal/recording-uuids").get("uuids", [])
+    except Exception as e:
+        print(f"  prefetch: pi unreachable: {e}", flush=True); return
+    if not valid:
+        return
+    cached = {p.stem for p in SOURCE_CACHE.glob("*.ts")}
+    missing = [u for u in valid if u not in cached]
+    _last_prefetch = now
+    if not missing:
+        return
+    todo = missing[:PREFETCH_PER_CYCLE]
+    print(f"  prefetch: {len(missing)} uncached on pi, fetching "
+          f"{len(todo)} ({PREFETCH_PARALLEL} parallel)", flush=True)
+    from concurrent.futures import ThreadPoolExecutor
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL) as ex:
+        list(ex.map(get_source, todo))
+    print(f"  prefetch: cycle done in {time.time()-t0:.0f}s", flush=True)
 
 
 def get_source(uuid):
@@ -754,6 +807,10 @@ def main():
             time.sleep(30); continue
         with detect_lock:
             in_flight_n = len(detect_in_flight)
+        # Source-cache prefetch — runs only when nothing else is
+        # consuming Pi disk IO / link bandwidth (in_flight_n == 0).
+        # Internal interval gate caps it at one cycle per 30 min.
+        _maybe_prefetch_sources(in_flight_n)
         # V2 low-prio queue: only fetch when high is fully drained AND
         # no jobs in flight. This guarantees a freshly arriving manual
         # /redetect (= high) always wins over background backfill,

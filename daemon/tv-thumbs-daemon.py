@@ -98,6 +98,13 @@ SPEAKER_SCRIPTS = Path("/Users/simon/src/tv-detect/scripts")
 # extend on truncated ad-block ends (Charmed +10.6%, The Middle +21.7%).
 # Pass-through-safe: any error preserves the raw cutlist.
 WHISPER_ENABLE = os.environ.get("WHISPER_ENABLE", "0") == "1"
+# Spot-fingerprint extraction (audio Chromaprint + visual dHash).
+# Default ON — Mac is the source of truth for spot extraction
+# (Pi worker disabled, Mac fast). Drains the gateway queue
+# whenever the daemon is idle (= no detect jobs in flight).
+SPOT_EXTRACT_ENABLE = os.environ.get("SPOT_EXTRACT_ENABLE", "1") == "1"
+SPOT_EXTRACT_SCRIPT = Path(__file__).parent / "tv-spot-extract.py"
+SPOT_EXTRACT_BATCH  = int(os.environ.get("SPOT_EXTRACT_BATCH", "5"))
 WHISPER_PYTHON = os.environ.get(
     "WHISPER_PYTHON",
     "/Users/simon/ml/tv-classifier/.venv/bin/python")
@@ -930,6 +937,34 @@ def main():
         # most rows). Marker file dropped by tv-train-head.sh.
         if not detect and not detect_low and in_flight_n == 0:
             _maybe_fire_snapshot()
+        # Spot-fingerprint backfill drain — runs only when detect/HLS
+        # queues are quiet AND nothing in flight (= avoid CPU + Pi
+        # link contention). Throttled to one batch per ~30 s by the
+        # cycle gate. Subprocess so we keep one ffmpeg ↔ fpcalc
+        # pipeline cleanly contained.
+        if (SPOT_EXTRACT_ENABLE and not detect and not detect_low
+                and not thumbs and not hls
+                and in_flight_n == 0
+                and cycle % 6 == 0
+                and SPOT_EXTRACT_SCRIPT.is_file()):
+            try:
+                q = http_get_json(
+                    f"{GATEWAY}/api/internal/spot-fp/queue")
+                qlen = q.get("n_missing", 0) + q.get("n_partial_no_dhash", 0)
+            except Exception:
+                qlen = 0
+            if qlen > 0:
+                print(f"  spot-fp queue: {qlen} → drain {SPOT_EXTRACT_BATCH}",
+                      flush=True)
+                try:
+                    subprocess.Popen(
+                        [sys.executable, str(SPOT_EXTRACT_SCRIPT),
+                         "--queue", "--limit", str(SPOT_EXTRACT_BATCH)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True)
+                except Exception as e:
+                    print(f"  spot-fp drain spawn err: {e}", flush=True)
         if (thumbs or hls or detect or detect_low or in_flight_n
                 or cycle % 12 == 1):
             print(f"  [cycle {cycle}] thumbs={len(thumbs)} "

@@ -1,4 +1,4 @@
-#!/Library/Developer/CommandLineTools/usr/bin/python3
+#!/opt/homebrew/bin/python3.13
 """Mac-side live-buffer ad detection for the Pi's HLS streams.
 
 Drop-in replacement for the _live_adskip_loop + _live_ads_analyze

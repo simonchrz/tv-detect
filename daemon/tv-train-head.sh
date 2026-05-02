@@ -6,9 +6,11 @@
 # Safe to run by hand at any time; logs append to LOG.
 
 LOG="$HOME/Library/Logs/tv-train-head.log"
-MOUNT="$HOME/mnt/pi-tv"
 VENV_PY="$HOME/ml/tv-classifier/.venv/bin/python"
 SCRIPT="$HOME/src/tv-detect/scripts/train-head.py"
+SNAPSHOT_FETCH="$HOME/bin/tv-train-snapshot-fetch.py"
+SNAPSHOT_DIR="/tmp/tv-train-snapshot"
+GATEWAY="http://raspberrypi5lan:8080"
 
 exec >>"$LOG" 2>&1
 echo "=== $(date '+%F %T') ==="
@@ -19,29 +21,22 @@ echo "=== $(date '+%F %T') ==="
 # (where tv-detect lives if invoked via the Python path).
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
-# SMB mount: macOS sleep/wake or any brief network blip can leave the
-# mount-point alive but pointing to a dead CIFS connection — so we
-# don't trust "is the directory there", we actively re-mount when
-# needed. mount-pi-tv.sh is idempotent (no-op if already up) and pulls
-# the password from login-keychain, so this works under launchd's
-# limited environment too.
-if ! mount | grep -q "on $MOUNT ("; then
-  echo "SMB not mounted at $MOUNT — running mount-pi-tv.sh"
-  if [ -x "$HOME/bin/mount-pi-tv.sh" ]; then
-    "$HOME/bin/mount-pi-tv.sh" || {
-      echo "mount-pi-tv.sh failed — bailing"
-      exit 1
-    }
-  else
-    echo "mount-pi-tv.sh missing — bailing"
-    exit 1
-  fi
-fi
-
+# Metadata snapshot: fetch all ads_user.json + cutlist + minute-prior
+# from the gateway via HTTP into a local mirror at SNAPSHOT_DIR.
+# train-head.py then runs with --hls-root pointing at the mirror,
+# never touching SMB. Replaces the previous mount-pi-tv.sh dance.
 if [ ! -x "$VENV_PY" ]; then
   echo "venv python missing at $VENV_PY"
   exit 1
 fi
+if [ ! -f "$SNAPSHOT_FETCH" ]; then
+  echo "snapshot-fetch helper missing at $SNAPSHOT_FETCH"
+  exit 1
+fi
+"$VENV_PY" "$SNAPSHOT_FETCH" --gateway-url "$GATEWAY" --out "$SNAPSHOT_DIR" || {
+  echo "snapshot fetch failed — bailing"
+  exit 1
+}
 
 # Auto re-detect after binary upgrade: when the tv-detect binary's
 # mtime changes (= new build deployed), all existing .txt cutlists
@@ -59,8 +54,8 @@ fi
 # Source-cache hit-rate: train-head defaults --daemon-cache to
 # ~/.cache/tv-detect-daemon/source/, populated by tv-thumbs-daemon
 # (detect-driven + 30-min prefetch loop). With SOURCE_CACHE_MAX_GB=300
-# the full Pi corpus fits locally → SMB fallback only kicks in for
-# brand-new recordings the daemon hasn't pulled yet.
+# the full Pi corpus fits locally — daemon-cache is the sole source
+# for .ts files since the SMB-fallback was removed (2026-05-02).
 
 # Training-active marker for the /learning page banner. Posted via
 # HTTP (no SMB needed) so the gateway can show "Training läuft seit
@@ -68,13 +63,13 @@ fi
 # the DELETE on exit (success OR crash) so a hung script doesn't
 # leave the banner stuck on. The mtime tells the banner WHEN
 # training started.
-GATEWAY="http://raspberrypi5lan:8080"
 curl -fsS -X POST "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true
 trap 'curl -fsS -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true' EXIT
 TRAIN_START_TS=$(date +%s)
 
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
+    --hls-root "$SNAPSHOT_DIR" \
     --surface-uncertain 6 \
     --with-logo \
     --with-audio \

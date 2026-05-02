@@ -66,14 +66,16 @@ def probe_duration_s(src: Path) -> float:
     # Fast path: container-level duration metadata
     out = subprocess.check_output(
         [FFPROBE, "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(src)], text=True, timeout=30).strip()
+         "-of", "csv=p=0", str(src)], text=True, timeout=30,
+        stderr=subprocess.DEVNULL).strip()
     if out and out != "N/A":
         try: return float(out)
         except ValueError: pass
     # Fallback: stream-level (= per-track) duration; pick max
     out = subprocess.check_output(
         [FFPROBE, "-v", "error", "-show_entries", "stream=duration",
-         "-of", "csv=p=0", str(src)], text=True, timeout=30).strip()
+         "-of", "csv=p=0", str(src)], text=True, timeout=30,
+        stderr=subprocess.DEVNULL).strip()
     durations = [float(d) for d in out.splitlines()
                  if d and d != "N/A" and d.replace(".", "").isdigit()]
     if durations:
@@ -83,13 +85,15 @@ def probe_duration_s(src: Path) -> float:
     out = subprocess.check_output(
         [FFPROBE, "-v", "error", "-select_streams", "v:0",
          "-show_entries", "packet=pts_time", "-of", "csv=p=0",
-         "-read_intervals", "%+#1", str(src)], text=True, timeout=120).strip()
+         "-read_intervals", "%+#1", str(src)], text=True, timeout=120,
+        stderr=subprocess.DEVNULL).strip()
     # That gave first-packet only; for the LAST one we need full scan
     # (rare path; only when both fast probes returned N/A)
     out = subprocess.check_output(
         [FFPROBE, "-v", "error", "-select_streams", "v:0",
          "-show_entries", "packet=pts_time", "-of", "csv=p=0",
-         str(src)], text=True, timeout=600).strip()
+         str(src)], text=True, timeout=600,
+        stderr=subprocess.DEVNULL).strip()
     pts = [float(t) for t in out.splitlines()
            if t and t != "N/A" and t.replace(".", "").replace("-", "").isdigit()]
     if pts:

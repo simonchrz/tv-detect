@@ -138,6 +138,18 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
     except Exception as e:
         print(f"  detect {uuid[:8]} whisper-classify err: {e}", flush=True)
         return raw_cutlist
+    # Push the whisper.json to the gateway so /search can index it.
+    # Best-effort — failure here doesn't affect cutlist refinement.
+    try:
+        body = whisper_path.read_bytes()
+        req = urllib.request.Request(
+            f"{GATEWAY}/api/internal/whisper-reindex?uuid={uuid}",
+            data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception as e:
+        print(f"  detect {uuid[:8]} whisper-reindex push err: {e}",
+              flush=True)
     # Step 2: pipe raw cutlist through postprocess
     try:
         diag_path = WHISPER_CACHE / f"{uuid}.postprocess.json"

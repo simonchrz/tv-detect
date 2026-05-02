@@ -1019,16 +1019,16 @@ def main():
         # background prefetch loop to fill the gaps under
         # ~/.cache/tv-detect-daemon/source/<uuid>.ts (UUID-keyed, LRU
         # at SOURCE_CACHE_MAX_GB, orphan-GC). With cap=300 GB the
-        # entire Pi corpus fits, so SMB fallback only triggers when
-        # the daemon hasn't yet pulled a brand-new recording.
+        # entire Pi corpus fits — daemon-cache is the sole source of
+        # truth for .ts files. SMB-fallback was removed 2026-05-02
+        # along with the hls_root → snapshot-mirror migration
+        # (= hls_root.parent now = /tmp, no .ts there). If a recording
+        # is somehow not cached, skip it; daemon's prefetch loop will
+        # pick it up before the next training run.
         src = None
         cand = Path(args.daemon_cache) / f"{uuid}.ts"
         if cand.exists():
             src = cand
-        if src is None:
-            cand = Path(args.hls_root).parent / title / f"{base}.ts"
-            if cand.exists():
-                src = cand
         if src is None:
             continue
 

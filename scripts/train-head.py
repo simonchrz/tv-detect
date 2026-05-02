@@ -92,11 +92,16 @@ def extract_frames_via_ffmpeg(src, w, h, fps=1.0):
 
 
 def probe_dims(src):
+    # check_output only captures stdout; stderr leaks to parent → log
+    # file when tv-train-head.sh runs us. Some DVB recordings have
+    # damaged sequence headers that emit "[mpeg2video] Invalid frame
+    # dimensions 0x0" at codec-init time, BELOW the `-v error` filter.
+    # Pipe stderr to /dev/null so those warnings stay out of the log.
     out = subprocess.check_output([
         "ffprobe", "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=width,height",
         "-of", "csv=p=0", src,
-    ]).decode().strip()
+    ], stderr=subprocess.DEVNULL).decode().strip()
     # MPEG-TS sometimes lists multiple video streams (e.g. 0x0 SDT
     # noise + the real one); take the first non-zero pair.
     for line in out.splitlines():
@@ -200,18 +205,27 @@ def extract_audio_rms_per_second(src, n_seconds, sample_rate=48000):
     Falls back to a neutral 0.5 array on any failure."""
     neutral = np.full(n_seconds, 0.5, dtype=np.float32)
     try:
+        # ametadata defaults to writing each frame's metadata to
+        # stderr at INFO level. We can't use `-loglevel error` to
+        # suppress the [mpeg2video] codec warnings without losing
+        # those metadata lines. Workaround: ametadata `file=-` →
+        # writes to stdout instead, leaving stderr free to be quieted.
+        # `fatal` level suppresses the warnings but keeps real fatal
+        # errors visible (= empty stdout falls back to neutral, so
+        # we'd notice missing data anyway).
         out = subprocess.run([
-            "ffmpeg", "-nostdin", "-nostats", "-i", str(src),
+            "ffmpeg", "-nostdin", "-nostats", "-loglevel", "fatal",
+            "-i", str(src),
             "-map", "0:a:0", "-ac", "1", "-ar", str(sample_rate),
             "-af", (f"asetnsamples=n={sample_rate},"
                     f"astats=metadata=1:reset=1,"
-                    f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level"),
+                    f"ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-"),
             "-f", "null", "/dev/null"
         ], capture_output=True, text=True, timeout=900)
     except (subprocess.TimeoutExpired, OSError):
         return neutral
     rms_db_seq = []
-    for line in out.stderr.splitlines():
+    for line in out.stdout.splitlines():
         if "RMS_level=" in line:
             v = line.split("=", 1)[-1].strip()
             try:

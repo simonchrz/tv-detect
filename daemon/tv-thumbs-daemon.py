@@ -752,6 +752,17 @@ def process_detect(uuid):
     # feature in NN inference.
     if cfg.get("with_audio"):
         cmd += ["--with-audio"]
+    # Per-recording whisper-prob feed for MLP2 v2 heads. tv-detect
+    # only consumes this when the loaded head has n_whisper>0; for
+    # MLP1 / LogReg heads the flag is silently ignored. The Mac-
+    # local whisper cache is populated by tv-whisper-classify before
+    # detect runs (= same daemon, earlier in the recording's
+    # post-processing pipeline). Missing file → tv-detect logs
+    # "whisper-json load failed" and the head sees neutral 0.5
+    # per frame (= still works, just loses the +0.075 IoU gain).
+    whisper_path = Path.home() / ".cache" / "tv-whisper" / f"{uuid}.whisper.json"
+    if whisper_path.is_file():
+        cmd += ["--nn-whisper-json", str(whisper_path)]
     cmd += [
            # Letterbox-snap with 90s window catches the RTL "Werbung"-
            # promo period that precedes the actual logo-loss: during

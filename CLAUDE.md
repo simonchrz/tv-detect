@@ -74,24 +74,57 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   when NN is unsure). Training is `scripts/train-head.py`, Python
   venv at `~/ml/tv-classifier/.venv` (NOT in this repo).
 
-  **Head format is auto-detected by raw file size** in
-  `internal/signals/nn.go`'s `reloadHead()`. Four shapes possible
-  (each is float32-LE weights packed back-to-back, then 1 float32 bias):
+  **Head format is auto-detected** in `internal/signals/nn.go`'s
+  `reloadHead()`. Two format families:
+
+  **MLP1 v1** (= production default since 2026-05-03 cutover, IoU
+  0.78). Detected via 4-byte magic prefix `MLP1` (= little-endian
+  uint32 0x31504C4D) at file offset 0. Layout: 36-byte header
+  (magic, version=1, input_dim, hidden_dim, output_dim, backbone_dim,
+  n_logo, n_audio, n_channel — all uint32 LE) + W1 row-major + b1 +
+  W2 row-major + b2 (all float32 LE). 1290→32→1 ReLU + sigmoid for
+  the production config (= 9-channel one-hot, 165 544 B). Channel
+  slug → one-hot idx is loaded from a `head.channel-map.json`
+  sidecar next to head.bin (= alphabetical slug list, deterministic
+  per training run, deployed alongside head.bin via the
+  /api/internal/head-bundle endpoint). Unknown slug → mlpChanIdx=-1
+  → all-zero one-hot (= channel-agnostic fallback, never fails the
+  load). Format spec lives at the top of `scripts/train-head.py`
+  (search "MLP head.bin file format"); writer is
+  `write_mlp_head_v1`; Go loader is `loadMLPHead` + `confidenceMLP`.
+  Mac daemon (`tv-thumbs-daemon.py`) fetches the sidecar with each
+  detect spawn from `/api/internal/detect-models/head.channel-map.json`.
+
+  **Legacy LogReg** (= still loaded when MLP1 magic absent, kept for
+  rollback compatibility with anchored older heads). Auto-detected
+  by raw file size — each is float32-LE weights packed back-to-back,
+  then 1 float32 bias:
     - 5124 B = LEGACY: 1280 backbone weights only.
     - 5128 B = +LOGO: backbone (1280) + logo conf (1).
+    - 5132 B = +LOGO+AUDIO: backbone + logo + audio = 1282 weights.
     - 5148 B = +CHAN: backbone (1280) + channel one-hot (6).
     - 5152 B = +LOGO+CHAN: backbone + logo + channel = 1287 weights.
-  Channel slot order is hard-coded as `nnChannels = [kabel-eins,
-  prosieben, rtl, sat-1, sixx, vox]` and the same list lives in
-  `scripts/train-head.py`. APPEND-ONLY: re-ordering or inserting
-  silently mis-maps every previously-trained head's channel weights.
-  As of this session, default deploy is +LOGO (5128 B).
+    - 5156 B = +LOGO+CHAN+AUDIO: backbone + logo + channel + audio = 1288.
+  Channel slot order for the legacy size-detected formats is
+  hard-coded as `nnChannels = [kabel-eins, prosieben, rtl, sat-1,
+  sixx, vox]`. APPEND-ONLY: re-ordering or inserting silently
+  mis-maps every previously-trained head's channel weights. Pre-MLP
+  default was +LOGO+AUDIO (5132 B, last seen with IoU 0.63).
 
 - **Self-improving training loop** runs nightly via launchd:
   `~/Library/LaunchAgents/com.user.tv-train-head.plist` triggers
   `~/bin/tv-train-head.sh` at 03:30 → invokes train-head.py with
-  `--with-logo --with-minute-prior --with-self-training
-  --write-pseudo-labels --surface-uncertain 6`. Each run:
+  `--with-logo --with-audio --with-minute-prior --with-self-training
+  --write-pseudo-labels --surface-uncertain 6 --head-arch
+  mlp32-channel`. The `--head-arch mlp32-channel` flag (added in
+  the 2026-05-03 cutover) replaces the legacy LogReg fit at write
+  time with a 1290→32→1 MLP+channel head; `clf` (LogReg) stays for
+  the held-out eval, label-hygiene teacher, sub-heads, and active-
+  learning surface (= LogReg uncertainty is good enough for
+  surfacing). Override with `--head-arch logreg` for a forced
+  rollback fit. Shadow-eval against the same train/test split via
+  `--shadow-eval` (compares LogReg vs MLP-32 vs MLP-32+channel vs
+  MLP-32+temporal — pure measurement, never deploys). Each run:
     1. Holds out 20 % of recordings (deterministic uuid hash) for
        per-show test metrics: per-frame Acc, F1, Block-IoU.
     2. Smart-merges `ads.json` (auto) + `ads_user.json` (user) per
@@ -209,6 +242,17 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   feature engineering once the linear head has the headroom to
   absorb additional dimensions without dropping known wins.
 
+  **Update 2026-05-03**: hit N=149 reviewed. The structural change
+  the ceiling was warning against (= switching from a linear head
+  to a small MLP) DID work: shadow-eval showed +0.22 IoU for
+  MLP-32 + channel one-hot vs LogReg, production deploy delivered
+  +0.15 (0.63 → 0.78 Block-IoU). Lesson holds for ADDING COLUMNS
+  to the linear head; switching the head MODEL itself changes the
+  capacity argument. Don't re-pitch new feature columns under the
+  LogReg path now that MLP is the production path; suggest as MLP
+  inputs instead, where 32-hidden-unit non-linearity absorbs them
+  without the L2-balance fragility the linear head suffered.
+
 - **DVB subtitles as a feature: dead path on this hardware.**
   Investigated 2026-04-27 because broadcasters don't subtitle ads —
   would have been a near-binary ad/show signal. ffprobe survey
@@ -236,8 +280,14 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   Use anchors at semantic milestones (letterbox fix, IoU
   thresholds, dataset-size jumps), NOT for every nightly retrain
   — the rolling `archive/head.<unix-ts>.bin` already covers that.
-  First anchor: `letterbox-fix-2026-04-27` (post-cropdetect, IoU
-  0.73 / Acc 96 %).
+  Anchor history (newest first):
+    - `mlp-head-cutover-2026-05-03` — MLP1 v1 production cutover,
+      IoU 0.78 / Acc 97.5 % (= +0.15 IoU vs prior LogReg).
+    - `full-logo-coverage-2026-05-03` — all 24 favourited channels
+      have logo templates, IoU 0.63 / Acc 96.7 % (last LogReg).
+    - `per-channel-bumpers-2026-04-30` — per-slug bumper threshold
+      tuning, IoU 0.56.
+    - `letterbox-fix-2026-04-27` — post-cropdetect, IoU 0.73.
 
 - **`scripts/bumper-detect.py`**: ffmpeg `blackdetect ∩
   silencedetect` helper. Outputs `_rec_*/bumpers.json` with
@@ -383,13 +433,26 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   acc-drop=0.03` (3 pp).
 
 - **`--with-channel` hurts minority channels with sparse training
-  data.** Empirical (2026-04-26): switching from no-channel
-  (1281 dims) to channel-one-hot (1287 dims) on a 26-rec dataset
-  with 1 hundkatzemaus (VOX) recording crashed VOX IoU 0.51 → 0.14.
-  Channel-one-hot ISOLATES per-channel bias instead of sharing
-  patterns across the pool — useful when each channel has 5+ recs,
-  catastrophic when some have 0–1. Currently OFF in the nightly.
-  Re-enable when every active channel has ≥ 3 train recs.
+  data IN THE LOGREG PATH.** Empirical (2026-04-26): switching from
+  no-channel (1281 dims) to channel-one-hot (1287 dims) on a 26-rec
+  dataset with 1 hundkatzemaus (VOX) recording crashed VOX IoU 0.51
+  → 0.14. Channel-one-hot under LogReg ISOLATES per-channel bias
+  instead of sharing patterns across the pool.
+
+  **Update 2026-05-03 — MLP path is different.** With `--head-arch
+  mlp32-channel` the channel one-hot is concatenated to the input
+  of the MLP (= 32 hidden units learn shared + per-channel patterns
+  jointly via non-linearity). At N=149 reviewed across 9 channel
+  slugs in the corpus, channel one-hot was the single biggest IoU
+  contributor (shadow-eval: MLP +0.13 vs LogReg, MLP+channel +0.22
+  vs LogReg). The 6-channel hard-coded `nnChannels` list is OBSOLETE
+  for the MLP path — channel slug → idx now resolves dynamically
+  from the `head.channel-map.json` sidecar (alphabetical). Unknown
+  slug → all-zero one-hot fallback (= channel-agnostic prediction,
+  no crash). Sparse-channel risk still exists for channels with
+  ≤1 train rec, but the failure mode is "channel weights stay near
+  init" not "global decision boundary tilts wrong" like the LogReg
+  case.
 
 - **Catastrophic interference is real with N≈25 train recordings.**
   Adding 2–3 fresh user-confirmed recordings can shift the

@@ -95,7 +95,8 @@ done
     --with-audio \
     --with-minute-prior \
     --with-self-training \
-    --write-pseudo-labels
+    --write-pseudo-labels \
+    --head-arch mlp32-channel
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

@@ -1676,6 +1676,7 @@ def main():
             brier_cal = float(np.mean((cal_proba - y_test) ** 2))
             calibration = {
                 "method": "platt",
+                "head_arch": "logreg",
                 "A": A, "B": B,
                 "n_calibration_frames": int(len(y_test)),
                 "n_calibration_recs": len(test_recs),
@@ -1787,6 +1788,54 @@ def main():
         metrics_smooth = metrics_smooth_mlp
         mlp_prod_chan_slugs = prod_chan_slugs
         mlp_prod_in_dim = X_train_ch.shape[1]
+
+        # Phase D: Platt calibration on MLP logits. MLPClassifier
+        # exposes predict_proba (= already sigmoid'd); recover logits
+        # via the inverse: logit = log(p / (1-p)). Then fit the same
+        # σ(A*logit + B) Platt model the LogReg path uses, override
+        # the `calibration` dict so the existing sidecar-write block
+        # downstream emits MLP-appropriate values. The gateway's
+        # active-learning surface + future Go-side calibration paths
+        # consume head.calibration.json without caring about the
+        # underlying head architecture — same shape, MLP numbers.
+        from sklearn.linear_model import LogisticRegression as _LR_for_cal
+        X_test_concat = np.concatenate(
+            [r[3] for r in test_recs_ch
+             if r[3] is not None and len(r[3]) > 0])
+        y_test_concat = np.concatenate(
+            [r[4] for r in test_recs_ch
+             if r[3] is not None and len(r[3]) > 0])
+        if len(y_test_concat) > 0:
+            proba_mlp = mlp_prod_clf.predict_proba(X_test_concat)[:, 1]
+            # Clamp to (eps, 1-eps) so log(p/(1-p)) is finite even
+            # when MLP saturates. eps=1e-6 keeps the tail of the
+            # logit distribution sane (= log(1e6/1) ≈ 13.8) while
+            # not drowning out genuine confidence with truncation.
+            eps = 1e-6
+            p_clip = np.clip(proba_mlp, eps, 1.0 - eps)
+            logits_mlp = np.log(p_clip / (1.0 - p_clip))
+            cal_mlp = _LR_for_cal(max_iter=2000, C=1e6, verbose=0)
+            cal_mlp.fit(logits_mlp.reshape(-1, 1), y_test_concat)
+            A_mlp = float(cal_mlp.coef_[0][0])
+            B_mlp = float(cal_mlp.intercept_[0])
+            raw_proba_mlp = proba_mlp
+            cal_proba_mlp = 1.0 / (1.0 + np.exp(-(A_mlp * logits_mlp + B_mlp)))
+            brier_raw_mlp = float(np.mean((raw_proba_mlp - y_test_concat) ** 2))
+            brier_cal_mlp = float(np.mean((cal_proba_mlp - y_test_concat) ** 2))
+            calibration = {
+                "method": "platt",
+                "head_arch": "mlp32-channel",
+                "A": A_mlp, "B": B_mlp,
+                "n_calibration_frames": int(len(y_test_concat)),
+                "n_calibration_recs": len(test_recs_ch),
+                "brier_raw": brier_raw_mlp,
+                "brier_calibrated": brier_cal_mlp,
+                "improvement": brier_raw_mlp - brier_cal_mlp,
+            }
+            arrow = "✓" if brier_cal_mlp < brier_raw_mlp else "✗"
+            print(f"\nMLP calibration: Platt A={A_mlp:+.3f} "
+                  f"B={B_mlp:+.3f}  Brier "
+                  f"{brier_raw_mlp:.4f} → {brier_cal_mlp:.4f} {arrow}")
 
     # ── Shadow architecture comparison (--shadow-eval) ────────────
     # Compare 3 alternative head architectures against the production

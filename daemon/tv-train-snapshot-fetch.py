@@ -71,9 +71,26 @@ def main():
             (d / "pseudo_labels.json").write_text(
                 json.dumps(r["pseudo_labels"]))
             n_pseudo += 1
-        if r.get("cutlist_text", "").strip():
-            (d / f"{r['base']}.txt").write_text(r["cutlist_text"])
+        # train-head only needs the cutlist .txt to EXIST with the
+        # right basename (= "Show $YYYY-MM-DD-HHMM.txt") — its content
+        # is parsed as a fallback only when ads_user/ads.json is
+        # absent. After a head deploy V2 truncates ads.txt to 0 B
+        # until the daemon re-detects, so a content-only check would
+        # silently drop the entire post-deploy corpus from training.
+        # Write it either way; train-head reads ads from ads_user.
+        if r.get("base"):
+            (d / f"{r['base']}.txt").write_text(r.get("cutlist_text") or "")
             n_cutlist += 1
+        # Cluster-anchored ad spots: silence-aligned spots from this
+        # recording whose audio+visual fingerprint matches a known
+        # cluster (≥3 family members across corpus). High-confidence
+        # ad anchors that train-head treats as bonus-weight ad labels
+        # (= 1.5× user-base) — useful both as a sanity-check on
+        # reviewed recordings and as pseudo-label anchors on
+        # unreviewed ones.
+        if r.get("cluster_anchored"):
+            (d / "cluster_anchored.json").write_text(
+                json.dumps(r["cluster_anchored"]))
         if r.get("has_index_m3u8"):
             (d / "index.m3u8").write_text("")  # marker; only .exists()
                                                 # is checked downstream

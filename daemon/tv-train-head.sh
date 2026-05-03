@@ -87,6 +87,7 @@ done
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
     --backbone "$LOCAL_BACKBONE" \
+    --logo-dir "$HOME/.cache/tv-detect-daemon/logos" \
     --output "$TRAIN_OUT/head.bin" \
     --hls-root "$SNAPSHOT_DIR" \
     --surface-uncertain 6 \

@@ -213,8 +213,13 @@ def evaluate_one(rec_dir: Path, whisper_dir: Path) -> dict | None:
 
 def main():
     ap = argparse.ArgumentParser()
+    # Standalone eval tool — fetch ads_user.json + ads.json on demand
+    # via the gateway HTTP endpoints rather than expect SMB.
     ap.add_argument("--hls-root", type=Path,
-                    default=Path("/Users/simon/mnt/pi-tv/hls"))
+                    default=Path("/tmp/tv-train-snapshot"),
+                    help="snapshot mirror dir (= populated by "
+                         "tv-train-snapshot-fetch.py). Pre-SMB-migration "
+                         "this defaulted to ~/mnt/pi-tv/hls — replaced.")
     ap.add_argument("--whisper-dir", type=Path,
                     default=Path.home() / ".cache/tv-whisper")
     ap.add_argument("--uuids-file", type=Path,

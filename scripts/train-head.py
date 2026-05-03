@@ -36,6 +36,86 @@ import numpy as np
 import onnxruntime as ort
 
 
+# ── MLP head.bin file format (v1) ────────────────────────────────
+# A single-hidden-layer MLP (1290→32→1 typical) serialised as a flat
+# byte stream that the Go inference path can mmap. Distinct from the
+# legacy LogReg head.bin (5128/5132/5148/5152/5156 B size-detected)
+# via a 4-byte magic prefix — Go discriminates by magic, not by size,
+# so MLP heads can have arbitrary widths without breaking detection.
+#
+# Layout, all integers little-endian uint32, all weights little-endian
+# float32, packed back-to-back:
+#
+#   bytes  field           value
+#   0..3   magic           "MLP1" (= 0x4D 0x4C 0x50 0x31)
+#   4..7   version         1
+#   8..11  input_dim       D    (e.g. 1290 = 1280 backbone+1 logo+1 audio+8 chan)
+#   12..15 hidden_dim      H    (e.g. 32)
+#   16..19 output_dim      O    (= 1; sigmoid'd at inference, kept for fwd-compat)
+#   20..23 backbone_dim    1280 (sanity check vs. ONNX backbone output)
+#   24..27 n_logo          0 or 1  (logo-conf input present?)
+#   28..31 n_audio         0 or 1  (audio-RMS input present?)
+#   32..35 n_channel       0..N    (size of channel one-hot block; slug→idx
+#                                   resolution lives in head.channel-map.json)
+#   36..(36+D*H*4)         W1   (D*H float32, ROW-MAJOR: input i, hidden j → idx i*H+j)
+#   ...                    b1   (H float32)
+#   ...                    W2   (H*O float32, row-major)
+#   ...                    b2   (O float32)
+#
+# Inference (per frame, after building x = [backbone(1280), logo?, audio?, chan_onehot?]):
+#   h     = max(0, x @ W1 + b1)         # ReLU activation
+#   logit = h @ W2 + b2                 # shape (O,) — for O=1, scalar
+#   prob  = 1 / (1 + exp(-logit))       # sigmoid (for O=1)
+#
+# Total size: 36 + (D*H + H + H*O + O) * 4 bytes. For 1290/32/1: 165 416 B.
+#
+# Channel-one-hot at inference: load head.channel-map.json sidecar,
+# look up the recording's channel slug → idx; one-hot column at idx
+# equals 1.0, all others 0.0. Unknown slug → all-zero one-hot
+# (model degrades gracefully to "channel-agnostic" prediction).
+def write_mlp_head_v1(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0):
+    """Serialise a trained sklearn MLPClassifier (single hidden layer,
+    ReLU, logistic output) to the v1 MLP head.bin format. The MLP must
+    have hidden_layer_sizes=(hidden_dim,) and binary output.
+
+    Writes path atomically (= path.tmp + rename) so a crash mid-write
+    can't leave Go consumers reading a partial file."""
+    import struct
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if backbone_dim + n_logo + n_audio + n_channel != input_dim:
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel}")
+    header = struct.pack("<8I",
+                         0x31504C4D,  # "MLP1" little-endian = M(4D)L(4C)P(50)1(31)
+                         1, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio)
+    header += struct.pack("<I", n_channel)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 def slugify(name):
     s = name.lower()
     for k, v in {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}.items():
@@ -1701,16 +1781,47 @@ def main():
             mlp.fit(X_os, y_os)
             print(f"  fit done in {mlp.n_iter_} epochs, "
                   f"loss={mlp.loss_:.4f}")
-            return eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
+            metrics = eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
+            return metrics, mlp, X_aug.shape[1]
 
         print("\n" + "=" * 70)
         print(f"SHADOW EVAL — {n_chan} channel slugs in corpus")
         print("=" * 70)
-        m_v1 = _fit_eval("MLP-32 (1282→32→1)", lambda X, _s: X)
-        m_v2 = _fit_eval(f"MLP-32 + channel one-hot (+{n_chan} dim)",
-                         _augment_channel)
-        m_v3 = _fit_eval("MLP-32 + temporal L2 deltas (+2 dim)",
-                         _augment_temporal)
+        m_v1, mlp_v1, _ = _fit_eval("MLP-32 (1282→32→1)", lambda X, _s: X)
+        m_v2, mlp_v2, in_dim_v2 = _fit_eval(
+            f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel)
+        m_v3, mlp_v3, _ = _fit_eval(
+            "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal)
+
+        # Persist the MLP+channel variant in v1-MLP head.bin format
+        # (= what the Go forward-pass loader will consume). Sidecar
+        # head.channel-map.json is co-written by the deploy block
+        # below; this dumps to a parallel tree so it doesn't collide
+        # with a production deploy. Use this file to bootstrap Go-
+        # side regression tests before the production switch.
+        try:
+            shadow_dir = Path(args.output).parent / "shadow"
+            shadow_dir.mkdir(parents=True, exist_ok=True)
+            mlp_path = shadow_dir / "head.mlp32-channel.bin"
+            n_audio_used = 1 if args.with_audio else 0
+            n_logo_used = 1 if args.with_logo else 0
+            sz = write_mlp_head_v1(
+                mlp_path, mlp_v2,
+                input_dim=in_dim_v2, hidden_dim=32,
+                backbone_dim=1280, n_logo=n_logo_used,
+                n_audio=n_audio_used, n_channel=n_chan)
+            # Sidecar with the slug list — deterministic alphabetical
+            # order matching chan_slugs above; Go reads this to map
+            # an inference-time slug to the one-hot column.
+            cm_path = shadow_dir / "head.mlp32-channel.channel-map.json"
+            cm_path.write_text(json.dumps({
+                "version": 1, "n": n_chan,
+                "slugs": chan_slugs,
+            }, indent=2))
+            print(f"\n  shadow MLP head written: {mlp_path} ({sz} B)")
+            print(f"  shadow channel-map:      {cm_path.name}")
+        except Exception as e:
+            print(f"\n  shadow MLP write err: {e}")
 
         base_iou = metrics_smooth["iou"]
         base_acc = metrics_smooth["acc"]

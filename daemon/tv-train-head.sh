@@ -69,10 +69,20 @@ TRAIN_START_TS=$(date +%s)
 
 # Local output dir — head.bin + sidecars + archive/ all land here.
 # Old SMB-mounted path was ~/mnt/pi-tv/hls/.tvd-models/ which broke
-# when SMB unmounted; we now write locally and rsync to Pi at end.
+# when SMB unmounted; we now write locally and POST to Pi at end.
 TRAIN_OUT="/tmp/tv-train-head-out"
 mkdir -p "$TRAIN_OUT"
 LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
+
+# Prefetch head.history.json from Pi so train-head appends to the
+# existing trail rather than writing a single-entry file. Same for
+# head.test-set.json so the test-composition-changed reason fires
+# correctly (compare against actual previous test-set, not "first
+# run"). 404 just means none-yet-on-Pi → start fresh, fine.
+for f in head.history.json head.test-set.json head.calibration.json; do
+  curl -fsS -o "$TRAIN_OUT/$f" \
+      "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
+done
 
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \

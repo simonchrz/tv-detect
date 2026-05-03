@@ -837,6 +837,16 @@ def main():
                          "overlays, brand cards), shows are textured. "
                          "1 extra input dim. EXPERIMENTAL: Go-side head "
                          "loader needs new size before deploying.")
+    ap.add_argument("--shadow-eval", action="store_true",
+                    help="after the production LogReg fit + eval, also "
+                         "train + evaluate three architectural variants "
+                         "(MLP-32, MLP-32 + 24-channel one-hot, MLP-32 + "
+                         "temporal L2 deltas) on the same train/test split "
+                         "and print a comparison table. Pure measurement "
+                         "— shadow heads are NOT written or deployed; the "
+                         "LogReg path proceeds normally. Use this to "
+                         "decide whether a structural head change is "
+                         "worth a full migration.")
     ap.add_argument("--with-channel", action="store_true",
                     help="append a 6-dim sparse one-hot of the channel "
                          "(kabel-eins/prosieben/rtl/sat-1/sixx/vox) as "
@@ -1604,6 +1614,121 @@ def main():
                                smooth_s=10,
                                output_path=Path(args.output).with_suffix(".confusion.txt"))
 
+    # ── Shadow architecture comparison (--shadow-eval) ────────────
+    # Compare 3 alternative head architectures against the production
+    # LogReg on the SAME train/test split. Pure measurement — shadow
+    # heads are NOT written, archived, deployed, or fed back into
+    # history.json. Use the printed table to decide if a structural
+    # head migration is worth pursuing.
+    #
+    # Simplification vs production fit: shadow ignores the hygiene
+    # frame-mask + age-decay weighting + bumper boosts + skip-press
+    # signals. Captures only `user_weight×` for ads_user-confirmed
+    # recordings (the dominant signal). All three variants share the
+    # same simplification → relative ordering between variants is
+    # apples-to-apples; comparison vs the LogReg baseline carries
+    # this caveat (LogReg used the full pipeline).
+    if args.shadow_eval and test_recs and metrics_smooth:
+        from sklearn.neural_network import MLPClassifier
+
+        # Channel slug → idx (alphabetical for determinism, only slugs
+        # actually present in train+test get a column — keeps the
+        # one-hot tight at the corpus's true channel count).
+        chan_slugs = sorted({uuid_slug.get(r[0], "")
+                             for r in train_recs + test_recs} - {""})
+        chan_idx = {s: i for i, s in enumerate(chan_slugs)}
+        n_chan = len(chan_slugs)
+
+        def _augment_channel(X, slug):
+            T = X.shape[0]
+            oh = np.zeros((T, n_chan), dtype=np.float32)
+            if slug in chan_idx:
+                oh[:, chan_idx[slug]] = 1.0
+            return np.hstack([X, oh])
+
+        def _augment_temporal(X, slug):
+            # |X[t] - X[t-1]| and |X[t] - X[t+1]| as 2 extra dims.
+            # Captures scene-change signal that per-frame backbone
+            # embeddings can't see — boundary detection lever.
+            T = X.shape[0]
+            dp = np.zeros(T, dtype=np.float32)
+            dn = np.zeros(T, dtype=np.float32)
+            if T > 1:
+                d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+                dp[1:] = d
+                dn[:-1] = d
+            return np.column_stack([X, dp, dn]).astype(np.float32)
+
+        def _build_train(recs, augment):
+            Xs, ys, sws = [], [], []
+            for r in recs:
+                slug = uuid_slug.get(r[0], "")
+                X_aug = augment(r[3], slug)
+                y = r[4]
+                base_w = args.user_weight if r[5] else 1.0
+                sw = np.full(len(y), base_w, dtype=np.float32)
+                Xs.append(X_aug); ys.append(y); sws.append(sw)
+            return (np.concatenate(Xs), np.concatenate(ys),
+                    np.concatenate(sws))
+
+        def _augment_test_recs(recs, augment):
+            out = []
+            for r in recs:
+                slug = uuid_slug.get(r[0], "")
+                X_aug = augment(r[3], slug)
+                out.append((r[0], r[1], r[2], X_aug, r[4]) + tuple(r[5:]))
+            return out
+
+        def _oversample(X, y, sw):
+            # MLPClassifier doesn't accept sample_weight; replicate
+            # rows by their integer weight (user_weight=2 → user
+            # frames appear 2×). Cheap + faithful approximation.
+            w = np.maximum(np.round(sw).astype(np.int32), 1)
+            idx = np.repeat(np.arange(len(X)), w)
+            return X[idx], y[idx]
+
+        def _fit_eval(name, augment, hidden=(32,)):
+            X_aug, y_aug, sw_aug = _build_train(train_recs, augment)
+            test_aug = _augment_test_recs(test_recs, augment)
+            X_os, y_os = _oversample(X_aug, y_aug, sw_aug)
+            print(f"\n=== Shadow variant: {name} ===")
+            print(f"  feature dim: {X_aug.shape[1]}, "
+                  f"train frames: {len(X_aug)} → {len(X_os)} oversampled, "
+                  f"hidden: {hidden}")
+            mlp = MLPClassifier(hidden_layer_sizes=hidden, max_iter=80,
+                                random_state=0, early_stopping=True,
+                                validation_fraction=0.1, verbose=False)
+            mlp.fit(X_os, y_os)
+            print(f"  fit done in {mlp.n_iter_} epochs, "
+                  f"loss={mlp.loss_:.4f}")
+            return eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
+
+        print("\n" + "=" * 70)
+        print(f"SHADOW EVAL — {n_chan} channel slugs in corpus")
+        print("=" * 70)
+        m_v1 = _fit_eval("MLP-32 (1282→32→1)", lambda X, _s: X)
+        m_v2 = _fit_eval(f"MLP-32 + channel one-hot (+{n_chan} dim)",
+                         _augment_channel)
+        m_v3 = _fit_eval("MLP-32 + temporal L2 deltas (+2 dim)",
+                         _augment_temporal)
+
+        base_iou = metrics_smooth["iou"]
+        base_acc = metrics_smooth["acc"]
+        print("\n" + "=" * 70)
+        print("SHADOW COMPARISON (smooth=10s, test set)")
+        print("=" * 70)
+        print(f"  {'arch':35s}  {'IoU':>6}  {'Δ vs LR':>9}  {'acc':>6}")
+        print(f"  {'baseline LogReg (production)':35s}  "
+              f"{base_iou:>6.3f}  {'(ref)':>9}  {base_acc*100:>5.1f}%")
+        for name, m in [("MLP-32", m_v1),
+                        (f"MLP-32 + channel ({n_chan})", m_v2),
+                        ("MLP-32 + temporal", m_v3)]:
+            d = m["iou"] - base_iou
+            mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
+            print(f"  {name:35s}  {m['iou']:>6.3f}  "
+                  f"{d:>+9.3f}  {m['acc']*100:>5.1f}%{mark}")
+        print()
+
     # ── Self-Training (Phase A, validation only) ─────────────────
     # Test how reliable our pseudo-labels would be: for each TEST
     # recording the head was never trained on, predict probabilities,
@@ -2069,6 +2194,28 @@ def main():
             print(f"  test-set sidecar: {ts_path.name} ({len(test_uuids)} uuids)")
         except Exception as e:
             print(f"  test-set sidecar err: {e}")
+        # Channel-map sidecar — alphabetically-sorted list of channel
+        # slugs present in the (train + test) corpus. Index in the list
+        # IS the one-hot column the MLP+channel head would use. Written
+        # unconditionally (independent of --shadow-eval / --with-channel)
+        # so an MLP head migration in Go has the slug→idx map already
+        # version-locked next to head.bin. Empty slugs (= recordings
+        # without a known channel) excluded; deploy-time fallback for an
+        # unknown slug is "all-zero one-hot" handled by the Go loader.
+        try:
+            chan_slugs = sorted({uuid_slug.get(r[0], "")
+                                 for r in train_recs + test_recs} - {""})
+            cm_path = Path(args.output).with_suffix(".channel-map.json")
+            cm_path.write_text(json.dumps({
+                "ts": ts,
+                "version": 1,
+                "n": len(chan_slugs),
+                "slugs": chan_slugs,
+            }, indent=2))
+            print(f"  channel-map sidecar: {cm_path.name} "
+                  f"({len(chan_slugs)} slugs)")
+        except Exception as e:
+            print(f"  channel-map sidecar err: {e}")
     else:
         print(f"\nREJECTED — kept previous {args.output}")
         print(f"  candidate archived as {archive_path.name}")

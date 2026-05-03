@@ -1,9 +1,12 @@
 package signals
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -34,7 +37,26 @@ type NNDetector struct {
 	headWithChan  bool // true → weights[1280+(0|1) .. +6) = channel one-hot
 	headWithAudio bool // true → trailing weight = audio RMS (per-second, [0,1] normalised)
 
-	channelIdx int  // index into nnChannels for our recording, or -1
+	channelSlug string // recording's channel slug, stored for MLP re-resolution after sidecar reload
+	channelIdx int     // index into nnChannels for our recording, or -1
+
+	// MLP-head state (when headIsMLP=true; LogReg fields above are
+	// unused). Loaded from a "MLP1" magic-prefixed head.bin as
+	// specified in scripts/train-head.py write_mlp_head_v1.
+	headIsMLP    bool
+	mlpInDim     int       // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel)
+	mlpHidden    int       // hidden-layer size (e.g. 32)
+	mlpOutDim    int       // = 1 today; v1 carries the field for fwd-compat
+	mlpBackbone  int       // sanity vs nnFeatDim
+	mlpNLogo     int       // 0 or 1
+	mlpNAudio    int       // 0 or 1
+	mlpNChannel  int       // size of channel one-hot block
+	mlpW1        []float32 // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
+	mlpB1        []float32 // mlpHidden
+	mlpW2        []float32 // (mlpHidden, mlpOutDim) row-major
+	mlpB2        []float32 // mlpOutDim
+	mlpChanMap   map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
+	mlpChanIdx   int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
 }
 
 // Backbone tensor shape: (1, 3, 224, 224). Output: (1, 1280).
@@ -186,8 +208,10 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlu
 	d := &NNDetector{
 		session: sess, inTensor: inT, outTensor: outT,
 		frameW: frameW, frameH: frameH,
-		headPath:   headPath,
-		channelIdx: chanIdx,
+		headPath:    headPath,
+		channelSlug: channelSlug,
+		channelIdx:  chanIdx,
+		mlpChanIdx:  -1,
 	}
 	if err := d.reloadHead(); err != nil {
 		// Head missing is not fatal — the detector returns 0.5 (no
@@ -216,6 +240,14 @@ func (d *NNDetector) reloadHead() error {
 	raw, err := os.ReadFile(d.headPath)
 	if err != nil {
 		return err
+	}
+	// MLP1 magic-prefix detection — if the head bytes start with the
+	// MLP v1 magic, dispatch to the MLP loader (different layout +
+	// requires the channel-map sidecar). Falls through to the legacy
+	// LogReg size-detection path otherwise. Magic is the 4-byte
+	// little-endian uint32 0x31504C4D = ASCII "MLP1".
+	if len(raw) >= 4 && raw[0] == 'M' && raw[1] == 'L' && raw[2] == 'P' && raw[3] == '1' {
+		return d.loadMLPHead(raw, mtime)
 	}
 	// Auto-detect head format by raw size. Four shapes possible —
 	// see nnChannels comment block for the layout matrix.
@@ -261,8 +293,180 @@ func (d *NNDetector) reloadHead() error {
 	d.headWithLogo = withLogo
 	d.headWithChan = withChan
 	d.headWithAudio = withAudio
+	// Clear any stale MLP state from a previous load — a head.bin
+	// switch from MLP1 → LogReg (e.g. emergency rollback) would
+	// otherwise leave the MLP fwd-pass branch active with the wrong
+	// shape data.
+	d.headIsMLP = false
+	d.mlpW1 = nil
+	d.mlpB1 = nil
+	d.mlpW2 = nil
+	d.mlpB2 = nil
+	d.mlpChanMap = nil
 	d.mu.Unlock()
 	return nil
+}
+
+// loadMLPHead parses an "MLP1"-magic head.bin (= written by
+// scripts/train-head.py write_mlp_head_v1). Layout is documented at
+// the top of train-head.py. Also loads the channel-map sidecar
+// alongside head.bin (= same dir, name "head.channel-map.json" or
+// "<basename>.channel-map.json" if the head file isn't named head.bin).
+// Resolves the recording's channel slug → mlpChanIdx for the
+// inference path. An unknown slug becomes mlpChanIdx=-1 → all-zero
+// channel one-hot at inference (graceful degradation to a channel-
+// agnostic prediction; never fails the load).
+func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
+	const headerLen = 36
+	if len(raw) < headerLen {
+		return fmt.Errorf("MLP head truncated: %d B < %d B header",
+			len(raw), headerLen)
+	}
+	// Header layout (9 × uint32 LE): magic, version, input_dim,
+	// hidden_dim, output_dim, backbone_dim, n_logo, n_audio, n_channel.
+	u32 := func(off int) uint32 {
+		return uint32(raw[off]) | uint32(raw[off+1])<<8 |
+			uint32(raw[off+2])<<16 | uint32(raw[off+3])<<24
+	}
+	if u32(0) != 0x31504C4D { // "MLP1" little-endian
+		return fmt.Errorf("MLP head magic mismatch: got 0x%08x, want 0x31504C4D",
+			u32(0))
+	}
+	version := u32(4)
+	if version != 1 {
+		return fmt.Errorf("MLP head version %d unsupported (this build reads v1)",
+			version)
+	}
+	inDim := int(u32(8))
+	hidden := int(u32(12))
+	outDim := int(u32(16))
+	backbone := int(u32(20))
+	nLogo := int(u32(24))
+	nAudio := int(u32(28))
+	nChan := int(u32(32))
+	if backbone != nnFeatDim {
+		return fmt.Errorf("MLP head backbone_dim %d != nnFeatDim %d "+
+			"(rebuild head against the current backbone)",
+			backbone, nnFeatDim)
+	}
+	if backbone+nLogo+nAudio+nChan != inDim {
+		return fmt.Errorf("MLP head input_dim %d inconsistent with "+
+			"backbone %d + logo %d + audio %d + chan %d",
+			inDim, backbone, nLogo, nAudio, nChan)
+	}
+	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
+	if len(raw) != expected {
+		return fmt.Errorf("MLP head size %d != expected %d (in=%d hid=%d out=%d)",
+			len(raw), expected, inDim, hidden, outDim)
+	}
+	// Read weight blocks back-to-back (W1 row-major, b1, W2 row-major, b2).
+	off := headerLen
+	readFloats := func(n int) []float32 {
+		out := make([]float32, n)
+		for i := 0; i < n; i++ {
+			out[i] = floatLE(raw[off+i*4:])
+		}
+		off += n * 4
+		return out
+	}
+	W1 := readFloats(inDim * hidden)
+	b1 := readFloats(hidden)
+	W2 := readFloats(hidden * outDim)
+	b2 := readFloats(outDim)
+	// Channel-map sidecar — same dir as head.bin, name derived by
+	// replacing the head file's extension with ".channel-map.json".
+	// E.g.  head.bin → head.channel-map.json
+	//       head.mlp32-channel.bin → head.mlp32-channel.channel-map.json
+	chanMap, mlpChanIdx, err := d.loadChannelMap(nChan)
+	if err != nil {
+		return fmt.Errorf("MLP head: %w", err)
+	}
+	d.mu.Lock()
+	d.headIsMLP = true
+	d.headLoaded = true
+	d.headMtime = mtime
+	d.mlpInDim = inDim
+	d.mlpHidden = hidden
+	d.mlpOutDim = outDim
+	d.mlpBackbone = backbone
+	d.mlpNLogo = nLogo
+	d.mlpNAudio = nAudio
+	d.mlpNChannel = nChan
+	d.mlpW1 = W1
+	d.mlpB1 = b1
+	d.mlpW2 = W2
+	d.mlpB2 = b2
+	d.mlpChanMap = chanMap
+	d.mlpChanIdx = mlpChanIdx
+	// Clear LogReg fields so the legacy fwd-path doesn't fire on
+	// stale data if anything reads them (defensive — ConfidenceBatch
+	// already branches on headIsMLP).
+	d.headW = nil
+	d.headBias = 0
+	d.headWithLogo = false
+	d.headWithChan = false
+	d.headWithAudio = false
+	d.mu.Unlock()
+	return nil
+}
+
+// loadChannelMap reads <head_dir>/<head_basename>.channel-map.json
+// and resolves the recording's channel slug to a one-hot index.
+// nChan is the size the MLP head expects; the sidecar's slug list
+// must be at least that long (= the head was trained with that many
+// channel columns). When nChan==0 the head doesn't condition on
+// channel; sidecar lookup is skipped + map is nil.
+func (d *NNDetector) loadChannelMap(nChan int) (map[string]int, int, error) {
+	if nChan == 0 {
+		return nil, -1, nil
+	}
+	dir := filepath.Dir(d.headPath)
+	base := filepath.Base(d.headPath)
+	// Strip a single trailing .bin so head.bin → head, head.foo.bin → head.foo
+	stem := strings.TrimSuffix(base, ".bin")
+	sidecar := filepath.Join(dir, stem+".channel-map.json")
+	raw, err := os.ReadFile(sidecar)
+	if err != nil {
+		return nil, -1, fmt.Errorf("channel-map sidecar missing at %s: %w",
+			sidecar, err)
+	}
+	var sc struct {
+		Version int      `json:"version"`
+		N       int      `json:"n"`
+		Slugs   []string `json:"slugs"`
+	}
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		return nil, -1, fmt.Errorf("channel-map sidecar parse: %w", err)
+	}
+	if sc.Version != 1 {
+		return nil, -1, fmt.Errorf("channel-map sidecar version %d != 1",
+			sc.Version)
+	}
+	if len(sc.Slugs) != nChan {
+		return nil, -1, fmt.Errorf("channel-map slug count %d != head n_channel %d",
+			len(sc.Slugs), nChan)
+	}
+	m := make(map[string]int, len(sc.Slugs))
+	for i, s := range sc.Slugs {
+		m[s] = i
+	}
+	idx := -1
+	if d.channelSlug != "" {
+		if i, ok := m[d.channelSlug]; ok {
+			idx = i
+		}
+		// Unknown slug → idx=-1; inference uses all-zero one-hot
+		// (= channel-agnostic fallback). Logged once per load so a
+		// silent mis-config (= recording on a channel never trained
+		// against) is at least visible.
+		if idx < 0 {
+			fmt.Fprintf(os.Stderr,
+				"nn: MLP head loaded but recording's channel slug %q "+
+					"not in sidecar (%d known slugs) — using zero one-hot\n",
+				d.channelSlug, len(sc.Slugs))
+		}
+	}
+	return m, idx, nil
 }
 
 // MaybeReloadHead checks the head file's mtime and reloads if it
@@ -349,6 +553,9 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 		}
 		return out
 	}
+	if d.headIsMLP {
+		return d.confidenceMLP(feats, logoConfs, rmsConfs, n)
+	}
 	// Layout (matches train-head.py featurize_recording order):
 	//   [0..1280)        backbone
 	//   [1280]           logo  (if headWithLogo)
@@ -389,6 +596,86 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 				rms = rmsConfs[i]
 			}
 			logit += d.headW[audioIdx] * float32(rms)
+		}
+		out[i] = sigmoid(logit)
+	}
+	return out
+}
+
+// confidenceMLP runs the v1 MLP forward pass for n frames. Caller
+// holds d.mu.RLock — do NOT take it again here.
+//
+//	hidden_j = ReLU( b1_j + Σ_k x_k * W1[k*H+j] )      for j in [0, H)
+//	logit    = b2_0 + Σ_j hidden_j * W2[j*1+0]         (= H mul-adds; output_dim=1)
+//	prob     = 1 / (1 + exp(-logit))
+//
+// Input vector layout (must mirror train-head.py
+// featurize_recording, which the writer asserts):
+//
+//	[0..1280)              backbone
+//	[1280..1280+nLogo)     logo conf (= 0 or 1 entry)
+//	[+nAudio entries)      audio RMS (= 0 or 1 entry)
+//	[+nChannel entries)    channel one-hot (size from sidecar)
+//
+// Note: the LogReg layout puts channel BEFORE audio, but the MLP
+// header uses backbone+logo+audio+channel order to match what
+// write_mlp_head_v1 expects (sklearn flattens columns in the order
+// they were concat'd in the augment step). Stay consistent with the
+// header's contract — backbone, logo, audio, channel.
+func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float64, n int) []float64 {
+	out := make([]float64, n)
+	x := make([]float32, d.mlpInDim)
+	hidden := make([]float32, d.mlpHidden)
+	chanOff := nnFeatDim + d.mlpNLogo + d.mlpNAudio
+	for i := 0; i < n; i++ {
+		// Build the input vector for frame i. Reuse x (= zeroed before
+		// each frame so unused channel one-hot slots default to 0).
+		copy(x[:nnFeatDim], feats[i*nnFeatDim:(i+1)*nnFeatDim])
+		off := nnFeatDim
+		if d.mlpNLogo > 0 {
+			x[off] = float32(logoConfs[i])
+			off++
+		}
+		if d.mlpNAudio > 0 {
+			rms := 0.5 // neutral when stream is missing
+			if rmsConfs != nil && i < len(rmsConfs) {
+				rms = rmsConfs[i]
+			}
+			x[off] = float32(rms)
+			off++
+		}
+		// Channel one-hot: zero the block, then set the resolved idx
+		// (if any) to 1.0. Cheap because mlpNChannel ≤ ~32 in practice.
+		if d.mlpNChannel > 0 {
+			for k := 0; k < d.mlpNChannel; k++ {
+				x[chanOff+k] = 0
+			}
+			if d.mlpChanIdx >= 0 {
+				x[chanOff+d.mlpChanIdx] = 1.0
+			}
+		}
+		// Hidden layer: hidden_j = ReLU(b1_j + Σ_k x_k * W1[k*H+j])
+		copy(hidden, d.mlpB1)
+		for k := 0; k < d.mlpInDim; k++ {
+			xk := x[k]
+			if xk == 0 {
+				continue // sparse one-hot inputs short-circuit
+			}
+			rowOff := k * d.mlpHidden
+			for j := 0; j < d.mlpHidden; j++ {
+				hidden[j] += xk * d.mlpW1[rowOff+j]
+			}
+		}
+		for j := 0; j < d.mlpHidden; j++ {
+			if hidden[j] < 0 {
+				hidden[j] = 0
+			}
+		}
+		// Output layer (output_dim=1): logit = b2_0 + Σ_j hidden_j * W2[j].
+		// W2 is row-major (H, O); for O=1 the row stride is 1.
+		logit := d.mlpB2[0]
+		for j := 0; j < d.mlpHidden; j++ {
+			logit += hidden[j] * d.mlpW2[j]
 		}
 		out[i] = sigmoid(logit)
 	}

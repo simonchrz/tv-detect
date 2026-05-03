@@ -25,6 +25,15 @@ if [ -f "$LOGO_DIR/$SLUG.logo.txt" ]; then
     exit 1
 fi
 
+echo "=== warmup HLS subscription for $SLUG (= tvh subscribes the mux on demand; cold ffmpeg connect times out before the tuner locks) ==="
+curl -fsSk --max-time 15 "$GATEWAY/hls/$SLUG/dvr.m3u8" -o /dev/null
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    echo "  warmup curl failed (rc=$rc) — channel not available; aborting"
+    exit 2
+fi
+echo "  warmed."
+
 echo "=== capturing ${MINUTES} min of live $SLUG → $TMP_TS ==="
 ffmpeg -loglevel error -y \
     -i "$GATEWAY/hls/$SLUG/dvr.m3u8" \

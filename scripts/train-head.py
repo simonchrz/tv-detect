@@ -2612,7 +2612,18 @@ def main():
         prev_n = last_deployed.get("n_test_recs", 0)
         cur_n  = metrics_smooth["n_recs"]
         prev_feat = last_deployed.get("n_features", 0)
-        cur_feat  = X_train.shape[1] if hasattr(X_train, "shape") else 0
+        # MLP modes deploy a head whose input_dim includes the channel
+        # one-hot (and whisper) blocks appended on top of X_train. The
+        # history-comparison must use the SAME effective dim or the
+        # delta is reported wrong (= a channel-only → channel+whisper
+        # MLP cutover would log "1291→1282" instead of "1291→1292"
+        # because X_train.shape[1] is the LogReg base dim 1282).
+        # is_mlp_write is computed below the deploy block so we
+        # inline-recompute the equivalent (= same boolean) here.
+        if wants_mlp and mlp_prod_clf is not None:
+            cur_feat = mlp_prod_in_dim
+        else:
+            cur_feat = X_train.shape[1] if hasattr(X_train, "shape") else 0
         # Fallback when history.json lacks n_features (legacy entries
         # written before that field was added): infer from head.bin
         # file size — each weight is 4 B float32, plus 4 B bias.

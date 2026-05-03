@@ -116,6 +116,64 @@ def write_mlp_head_v1(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+# ── MLP head.bin file format (v2 — adds whisper-prob input) ──────
+# Identical to v1 except:
+#   - magic is "MLP2" (= 0x32504C4D LE) — Go discriminates by magic,
+#     so an old MLP1-only binary on a v2 file falls through to legacy
+#     LogReg detection which fails clean (= 0.5 fallback) instead of
+#     mis-parsing v2 weights against the wrong header layout.
+#   - header grows from 36 → 40 bytes: appends a 10th uint32 LE field
+#     `n_whisper` (0 or 1) AFTER `n_channel`.
+#   - input_dim contract becomes
+#         backbone + n_logo + n_audio + n_channel + n_whisper == input_dim
+#   - input vector layout at inference becomes
+#         [backbone(1280), logo?, audio?, chan_onehot?, whisper_prob?]
+#     (= whisper appended LAST so old chan-one-hot indices stay aligned).
+#
+# Writer below is a standalone function so v1 and v2 stay independent;
+# rolling forward to v2 means flipping the head-arch flag without
+# touching write_mlp_head_v1, and rolling back is the same flip.
+def write_mlp_head_v2(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0):
+    """Serialise an sklearn MLPClassifier to the v2 MLP head.bin
+    format. Same atomic write + shape validation as v1, plus the
+    extra whisper input slot. Returns bytes written."""
+    import struct
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if backbone_dim + n_logo + n_audio + n_channel + n_whisper != input_dim:
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel} + "
+            f"whisper {n_whisper}")
+    header = struct.pack("<10I",
+                         0x32504C4D,  # "MLP2" little-endian
+                         2, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 def slugify(name):
     s = name.lower()
     for k, v in {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}.items():
@@ -1862,14 +1920,50 @@ def main():
         chan_idx = {s: i for i, s in enumerate(chan_slugs)}
         n_chan = len(chan_slugs)
 
-        def _augment_channel(X, slug):
+        # Whisper-prob loader — for the Stage 4 variant. Per-second
+        # array aligned to the recording's frame index. whisper.json
+        # uses 60 s windows at 30 s stride (= 2× overlap typical), so
+        # each second is averaged across the windows that contain it.
+        # File missing → all-0.5 fallback (= neutral, lets the MLP
+        # treat that recording as channel-only). Cache lives at
+        # ~/.cache/tv-whisper/<uuid>.whisper.json on the Mac (= same
+        # path tv-whisper-classify writes to and tv-whisper-eval
+        # reads from).
+        whisper_cache = Path.home() / ".cache" / "tv-whisper"
+
+        def _load_whisper_per_sec(uuid, n_seconds):
+            p = whisper_cache / f"{uuid}.whisper.json"
+            if not p.is_file():
+                return np.full(n_seconds, 0.5, dtype=np.float32)
+            try:
+                d = json.loads(p.read_text())
+            except Exception:
+                return np.full(n_seconds, 0.5, dtype=np.float32)
+            windows = d.get("windows", [])
+            ws = int(d.get("window_s", 60))
+            sums = np.zeros(n_seconds, dtype=np.float32)
+            counts = np.zeros(n_seconds, dtype=np.int32)
+            for w in windows:
+                t0 = int(w.get("t", 0))
+                prob = float(w.get("prob", 0.5))
+                lo = max(0, t0)
+                hi = min(n_seconds, t0 + ws)
+                if hi > lo:
+                    sums[lo:hi] += prob
+                    counts[lo:hi] += 1
+            out = np.full(n_seconds, 0.5, dtype=np.float32)
+            mask = counts > 0
+            out[mask] = sums[mask] / counts[mask]
+            return out
+
+        def _augment_channel(X, slug, _uuid=None):
             T = X.shape[0]
             oh = np.zeros((T, n_chan), dtype=np.float32)
             if slug in chan_idx:
                 oh[:, chan_idx[slug]] = 1.0
             return np.hstack([X, oh])
 
-        def _augment_temporal(X, slug):
+        def _augment_temporal(X, slug, _uuid=None):
             # |X[t] - X[t-1]| and |X[t] - X[t+1]| as 2 extra dims.
             # Captures scene-change signal that per-frame backbone
             # embeddings can't see — boundary detection lever.
@@ -1882,11 +1976,25 @@ def main():
                 dn[:-1] = d
             return np.column_stack([X, dp, dn]).astype(np.float32)
 
+        def _augment_channel_whisper(X, slug, uuid):
+            # Channel one-hot + per-frame whisper prob (1 extra dim).
+            # Whisper Stage 4 prototype: instead of running whisper
+            # as a post-processor (FP-killer / boundary-extend /
+            # missed-adder rules with hand-tuned thresholds), feed
+            # the per-second prob directly to the MLP and let it
+            # learn the right combination with the other features.
+            T = X.shape[0]
+            oh = np.zeros((T, n_chan), dtype=np.float32)
+            if slug in chan_idx:
+                oh[:, chan_idx[slug]] = 1.0
+            wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
+            return np.hstack([X, oh, wp]).astype(np.float32)
+
         def _build_train(recs, augment):
             Xs, ys, sws = [], [], []
             for r in recs:
                 slug = uuid_slug.get(r[0], "")
-                X_aug = augment(r[3], slug)
+                X_aug = augment(r[3], slug, r[0])
                 y = r[4]
                 base_w = args.user_weight if r[5] else 1.0
                 sw = np.full(len(y), base_w, dtype=np.float32)
@@ -1898,7 +2006,7 @@ def main():
             out = []
             for r in recs:
                 slug = uuid_slug.get(r[0], "")
-                X_aug = augment(r[3], slug)
+                X_aug = augment(r[3], slug, r[0])
                 out.append((r[0], r[1], r[2], X_aug, r[4]) + tuple(r[5:]))
             return out
 
@@ -1930,11 +2038,22 @@ def main():
         print("\n" + "=" * 70)
         print(f"SHADOW EVAL — {n_chan} channel slugs in corpus")
         print("=" * 70)
-        m_v1, mlp_v1, _ = _fit_eval("MLP-32 (1282→32→1)", lambda X, _s: X)
+        m_v1, mlp_v1, _ = _fit_eval(
+            "MLP-32 (1282→32→1)", lambda X, _s, _u=None: X)
         m_v2, mlp_v2, in_dim_v2 = _fit_eval(
             f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel)
         m_v3, mlp_v3, _ = _fit_eval(
             "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal)
+        # Whisper Stage 4 prototype — per-second whisper-prob as a
+        # direct MLP input column instead of the post-processor rules.
+        # n=149 reviews + MLP non-linearity should absorb the new
+        # column without the L2-balance fragility of a LogReg add.
+        # If +0.03 IoU vs MLP+channel → migrate; if neutral → keep
+        # the post-processor rules (= they already gain +5.4 % on
+        # n=9 and the rules are simpler to reason about).
+        m_v4, mlp_v4, _ = _fit_eval(
+            f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
+            _augment_channel_whisper)
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -1976,11 +2095,26 @@ def main():
               f"{base_iou:>6.3f}  {'(ref)':>9}  {base_acc*100:>5.1f}%")
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
-                        ("MLP-32 + temporal", m_v3)]:
+                        ("MLP-32 + temporal", m_v3),
+                        (f"MLP-32 + channel + whisper", m_v4)]:
             d = m["iou"] - base_iou
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
             print(f"  {name:35s}  {m['iou']:>6.3f}  "
                   f"{d:>+9.3f}  {m['acc']*100:>5.1f}%{mark}")
+        # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel,
+        # the current production architecture). The Δ-vs-LogReg
+        # column above tells you "is the structural change worth
+        # the format migration"; this Δ tells you "is whisper as
+        # an MLP input column better than whisper as a post-
+        # processor rule set". Migration breaks even somewhere
+        # around +0.03 IoU.
+        d_stage4 = m_v4["iou"] - m_v2["iou"]
+        mark4 = ("  ↑ migrate" if d_stage4 > 0.03 else
+                 ("  ↓ keep post-processor" if d_stage4 < -0.01 else
+                  "  ≈ neutral, keep post-processor"))
+        print()
+        print(f"  Δ vs Stage-3 baseline (MLP+channel): "
+              f"{d_stage4:+.3f}{mark4}")
         print()
 
     # ── Self-Training (Phase A, validation only) ─────────────────

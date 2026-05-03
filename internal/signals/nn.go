@@ -44,19 +44,27 @@ type NNDetector struct {
 	// unused). Loaded from a "MLP1" magic-prefixed head.bin as
 	// specified in scripts/train-head.py write_mlp_head_v1.
 	headIsMLP    bool
-	mlpInDim     int       // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel)
+	mlpInDim     int       // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel + mlpNWhisper)
 	mlpHidden    int       // hidden-layer size (e.g. 32)
-	mlpOutDim    int       // = 1 today; v1 carries the field for fwd-compat
+	mlpOutDim    int       // = 1 today; format carries the field for fwd-compat
 	mlpBackbone  int       // sanity vs nnFeatDim
 	mlpNLogo     int       // 0 or 1
 	mlpNAudio    int       // 0 or 1
 	mlpNChannel  int       // size of channel one-hot block
+	mlpNWhisper  int       // 0 or 1 — per-frame whisper-prob slot (v2+)
 	mlpW1        []float32 // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
 	mlpB1        []float32 // mlpHidden
 	mlpW2        []float32 // (mlpHidden, mlpOutDim) row-major
 	mlpB2        []float32 // mlpOutDim
 	mlpChanMap   map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
 	mlpChanIdx   int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
+	// Per-recording whisper-prob array (length = recording duration in
+	// seconds). Set ONCE at recording start via SetWhisperProbs from
+	// the per-recording whisper.json. Indexed at inference by frame
+	// index (= per-second granularity matches the train-head feature
+	// extraction). Only used when mlpNWhisper > 0; nil for v1 heads
+	// or when the daemon hasn't supplied whisper data.
+	mlpWhisperProbs []float64
 }
 
 // Backbone tensor shape: (1, 3, 224, 224). Output: (1, 1280).
@@ -241,13 +249,22 @@ func (d *NNDetector) reloadHead() error {
 	if err != nil {
 		return err
 	}
-	// MLP1 magic-prefix detection — if the head bytes start with the
-	// MLP v1 magic, dispatch to the MLP loader (different layout +
-	// requires the channel-map sidecar). Falls through to the legacy
-	// LogReg size-detection path otherwise. Magic is the 4-byte
-	// little-endian uint32 0x31504C4D = ASCII "MLP1".
-	if len(raw) >= 4 && raw[0] == 'M' && raw[1] == 'L' && raw[2] == 'P' && raw[3] == '1' {
-		return d.loadMLPHead(raw, mtime)
+	// MLP magic-prefix detection. Two known formats:
+	//   "MLP1" (v1) — backbone + logo + audio + channel one-hot
+	//   "MLP2" (v2) — v1 + per-frame whisper-prob input slot
+	// Each gets its own loader because the header layout differs
+	// (v2 is 40 B vs v1 36 B). Falls through to the legacy LogReg
+	// size-detection path when neither magic matches.
+	if len(raw) >= 4 && raw[0] == 'M' && raw[1] == 'L' && raw[2] == 'P' {
+		switch raw[3] {
+		case '1':
+			return d.loadMLPHead(raw, mtime)
+		case '2':
+			return d.loadMLPHeadV2(raw, mtime)
+		}
+		// Unknown MLPx version → fall through to LogReg size
+		// detection, which will fail with a clean error rather
+		// than silently mis-parsing future-version weights.
 	}
 	// Auto-detect head format by raw size. Four shapes possible —
 	// see nnChannels comment block for the layout matrix.
@@ -303,6 +320,7 @@ func (d *NNDetector) reloadHead() error {
 	d.mlpW2 = nil
 	d.mlpB2 = nil
 	d.mlpChanMap = nil
+	d.mlpNWhisper = 0
 	d.mu.Unlock()
 	return nil
 }
@@ -401,6 +419,103 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	// Clear LogReg fields so the legacy fwd-path doesn't fire on
 	// stale data if anything reads them (defensive — ConfidenceBatch
 	// already branches on headIsMLP).
+	d.headW = nil
+	d.headBias = 0
+	d.headWithLogo = false
+	d.headWithChan = false
+	d.headWithAudio = false
+	// v1 → no whisper slot.
+	d.mlpNWhisper = 0
+	d.mu.Unlock()
+	return nil
+}
+
+// loadMLPHeadV2 parses an "MLP2"-magic head.bin (= written by
+// scripts/train-head.py write_mlp_head_v2). Identical layout to v1
+// except the header carries a 10th uint32 LE field `n_whisper`
+// (0 or 1) at offset 36..39, growing the header from 36 to 40 bytes.
+// input_dim must equal backbone+logo+audio+channel+whisper.
+//
+// At inference, the per-frame whisper-prob is appended LAST in the
+// input vector (= AFTER the channel one-hot block), so chan-one-hot
+// indices stay aligned with the channel-map sidecar from v1.
+func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
+	const headerLen = 40
+	if len(raw) < headerLen {
+		return fmt.Errorf("MLP2 head truncated: %d B < %d B header",
+			len(raw), headerLen)
+	}
+	u32 := func(off int) uint32 {
+		return uint32(raw[off]) | uint32(raw[off+1])<<8 |
+			uint32(raw[off+2])<<16 | uint32(raw[off+3])<<24
+	}
+	if u32(0) != 0x32504C4D {
+		return fmt.Errorf("MLP2 head magic mismatch: got 0x%08x, want 0x32504C4D",
+			u32(0))
+	}
+	version := u32(4)
+	if version != 2 {
+		return fmt.Errorf("MLP2 head version %d unsupported (this build reads v2)",
+			version)
+	}
+	inDim := int(u32(8))
+	hidden := int(u32(12))
+	outDim := int(u32(16))
+	backbone := int(u32(20))
+	nLogo := int(u32(24))
+	nAudio := int(u32(28))
+	nChan := int(u32(32))
+	nWhisper := int(u32(36))
+	if backbone != nnFeatDim {
+		return fmt.Errorf("MLP2 head backbone_dim %d != nnFeatDim %d "+
+			"(rebuild head against the current backbone)",
+			backbone, nnFeatDim)
+	}
+	if backbone+nLogo+nAudio+nChan+nWhisper != inDim {
+		return fmt.Errorf("MLP2 head input_dim %d inconsistent with "+
+			"backbone %d + logo %d + audio %d + chan %d + whisper %d",
+			inDim, backbone, nLogo, nAudio, nChan, nWhisper)
+	}
+	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
+	if len(raw) != expected {
+		return fmt.Errorf("MLP2 head size %d != expected %d (in=%d hid=%d out=%d)",
+			len(raw), expected, inDim, hidden, outDim)
+	}
+	off := headerLen
+	readFloats := func(n int) []float32 {
+		out := make([]float32, n)
+		for i := 0; i < n; i++ {
+			out[i] = floatLE(raw[off+i*4:])
+		}
+		off += n * 4
+		return out
+	}
+	W1 := readFloats(inDim * hidden)
+	b1 := readFloats(hidden)
+	W2 := readFloats(hidden * outDim)
+	b2 := readFloats(outDim)
+	chanMap, mlpChanIdx, err := d.loadChannelMap(nChan)
+	if err != nil {
+		return fmt.Errorf("MLP2 head: %w", err)
+	}
+	d.mu.Lock()
+	d.headIsMLP = true
+	d.headLoaded = true
+	d.headMtime = mtime
+	d.mlpInDim = inDim
+	d.mlpHidden = hidden
+	d.mlpOutDim = outDim
+	d.mlpBackbone = backbone
+	d.mlpNLogo = nLogo
+	d.mlpNAudio = nAudio
+	d.mlpNChannel = nChan
+	d.mlpNWhisper = nWhisper
+	d.mlpW1 = W1
+	d.mlpB1 = b1
+	d.mlpW2 = W2
+	d.mlpB2 = b2
+	d.mlpChanMap = chanMap
+	d.mlpChanIdx = mlpChanIdx
 	d.headW = nil
 	d.headBias = 0
 	d.headWithLogo = false
@@ -627,6 +742,14 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 	x := make([]float32, d.mlpInDim)
 	hidden := make([]float32, d.mlpHidden)
 	chanOff := nnFeatDim + d.mlpNLogo + d.mlpNAudio
+	whisperOff := chanOff + d.mlpNChannel
+	// Per-frame whisper-prob array, populated by SetWhisperProbs from
+	// the surrounding recording's whisper.json (= MLP2-format heads
+	// only). nil → fallback to neutral 0.5 per frame which lets the
+	// model treat the whisper input as uninformative without crashing
+	// the index path (= the trained weight on this column will absorb
+	// the constant; missed +0.075 IoU but never wrong direction).
+	whisperPerFrame := d.mlpWhisperProbs
 	for i := 0; i < n; i++ {
 		// Build the input vector for frame i. Reuse x (= zeroed before
 		// each frame so unused channel one-hot slots default to 0).
@@ -654,6 +777,15 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 				x[chanOff+d.mlpChanIdx] = 1.0
 			}
 		}
+		// Whisper-prob slot (MLP2 format only). Per-frame value from
+		// the per-recording whisper.json; absent → 0.5 neutral.
+		if d.mlpNWhisper > 0 {
+			wp := float32(0.5)
+			if whisperPerFrame != nil && i < len(whisperPerFrame) {
+				wp = float32(whisperPerFrame[i])
+			}
+			x[whisperOff] = wp
+		}
 		// Hidden layer: hidden_j = ReLU(b1_j + Σ_k x_k * W1[k*H+j])
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {
@@ -680,6 +812,18 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 		out[i] = sigmoid(logit)
 	}
 	return out
+}
+
+// SetWhisperProbs supplies the per-second whisper-prob array for
+// the current recording. Indexed by frame index at inference (=
+// per-second granularity matches train-head extraction). Only
+// consumed when the loaded head is MLP2-format with n_whisper>0;
+// other formats ignore the call. Pass nil to clear (= back to
+// neutral 0.5 fallback).
+func (d *NNDetector) SetWhisperProbs(probs []float64) {
+	d.mu.Lock()
+	d.mlpWhisperProbs = probs
+	d.mu.Unlock()
 }
 
 // Close releases ORT resources. Call when shutting down the

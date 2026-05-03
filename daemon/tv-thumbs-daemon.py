@@ -672,6 +672,23 @@ def process_detect(uuid):
     except Exception as e:
         print(f"  detect {uuid[:8]}: model fetch err: {e}", flush=True)
         return False
+    # MLP1 head.bin needs the channel-map sidecar to resolve the
+    # recording's channel slug to a one-hot column. Fetch alongside;
+    # legacy LogReg heads ignore it. 404 from the gateway means the
+    # current head was trained without the sidecar (= pre-MLP era);
+    # leave any stale local copy in place — Go loader gracefully
+    # degrades to mlpChanIdx=-1 if the slug isn't in whatever map
+    # is on disk.
+    sidecar_path = MODEL_CACHE / "head.channel-map.json"
+    sidecar_url = f"{GATEWAY}/api/internal/detect-models/head.channel-map.json"
+    try:
+        http_download(sidecar_url, sidecar_path)
+    except Exception as e:
+        # Don't bail — LogReg path doesn't need the sidecar.
+        msg = str(e)
+        if "404" not in msg:
+            print(f"  detect {uuid[:8]}: channel-map sidecar fetch "
+                  f"err (non-fatal): {e}", flush=True)
 
     # Per-channel logo (auto-train fallback if absent)
     logo_path = None

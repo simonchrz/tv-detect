@@ -683,12 +683,16 @@ def _worker_extract(args):
 
 def main():
     ap = argparse.ArgumentParser()
+    # Defaults are the post-SMB-migration locations: backbone +
+    # logo templates live in the Mac-side daemon cache (refreshed
+    # via gateway HTTP); output + hls-root are the wrapper's tmp
+    # paths (snapshot fetched + uploaded via HTTP). Standalone
+    # invocations work as long as tv-thumbs-daemon has populated
+    # the caches and the snapshot dir exists.
     ap.add_argument("--backbone", default=os.path.expanduser(
-        "~/mnt/pi-tv/hls/.tvd-models/backbone.onnx"))
-    ap.add_argument("--output", default=os.path.expanduser(
-        "~/mnt/pi-tv/hls/.tvd-models/head.bin"))
-    ap.add_argument("--hls-root", default=os.path.expanduser(
-        "~/mnt/pi-tv/hls"))
+        "~/.cache/tv-detect-daemon/backbone.onnx"))
+    ap.add_argument("--output", default="/tmp/tv-train-head-out/head.bin")
+    ap.add_argument("--hls-root", default="/tmp/tv-train-snapshot")
     ap.add_argument("--feature-cache", default=os.path.expanduser(
         "~/.cache/tvd-features"))
     ap.add_argument("--fps-extract", type=float, default=1.0)
@@ -843,9 +847,12 @@ def main():
                          "trained head breaks. Combinable with "
                          "--with-logo for a 1287-feature head (5152 B).")
     ap.add_argument("--logo-dir", default=os.path.expanduser(
-                        "~/mnt/pi-tv/hls/.tvd-logos"),
+                        "~/.cache/tv-detect-daemon/logos"),
                     help="directory of channel-keyed cached logo "
-                         "templates (used by --with-logo extraction).")
+                         "templates (used by --with-logo extraction). "
+                         "tv-thumbs-daemon keeps this dir fresh from "
+                         "the gateway's /api/internal/detect-logo/<slug> "
+                         "endpoint.")
     ap.add_argument("--tv-detect", default=os.path.expanduser(
                         "~/.local/bin/tv-detect"),
                     help="path to tv-detect binary, used by --with-logo "
@@ -1189,10 +1196,23 @@ def main():
             continue
         has_user = which in ("user", "merged")
         rec_age_days = (time.time() - src_mt) / 86400.0
+        # Cluster-anchored ad spots from the gateway snapshot (= spots
+        # whose audio+visual fingerprint matches a known ≥3-member
+        # family). For reviewed recordings: redundant with ads_user
+        # but bumps weight at high-confidence frames. For unreviewed:
+        # the only high-confidence ad signal we have without manual
+        # review.
+        cluster_anchored = []
+        ca_path = rec_dir / "cluster_anchored.json"
+        if ca_path.is_file():
+            try:
+                cluster_anchored = json.loads(ca_path.read_text()) or []
+            except Exception:
+                cluster_anchored = []
         per_rec.append((uuid, title, ads, feats, labels, has_user,
                         confirmed_show, confirmed_ad_skips, rec_age_days,
                         bumpers, frame_mask, which == "pseudo",
-                        is_bootstrap))
+                        is_bootstrap, cluster_anchored))
     # Right-pad all per_rec feature matrices to the widest column count
     # we have. Cached .npy files from older runs (extracted before
     # the slug→logo lookup landed) can be 1 column narrower than the
@@ -1443,10 +1463,41 @@ def main():
                             sw_full[i0:i1], base_w * args.bumper_boost)
                         bumper_boost_total += (i1 - i0)
                         bumper_boost_recs.add(r[0])
+        # Cluster-anchored ad spots: each entry is a time span whose
+        # audio+visual fingerprint matched a known ≥3-member family.
+        # Force label=1 in that span and boost weight to 1.5× — same
+        # treatment as user skip-presses. For unreviewed recordings
+        # (= no ads_user.json) this is the only high-confidence ad
+        # signal we have.
+        cluster_anchored = r[13] if len(r) > 13 else []
+        cluster_anchor_frames = 0
+        if cluster_anchored:
+            yslice = r[4]
+            for spot in cluster_anchored:
+                try:
+                    s_t = float(spot.get("window_start_s") or 0)
+                    e_t = float(spot.get("end_s") or s_t)
+                except Exception:
+                    continue
+                i0 = max(0, int(round(s_t * args.fps_extract)))
+                i1 = min(full_n, int(round(e_t * args.fps_extract)) + 1)
+                if i1 <= i0:
+                    continue
+                yslice[i0:i1] = 1
+                sw_full[i0:i1] = np.maximum(sw_full[i0:i1], base_w * 1.5)
+                cluster_anchor_frames += (i1 - i0)
+        if cluster_anchor_frames:
+            globals().setdefault("_cluster_anchor_total", [0])[0] = (
+                globals().get("_cluster_anchor_total", [0])[0]
+                + cluster_anchor_frames)
         sw_train_parts.append(sw_full[mask])
     if confirmed_extra_w:
         print(f"confirmed-show: upweighted {confirmed_extra_w} frame(s) "
               f"from /mark-reviewed (1.2× over base weight)")
+    _ca_total = globals().get("_cluster_anchor_total", [0])[0]
+    if _ca_total:
+        print(f"cluster-anchored: forced ad + 1.5× weight on "
+              f"{_ca_total} frame(s)")
     n_skip = sum(len(r[7]) if len(r) > 7 else 0 for r in train_recs)
     if n_skip:
         print(f"skip-press signals: {n_skip} confirmed-ad frame(s) "

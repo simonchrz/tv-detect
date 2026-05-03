@@ -64,6 +64,7 @@ func main() {
 		bumperStride    = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
 		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
 		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
+		nnWhisperJSON   = flag.String("nn-whisper-json", "", "path to per-recording whisper.json (= ~/.cache/tv-whisper/<uuid>.whisper.json on the daemon side). When set AND the loaded head is MLP2 v2 (= n_whisper>0), each detected frame's whisper-prob is fed to the head as an additional input column. Ignored for MLP1 / LogReg heads. Missing file or unset → MLP2 forward pass falls back to neutral 0.5 per frame (= still works, just loses the +0.075 IoU Stage-4 gain).")
 		nnChannelSlug   = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
 		nnWeight        = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
 		nnGate          = flag.Float64("nn-gate", 0.3, "ignore NN where |conf - 0.5| < this (0 = always use NN, 0.3 = only when conf < 0.2 or > 0.8)")
@@ -200,6 +201,7 @@ func main() {
 		NNBackbonePath: *nnBackbone,
 		NNHeadPath:     *nnHead,
 		NNChannelSlug:  *nnChannelSlug,
+		NNWhisperJSON:  *nnWhisperJSON,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)

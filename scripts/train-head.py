@@ -174,6 +174,41 @@ def write_mlp_head_v2(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
+
+
+def _load_whisper_per_sec(uuid, n_seconds):
+    """Per-second whisper-prob array (length n_seconds) from
+    ~/.cache/tv-whisper/<uuid>.whisper.json. Each second is averaged
+    across the windows that contain it (windows are 60 s long at
+    30 s stride → 2× overlap typical). File missing or malformed →
+    all-0.5 fallback (= neutral; lets the MLP treat the recording
+    as whisper-uninformative without crashing the index path)."""
+    p = WHISPER_CACHE / f"{uuid}.whisper.json"
+    if not p.is_file():
+        return np.full(n_seconds, 0.5, dtype=np.float32)
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return np.full(n_seconds, 0.5, dtype=np.float32)
+    windows = d.get("windows", [])
+    ws = int(d.get("window_s", 60))
+    sums = np.zeros(n_seconds, dtype=np.float32)
+    counts = np.zeros(n_seconds, dtype=np.int32)
+    for w in windows:
+        t0 = int(w.get("t", 0))
+        prob = float(w.get("prob", 0.5))
+        lo = max(0, t0)
+        hi = min(n_seconds, t0 + ws)
+        if hi > lo:
+            sums[lo:hi] += prob
+            counts[lo:hi] += 1
+    out = np.full(n_seconds, 0.5, dtype=np.float32)
+    mask = counts > 0
+    out[mask] = sums[mask] / counts[mask]
+    return out
+
+
 def slugify(name):
     s = name.lower()
     for k, v in {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}.items():
@@ -976,21 +1011,27 @@ def main():
                          "1 extra input dim. EXPERIMENTAL: Go-side head "
                          "loader needs new size before deploying.")
     ap.add_argument("--head-arch",
-                    choices=["logreg", "mlp32-channel"],
+                    choices=["logreg", "mlp32-channel",
+                             "mlp32-channel-whisper"],
                     default="logreg",
                     help="head architecture to deploy. "
-                         "'logreg' = legacy 1280..1288-dim linear head "
-                         "(packed float32 weights + bias, size-detected by "
-                         "the Go loader). "
-                         "'mlp32-channel' = 1290→32→1 ReLU MLP with 8-dim "
-                         "channel one-hot, written in MLP1 v1 format (= "
-                         "magic-prefixed; Go loader auto-detects). Use this "
-                         "for the production cutover; shadow-eval n=28 "
-                         "test set showed +0.22 Block-IoU vs LogReg. The "
-                         "feature-dim change vs the previous LogReg head "
-                         "trips the deploy-decision's 'feature dim changed "
-                         "→ reset baseline' branch, so a one-time forced "
-                         "deploy occurs and history.json baseline restarts.")
+                         "'logreg' = legacy linear head (size-detected). "
+                         "'mlp32-channel' = MLP1 v1 = 1290→32→1 with N-dim "
+                         "channel one-hot. Production cutover 2026-05-03; "
+                         "shadow IoU +0.22 vs LogReg. "
+                         "'mlp32-channel-whisper' = MLP2 v2 = adds a 6th "
+                         "input column carrying per-second whisper-prob "
+                         "(= 1291→32→1 with one extra slot). Shadow IoU "
+                         "+0.27 vs LogReg / +0.075 vs mlp32-channel; the "
+                         "MLP non-linearity absorbs the whisper signal "
+                         "without the L2-balance fragility a LogReg "
+                         "column-add would suffer. Requires Mac daemon "
+                         "to pass --nn-whisper-json to tv-detect at "
+                         "inference (deployed in tandem). The feature-dim "
+                         "change trips the deploy-decision's 'feature "
+                         "dim changed → reset baseline' branch; a one-time "
+                         "forced deploy happens + history.json baseline "
+                         "restarts.")
     ap.add_argument("--shadow-eval", action="store_true",
                     help="after the production LogReg fit + eval, also "
                          "train + evaluate three architectural variants "
@@ -1782,7 +1823,10 @@ def main():
     mlp_prod_clf = None
     mlp_prod_chan_slugs = None
     mlp_prod_in_dim = 0
-    if args.head_arch == "mlp32-channel" and test_recs:
+    wants_mlp = args.head_arch in ("mlp32-channel",
+                                    "mlp32-channel-whisper")
+    wants_whisper = args.head_arch == "mlp32-channel-whisper"
+    if wants_mlp and test_recs:
         from sklearn.neural_network import MLPClassifier
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -1801,7 +1845,25 @@ def main():
                 chan_oh_train[offset:offset + n,
                               prod_chan_idx[slug]] = 1.0
             offset += n
-        X_train_ch = np.hstack([X_train, chan_oh_train])
+        # Optional per-frame whisper-prob column (mlp32-channel-whisper
+        # only). Aligned by walking train_recs in the same order as
+        # rec_lengths_train; per-rec slice of X_train gets a 1-dim
+        # column from the recording's whisper.json. Missing whisper
+        # → 0.5 fallback per the loader spec.
+        if wants_whisper:
+            whisper_train = np.full(len(X_train), 0.5, dtype=np.float32)
+            offset = 0
+            for r, n in zip(train_recs, rec_lengths_train):
+                if n <= 0:
+                    continue
+                wp = _load_whisper_per_sec(r[0], n)
+                whisper_train[offset:offset + n] = wp
+                offset += n
+            X_train_ch = np.hstack(
+                [X_train, chan_oh_train,
+                 whisper_train.reshape(-1, 1)])
+        else:
+            X_train_ch = np.hstack([X_train, chan_oh_train])
         # Oversample by integer-rounded sw_train so user-confirmed +
         # bumper-boosted frames retain their elevated influence in
         # the MLP fit (MLPClassifier ignores sample_weight).
@@ -1809,8 +1871,10 @@ def main():
         sample_idx = np.repeat(np.arange(len(X_train_ch)), w_int)
         X_train_os = X_train_ch[sample_idx]
         y_train_os = y_train[sample_idx]
-        print(f"\n=== --head-arch mlp32-channel: production fit ===")
-        print(f"  base train dim: {X_train_ch.shape[1]} ({n_chan} channels)")
+        print(f"\n=== --head-arch {args.head_arch}: production fit ===")
+        print(f"  base train dim: {X_train_ch.shape[1]} "
+              f"({n_chan} channels"
+              f"{', +whisper' if wants_whisper else ''})")
         print(f"  base train frames: {len(X_train_ch)}")
         print(f"  oversampled frames: {len(X_train_os)}")
         mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),
@@ -1822,20 +1886,26 @@ def main():
         print(f"  fit done in {mlp_prod_clf.n_iter_} epochs, "
               f"loss={mlp_prod_clf.loss_:.4f}")
 
-        # Augment test_recs with the same channel one-hot for eval.
-        def _aug_test_chan(recs):
+        # Augment test_recs with the same channel one-hot (and
+        # whisper if active) for eval.
+        def _aug_test(recs):
             out = []
             for r in recs:
                 X = r[3]
+                T = X.shape[0]
                 slug = uuid_slug.get(r[0], "")
-                oh = np.zeros((X.shape[0], n_chan), dtype=np.float32)
+                oh = np.zeros((T, n_chan), dtype=np.float32)
                 if slug in prod_chan_idx:
                     oh[:, prod_chan_idx[slug]] = 1.0
-                X_new = np.hstack([X, oh]).astype(np.float32)
+                if wants_whisper:
+                    wp = _load_whisper_per_sec(r[0], T).reshape(-1, 1)
+                    X_new = np.hstack([X, oh, wp]).astype(np.float32)
+                else:
+                    X_new = np.hstack([X, oh]).astype(np.float32)
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
-        test_recs_ch = _aug_test_chan(test_recs)
-        print(f"\n=== MLP+channel held-out evaluation (smooth=10s) ===")
+        test_recs_ch = _aug_test(test_recs)
+        print(f"\n=== {args.head_arch} held-out evaluation (smooth=10s) ===")
         eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=0)
         metrics_smooth_mlp = eval_split(mlp_prod_clf, test_recs_ch,
                                          args.fps_extract, smooth_s=10)
@@ -1882,7 +1952,7 @@ def main():
             brier_cal_mlp = float(np.mean((cal_proba_mlp - y_test_concat) ** 2))
             calibration = {
                 "method": "platt",
-                "head_arch": "mlp32-channel",
+                "head_arch": args.head_arch,
                 "A": A_mlp, "B": B_mlp,
                 "n_calibration_frames": int(len(y_test_concat)),
                 "n_calibration_recs": len(test_recs_ch),
@@ -1920,41 +1990,9 @@ def main():
         chan_idx = {s: i for i, s in enumerate(chan_slugs)}
         n_chan = len(chan_slugs)
 
-        # Whisper-prob loader — for the Stage 4 variant. Per-second
-        # array aligned to the recording's frame index. whisper.json
-        # uses 60 s windows at 30 s stride (= 2× overlap typical), so
-        # each second is averaged across the windows that contain it.
-        # File missing → all-0.5 fallback (= neutral, lets the MLP
-        # treat that recording as channel-only). Cache lives at
-        # ~/.cache/tv-whisper/<uuid>.whisper.json on the Mac (= same
-        # path tv-whisper-classify writes to and tv-whisper-eval
-        # reads from).
-        whisper_cache = Path.home() / ".cache" / "tv-whisper"
-
-        def _load_whisper_per_sec(uuid, n_seconds):
-            p = whisper_cache / f"{uuid}.whisper.json"
-            if not p.is_file():
-                return np.full(n_seconds, 0.5, dtype=np.float32)
-            try:
-                d = json.loads(p.read_text())
-            except Exception:
-                return np.full(n_seconds, 0.5, dtype=np.float32)
-            windows = d.get("windows", [])
-            ws = int(d.get("window_s", 60))
-            sums = np.zeros(n_seconds, dtype=np.float32)
-            counts = np.zeros(n_seconds, dtype=np.int32)
-            for w in windows:
-                t0 = int(w.get("t", 0))
-                prob = float(w.get("prob", 0.5))
-                lo = max(0, t0)
-                hi = min(n_seconds, t0 + ws)
-                if hi > lo:
-                    sums[lo:hi] += prob
-                    counts[lo:hi] += 1
-            out = np.full(n_seconds, 0.5, dtype=np.float32)
-            mask = counts > 0
-            out[mask] = sums[mask] / counts[mask]
-            return out
+        # Whisper-prob loader at module scope (_load_whisper_per_sec)
+        # — both the shadow-eval variants here and the production
+        # mlp32-channel-whisper fit downstream call it.
 
         def _augment_channel(X, slug, _uuid=None):
             T = X.shape[0]
@@ -2410,7 +2448,7 @@ def main():
     # mlp_prod_clf is rebound to the all-data version; held-out IoU
     # in metrics_smooth was already captured against the earlier
     # train-only fit, so the deploy-decision logic is unaffected.
-    if (args.head_arch == "mlp32-channel"
+    if (wants_mlp
             and args.final_on_all and test_recs
             and mlp_prod_clf is not None):
         from sklearn.neural_network import MLPClassifier
@@ -2420,8 +2458,8 @@ def main():
                        and not (len(r) > 12 and r[12])]
         n_chan_prod = len(mlp_prod_chan_slugs)
         prod_chan_idx_all = {s: i for i, s in enumerate(mlp_prod_chan_slugs)}
-        # Per-rec channel one-hot block, applied row-by-row to match
-        # the per-rec X concatenation order.
+        # Per-rec channel one-hot block (+ whisper if active), row-by-
+        # row to match the per-rec X concatenation order.
         X_parts = []
         y_parts = []
         for r in keep_all:
@@ -2431,7 +2469,11 @@ def main():
             slug = uuid_slug.get(r[0], "")
             if slug in prod_chan_idx_all and T > 0:
                 oh[:, prod_chan_idx_all[slug]] = 1.0
-            X_parts.append(np.hstack([X, oh]).astype(np.float32))
+            if wants_whisper:
+                wp = _load_whisper_per_sec(r[0], T).reshape(-1, 1)
+                X_parts.append(np.hstack([X, oh, wp]).astype(np.float32))
+            else:
+                X_parts.append(np.hstack([X, oh]).astype(np.float32))
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
         y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)
@@ -2620,21 +2662,36 @@ def main():
 
     # Always write the candidate to the archive — useful for manual
     # inspection / rollback even when not deployed. Writer branches
-    # on --head-arch: legacy LogReg packs raw float32 weights+bias,
-    # MLP1 v1 emits a magic-prefixed header + W1/b1/W2/b2 blocks.
+    # on --head-arch:
+    #   logreg                  → packed float32 weights + bias
+    #   mlp32-channel           → MLP1 v1 (magic-prefixed)
+    #   mlp32-channel-whisper   → MLP2 v2 (= v1 + n_whisper header field)
     ts = time.strftime("%Y%m%dT%H%M%S")
     archive_path = archive_dir / f"head.{ts}.bin"
-    is_mlp_write = (args.head_arch == "mlp32-channel"
-                    and mlp_prod_clf is not None)
-    if is_mlp_write:
+    is_mlp_write = wants_mlp and mlp_prod_clf is not None
+
+    def _write_head(path):
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs)
-        write_mlp_head_v1(archive_path, mlp_prod_clf,
-                          input_dim=mlp_prod_in_dim,
-                          hidden_dim=32, backbone_dim=1280,
-                          n_logo=n_logo_used, n_audio=n_audio_used,
-                          n_channel=n_chan_used)
+        if wants_whisper:
+            write_mlp_head_v2(path, mlp_prod_clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1)
+        else:
+            write_mlp_head_v1(path, mlp_prod_clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used)
+
+    if is_mlp_write:
+        _write_head(archive_path)
     else:
         with open(archive_path, "wb") as f:
             for w in weights:
@@ -2643,21 +2700,17 @@ def main():
 
     if deploy:
         if is_mlp_write:
-            n_logo_used = 1 if args.with_logo else 0
-            n_audio_used = 1 if args.with_audio else 0
-            n_chan_used = len(mlp_prod_chan_slugs)
-            write_mlp_head_v1(args.output, mlp_prod_clf,
-                              input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
-                              n_logo=n_logo_used, n_audio=n_audio_used,
-                              n_channel=n_chan_used)
+            _write_head(args.output)
         else:
             with open(args.output, "wb") as f:
                 for w in weights:
                     f.write(struct.pack("<f", float(w)))
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
-        fmt = "MLP1 v1" if is_mlp_write else "LogReg packed"
+        if is_mlp_write:
+            fmt = "MLP2 v2" if wants_whisper else "MLP1 v1"
+        else:
+            fmt = "LogReg packed"
         print(f"\nDEPLOYED → {args.output} ({sz} B, {fmt})")
         print(f"  archive: {archive_path.name}")
         print(f"  reason: {reason}")

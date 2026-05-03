@@ -7,6 +7,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 
@@ -32,6 +33,7 @@ type Opts struct {
 	NNBackbonePath  string                 // "" = skip NN
 	NNHeadPath      string                 // ignored if backbone is empty
 	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
+	NNWhisperJSON   string                 // optional path to ~/.cache/tv-whisper/<uuid>.whisper.json. Loaded into the NNDetector via SetWhisperProbs when the head is MLP2 v2 (= n_whisper>0). Other formats ignore the data; missing file → neutral 0.5 fallback at inference.
 }
 
 // Result is the merged output across all chunks.
@@ -195,6 +197,18 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 			return out
 		}
 		defer nn.Close()
+		// Optional per-recording whisper-prob feed (MLP2 v2 heads).
+		// Loader is best-effort: missing file or parse error → no-op,
+		// the head's forward pass falls back to neutral 0.5 per frame.
+		if opts.NNWhisperJSON != "" {
+			if probs, err := signals.LoadWhisperPerSecond(opts.NNWhisperJSON); err == nil {
+				nn.SetWhisperProbs(probs)
+			} else {
+				fmt.Fprintf(os.Stderr,
+					"nn: whisper-json load failed (%v) — head sees 0.5 fallback\n",
+					err)
+			}
+		}
 	}
 
 	count := 0

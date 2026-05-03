@@ -96,7 +96,7 @@ done
     --with-minute-prior \
     --with-self-training \
     --write-pseudo-labels \
-    --head-arch mlp32-channel
+    --head-arch mlp32-channel-whisper
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

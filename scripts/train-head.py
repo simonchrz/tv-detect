@@ -917,6 +917,22 @@ def main():
                          "overlays, brand cards), shows are textured. "
                          "1 extra input dim. EXPERIMENTAL: Go-side head "
                          "loader needs new size before deploying.")
+    ap.add_argument("--head-arch",
+                    choices=["logreg", "mlp32-channel"],
+                    default="logreg",
+                    help="head architecture to deploy. "
+                         "'logreg' = legacy 1280..1288-dim linear head "
+                         "(packed float32 weights + bias, size-detected by "
+                         "the Go loader). "
+                         "'mlp32-channel' = 1290→32→1 ReLU MLP with 8-dim "
+                         "channel one-hot, written in MLP1 v1 format (= "
+                         "magic-prefixed; Go loader auto-detects). Use this "
+                         "for the production cutover; shadow-eval n=28 "
+                         "test set showed +0.22 Block-IoU vs LogReg. The "
+                         "feature-dim change vs the previous LogReg head "
+                         "trips the deploy-decision's 'feature dim changed "
+                         "→ reset baseline' branch, so a one-time forced "
+                         "deploy occurs and history.json baseline restarts.")
     ap.add_argument("--shadow-eval", action="store_true",
                     help="after the production LogReg fit + eval, also "
                          "train + evaluate three architectural variants "
@@ -1694,6 +1710,84 @@ def main():
                                smooth_s=10,
                                output_path=Path(args.output).with_suffix(".confusion.txt"))
 
+    # ── Production MLP+channel fit (--head-arch mlp32-channel) ────
+    # Fits the MLPClassifier that will replace the LogReg head.bin if
+    # --head-arch=mlp32-channel. Reuses the production X_train +
+    # y_train + sw_train (= already hygiene-masked + age-decayed +
+    # bumper-boosted) and appends a channel one-hot block post-hoc.
+    # Sample weights → integer-rounded oversampling because
+    # MLPClassifier doesn't accept sample_weight. Eval on the
+    # channel-augmented test set; the resulting metrics override
+    # metrics_smooth so the deploy-decision branch downstream operates
+    # on what we'll actually ship, not on the LogReg baseline.
+    mlp_prod_clf = None
+    mlp_prod_chan_slugs = None
+    mlp_prod_in_dim = 0
+    if args.head_arch == "mlp32-channel" and test_recs:
+        from sklearn.neural_network import MLPClassifier
+        prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
+                                   for r in train_recs + test_recs} - {""})
+        prod_chan_idx = {s: i for i, s in enumerate(prod_chan_slugs)}
+        n_chan = len(prod_chan_slugs)
+        # Per-rec frame counts in the post-hygiene X_train/y_train.
+        # The X_train_parts loop above appended (or zeroed) for each
+        # entry of train_recs in order, so the parallel zip stays
+        # consistent here.
+        rec_lengths_train = [len(p) for p in y_train_parts]
+        chan_oh_train = np.zeros((len(X_train), n_chan), dtype=np.float32)
+        offset = 0
+        for r, n in zip(train_recs, rec_lengths_train):
+            slug = uuid_slug.get(r[0], "")
+            if slug in prod_chan_idx and n > 0:
+                chan_oh_train[offset:offset + n,
+                              prod_chan_idx[slug]] = 1.0
+            offset += n
+        X_train_ch = np.hstack([X_train, chan_oh_train])
+        # Oversample by integer-rounded sw_train so user-confirmed +
+        # bumper-boosted frames retain their elevated influence in
+        # the MLP fit (MLPClassifier ignores sample_weight).
+        w_int = np.maximum(np.round(sw_train).astype(np.int32), 1)
+        sample_idx = np.repeat(np.arange(len(X_train_ch)), w_int)
+        X_train_os = X_train_ch[sample_idx]
+        y_train_os = y_train[sample_idx]
+        print(f"\n=== --head-arch mlp32-channel: production fit ===")
+        print(f"  base train dim: {X_train_ch.shape[1]} ({n_chan} channels)")
+        print(f"  base train frames: {len(X_train_ch)}")
+        print(f"  oversampled frames: {len(X_train_os)}")
+        mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),
+                                      max_iter=200, random_state=0,
+                                      early_stopping=True,
+                                      validation_fraction=0.1,
+                                      verbose=False)
+        mlp_prod_clf.fit(X_train_os, y_train_os)
+        print(f"  fit done in {mlp_prod_clf.n_iter_} epochs, "
+              f"loss={mlp_prod_clf.loss_:.4f}")
+
+        # Augment test_recs with the same channel one-hot for eval.
+        def _aug_test_chan(recs):
+            out = []
+            for r in recs:
+                X = r[3]
+                slug = uuid_slug.get(r[0], "")
+                oh = np.zeros((X.shape[0], n_chan), dtype=np.float32)
+                if slug in prod_chan_idx:
+                    oh[:, prod_chan_idx[slug]] = 1.0
+                X_new = np.hstack([X, oh]).astype(np.float32)
+                out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
+            return out
+        test_recs_ch = _aug_test_chan(test_recs)
+        print(f"\n=== MLP+channel held-out evaluation (smooth=10s) ===")
+        eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=0)
+        metrics_smooth_mlp = eval_split(mlp_prod_clf, test_recs_ch,
+                                         args.fps_extract, smooth_s=10)
+        # Override the deploy-decision metric — the deploy block
+        # downstream uses metrics_smooth to compare against the last
+        # deployed run; what gets compared must match what gets
+        # written to head.bin.
+        metrics_smooth = metrics_smooth_mlp
+        mlp_prod_chan_slugs = prod_chan_slugs
+        mlp_prod_in_dim = X_train_ch.shape[1]
+
     # ── Shadow architecture comparison (--shadow-eval) ────────────
     # Compare 3 alternative head architectures against the production
     # LogReg on the SAME train/test split. Pure measurement — shadow
@@ -2125,6 +2219,88 @@ def main():
     weights = clf.coef_.ravel().astype(np.float32)  # (1280,)
     bias = float(clf.intercept_[0])
 
+    # MLP refit-on-all (mlp32-channel mode) — analogous to the LogReg
+    # final_on_all above, but for the MLP that will be written to
+    # head.bin. Builds a channel-augmented X_all from per_rec (skipping
+    # bootstrap recordings whose narrower X breaks np.concatenate),
+    # then fits the production MLP on the union of train + test.
+    # mlp_prod_clf is rebound to the all-data version; held-out IoU
+    # in metrics_smooth was already captured against the earlier
+    # train-only fit, so the deploy-decision logic is unaffected.
+    if (args.head_arch == "mlp32-channel"
+            and args.final_on_all and test_recs
+            and mlp_prod_clf is not None):
+        from sklearn.neural_network import MLPClassifier
+        target_dim_all = max(r[3].shape[1] for r in per_rec)
+        keep_all = [r for r in per_rec
+                    if r[3].shape[1] == target_dim_all
+                       and not (len(r) > 12 and r[12])]
+        n_chan_prod = len(mlp_prod_chan_slugs)
+        prod_chan_idx_all = {s: i for i, s in enumerate(mlp_prod_chan_slugs)}
+        # Per-rec channel one-hot block, applied row-by-row to match
+        # the per-rec X concatenation order.
+        X_parts = []
+        y_parts = []
+        for r in keep_all:
+            X = r[3]
+            T = X.shape[0]
+            oh = np.zeros((T, n_chan_prod), dtype=np.float32)
+            slug = uuid_slug.get(r[0], "")
+            if slug in prod_chan_idx_all and T > 0:
+                oh[:, prod_chan_idx_all[slug]] = 1.0
+            X_parts.append(np.hstack([X, oh]).astype(np.float32))
+            y_parts.append(r[4])
+        X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
+        y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)
+        # Reconstruct per-frame sample weights from per-rec metadata
+        # (= same logic as the train-only fit: user_weight × age decay,
+        # pseudo_weight for pseudo-labelled, base 1.0 otherwise). Skip
+        # bumper boost + skip-press signals — those live on per-frame
+        # masks not retained here. Acceptable simplification: the
+        # all-data refit's role is "more data, mostly the same
+        # gradient", not "perfect weighting reproducibility".
+        sw_parts = []
+        for r in keep_all:
+            T = len(r[4])
+            is_pseudo = len(r) > 11 and r[11]
+            if is_pseudo:
+                bw = args.pseudo_weight
+            else:
+                bw = args.user_weight if r[5] else 1.0
+            age_d = r[8] if len(r) > 8 else 0
+            if age_d > 180:
+                age_mult = 0.0
+            elif age_d > 90:
+                age_mult = 0.5 * (180 - age_d) / 90.0
+            else:
+                age_mult = 1.0 - 0.5 * age_d / 90.0
+            bw *= age_mult
+            sw_parts.append(np.full(T, max(bw, 0.0), dtype=np.float32))
+        sw_all_ch = np.concatenate(sw_parts) if sw_parts else np.empty(0)
+        # Drop weight-0 rows (= rec older than 180 d); they'd just dilute.
+        nz = sw_all_ch > 0
+        X_all_ch = X_all_ch[nz]
+        y_all_ch = y_all_ch[nz]
+        sw_all_ch = sw_all_ch[nz]
+        w_int = np.maximum(np.round(sw_all_ch).astype(np.int32), 1)
+        sample_idx = np.repeat(np.arange(len(X_all_ch)), w_int)
+        X_all_os = X_all_ch[sample_idx]
+        y_all_os = y_all_ch[sample_idx]
+        print(f"\nrefitting MLP on all data for production head...")
+        print(f"  base: {len(X_all_ch)} frames "
+              f"({len(keep_all)}/{len(per_rec)} recs), "
+              f"oversampled: {len(X_all_os)} frames")
+        mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),
+                                      max_iter=200, random_state=0,
+                                      early_stopping=True,
+                                      validation_fraction=0.1,
+                                      verbose=False)
+        mlp_prod_clf.fit(X_all_os, y_all_os)
+        full_acc = (mlp_prod_clf.predict(X_all_os) == y_all_os).mean()
+        print(f"  full-data fit acc {full_acc*100:.1f}%, "
+              f"epochs {mlp_prod_clf.n_iter_}, "
+              f"loss {mlp_prod_clf.loss_:.4f}")
+
     # Active-learning surface: pick the N frames per recording where
     # the trained head is least confident. These are the frames worth
     # the user's labelling time — high-confidence frames are already
@@ -2260,20 +2436,46 @@ def main():
                           f"(prev {last_deployed['test_acc']*100:.1f}%)")
 
     # Always write the candidate to the archive — useful for manual
-    # inspection / rollback even when not deployed.
+    # inspection / rollback even when not deployed. Writer branches
+    # on --head-arch: legacy LogReg packs raw float32 weights+bias,
+    # MLP1 v1 emits a magic-prefixed header + W1/b1/W2/b2 blocks.
     ts = time.strftime("%Y%m%dT%H%M%S")
     archive_path = archive_dir / f"head.{ts}.bin"
-    with open(archive_path, "wb") as f:
-        for w in weights:
-            f.write(struct.pack("<f", float(w)))
-        f.write(struct.pack("<f", bias))
-
-    if deploy:
-        with open(args.output, "wb") as f:
+    is_mlp_write = (args.head_arch == "mlp32-channel"
+                    and mlp_prod_clf is not None)
+    if is_mlp_write:
+        n_logo_used = 1 if args.with_logo else 0
+        n_audio_used = 1 if args.with_audio else 0
+        n_chan_used = len(mlp_prod_chan_slugs)
+        write_mlp_head_v1(archive_path, mlp_prod_clf,
+                          input_dim=mlp_prod_in_dim,
+                          hidden_dim=32, backbone_dim=1280,
+                          n_logo=n_logo_used, n_audio=n_audio_used,
+                          n_channel=n_chan_used)
+    else:
+        with open(archive_path, "wb") as f:
             for w in weights:
                 f.write(struct.pack("<f", float(w)))
             f.write(struct.pack("<f", bias))
-        print(f"\nDEPLOYED → {args.output} ({os.path.getsize(args.output)} B)")
+
+    if deploy:
+        if is_mlp_write:
+            n_logo_used = 1 if args.with_logo else 0
+            n_audio_used = 1 if args.with_audio else 0
+            n_chan_used = len(mlp_prod_chan_slugs)
+            write_mlp_head_v1(args.output, mlp_prod_clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used, n_audio=n_audio_used,
+                              n_channel=n_chan_used)
+        else:
+            with open(args.output, "wb") as f:
+                for w in weights:
+                    f.write(struct.pack("<f", float(w)))
+                f.write(struct.pack("<f", bias))
+        sz = os.path.getsize(args.output)
+        fmt = "MLP1 v1" if is_mlp_write else "LogReg packed"
+        print(f"\nDEPLOYED → {args.output} ({sz} B, {fmt})")
         print(f"  archive: {archive_path.name}")
         print(f"  reason: {reason}")
         # Calibration sidecar: read by the gateway's active-learning
@@ -2332,11 +2534,20 @@ def main():
         print(f"  candidate archived as {archive_path.name}")
         print(f"  reason: {reason}")
 
+    # n_features for the history entry: in MLP1 mode the input dim
+    # includes the channel one-hot block (= mlp_prod_in_dim = 1290
+    # typical). LogReg mode falls back to X_train's column count.
+    if is_mlp_write:
+        hist_n_features = mlp_prod_in_dim
+    else:
+        hist_n_features = (int(X_train.shape[1])
+                           if hasattr(X_train, "shape") else 0)
     history.append({
         "ts": ts,
         "n_train_recs": len(train_recs),
         "n_test_recs": len(test_recs),
-        "n_features": int(X_train.shape[1]) if hasattr(X_train, "shape") else 0,
+        "n_features": hist_n_features,
+        "arch": args.head_arch,
         "train_acc": float(train_acc),
         "test_acc": float(metrics_smooth["acc"]) if metrics_smooth else None,
         "test_iou": float(metrics_smooth["iou"]) if metrics_smooth else None,

@@ -67,8 +67,17 @@ curl -fsS -X POST "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || tru
 trap 'curl -fsS -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true' EXIT
 TRAIN_START_TS=$(date +%s)
 
+# Local output dir — head.bin + sidecars + archive/ all land here.
+# Old SMB-mounted path was ~/mnt/pi-tv/hls/.tvd-models/ which broke
+# when SMB unmounted; we now write locally and rsync to Pi at end.
+TRAIN_OUT="/tmp/tv-train-head-out"
+mkdir -p "$TRAIN_OUT"
+LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
+
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
+    --backbone "$LOCAL_BACKBONE" \
+    --output "$TRAIN_OUT/head.bin" \
     --hls-root "$SNAPSHOT_DIR" \
     --surface-uncertain 6 \
     --with-logo \
@@ -77,6 +86,29 @@ TRAIN_START_TS=$(date +%s)
     --with-self-training \
     --write-pseudo-labels
 rc=$?
+
+# Bundle head.bin + sidecars + archive/ into a tar.gz and POST to
+# the gateway. Pi extracts atomically into /mnt/tv/hls/.tvd-models/
+# (head.bin written LAST so daemons never see a half-deploy).
+# Replaces the rsync over ssh — keeps everything on the unified
+# Mac→HTTP→Pi path the rest of the stack uses.
+if [ "$rc" -eq 0 ]; then
+  echo "bundling + uploading head to gateway…"
+  BUNDLE="/tmp/tv-train-head-bundle.tar.gz"
+  ( cd "$TRAIN_OUT" && tar czf "$BUNDLE" \
+      head.bin head.*.json head.*.txt archive 2>/dev/null )
+  size_mb=$(du -m "$BUNDLE" | cut -f1)
+  echo "  bundle: ${size_mb} MB"
+  resp=$(curl -fsS -X POST --data-binary "@$BUNDLE" \
+      -H "Content-Type: application/gzip" \
+      "$GATEWAY/api/internal/head-bundle")
+  echo "  upload response: $resp"
+  if [ "$?" -ne 0 ]; then
+      echo "  WARN: upload failed — head NOT deployed"
+      rc=2
+  fi
+  rm -f "$BUNDLE"
+fi
 
 # Persist the wall-time of this run to the history file so the
 # /learning banner can derive an ETA for future training runs as

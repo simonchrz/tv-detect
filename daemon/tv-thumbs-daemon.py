@@ -966,6 +966,14 @@ def process_detect(uuid):
         _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
         _record_detect_failure(uuid)
         return False
+    # Surface tv-detect's per-phase wall-time line to the daemon log
+    # (= even with --quiet the binary emits "pipeline-timing: ..."
+    # unconditionally so we can profile production drains without
+    # re-running them by hand). Cheap grep over the captured stderr.
+    for ln in (result.stderr or "").splitlines():
+        if ln.startswith("pipeline-timing"):
+            print(f"  detect {uuid[:8]}: {ln}", flush=True)
+            break
     cutlist = result.stdout
     # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
     # Re-fetch `local` via get_source: the bumper download loop above

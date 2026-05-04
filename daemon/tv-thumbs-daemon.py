@@ -788,6 +788,20 @@ def process_detect(uuid):
     src_url = str(local) if local else f"{GATEWAY}{cfg['src_url']}"
     slug = cfg.get("channel_slug") or ""
 
+    # Phase D optimisation: kick off the speaker-fingerprint pipeline
+    # as a background thread RIGHT NOW so its 5-10 s (cached) /
+    # 60-90 s (first-detect) work overlaps with the bumper + model
+    # downloads + logo + cropdetect that follow. Sequential previously
+    # added speaker-pipeline wallclock on top of the setup phase;
+    # parallel absorbs it. Joined just before the tv-detect spawn
+    # below — if speaker hasn't finished by then we still wait, but
+    # in the typical case the future is already done.
+    from concurrent.futures import ThreadPoolExecutor
+    spk_executor = ThreadPoolExecutor(max_workers=1)
+    spk_future = spk_executor.submit(
+        _ensure_speaker_artifacts,
+        uuid, src_url, cfg.get("show_title") or "")
+
     # Refresh model cache (small files, only re-downloads on size change)
     head_path = MODEL_CACHE / "head.bin"
     backbone_path = MODEL_CACHE / "backbone.onnx"
@@ -940,13 +954,19 @@ def process_detect(uuid):
               f"{len(bumper_start_paths)} start bumper(s) for {slug}",
               flush=True)
 
-    # Speaker-fingerprint orchestration (only if SPEAKER_ENABLE=1).
-    # Three-step: extract embeddings → update show centroid → compute
-    # per-recording speaker.csv. Returns None on cold-start (no
-    # confirmed episodes yet) or any error — detect runs without speaker
-    # in those cases.
-    spk_csv = _ensure_speaker_artifacts(
-        uuid, src_url, cfg.get("show_title") or "")
+    # Join the speaker-fingerprint future kicked off at the top of
+    # process_detect. If the pipeline finished while bumpers / model
+    # files were downloading we get spk_csv immediately; otherwise we
+    # block here until done. Either way, the speaker work no longer
+    # serially adds to the per-detect wall — it's absorbed by the
+    # setup phase's existing IO time.
+    try:
+        spk_csv = spk_future.result(timeout=2400)
+    except Exception as e:
+        print(f"  detect {uuid[:8]}: speaker future err: {e}", flush=True)
+        spk_csv = None
+    finally:
+        spk_executor.shutdown(wait=False)
     if spk_csv:
         cmd += ["--speaker-csv", str(spk_csv),
                 "--speaker-weight", str(SPEAKER_WEIGHT)]

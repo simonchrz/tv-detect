@@ -329,6 +329,63 @@ CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
 FAIL_COOLDOWN_S = 600  # 10 min
 _failed_until = {}  # uuid -> unix_ts when we may retry
 
+# Persistent failure-counter file. Survives daemon restart, unlike the
+# in-memory _failed_until cooldown which resets on relaunch and lets a
+# broken recording immediately retry → infinitely block the queue.
+# Write atomically (= tmp + rename) so a kill mid-write can't corrupt.
+DETECT_RETRY_FILE = MODEL_CACHE / "detect-retries.json"
+MAX_DETECT_RETRIES = 3   # 3 attempts then give up + clear marker via gateway
+
+
+def _load_detect_retries():
+    try:
+        return json.loads(DETECT_RETRY_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_detect_retries(d):
+    try:
+        tmp = DETECT_RETRY_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d))
+        tmp.replace(DETECT_RETRY_FILE)
+    except Exception:
+        pass
+
+
+def _record_detect_failure(uuid):
+    """Increment the persistent retry count. Returns the new count.
+    When count reaches MAX_DETECT_RETRIES, POSTs to the gateway's
+    detect-give-up endpoint to clear both markers — without that the
+    daemon's low-prio queue (= line ~956: only fetched when high-prio
+    empty) can stay blocked indefinitely on a single broken recording."""
+    retries = _load_detect_retries()
+    n = retries.get(uuid, 0) + 1
+    retries[uuid] = n
+    _save_detect_retries(retries)
+    if n >= MAX_DETECT_RETRIES:
+        print(f"  detect {uuid[:8]}: giving up after {n} failures, "
+              f"asking gateway to clear marker", flush=True)
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/api/internal/detect-give-up/{uuid}",
+                method="POST")
+            urllib.request.urlopen(req, timeout=10).read()
+            retries.pop(uuid, None)
+            _save_detect_retries(retries)
+        except Exception as e:
+            print(f"  detect-give-up err: {e}", flush=True)
+    return n
+
+
+def _record_detect_success(uuid):
+    """Drop any persisted retry count after a successful detect (=
+    next failure starts the counter from 0 again)."""
+    retries = _load_detect_retries()
+    if uuid in retries:
+        retries.pop(uuid, None)
+        _save_detect_retries(retries)
+
 
 def http_get_json(url):
     with urllib.request.urlopen(url, timeout=15, context=CTX) as r:
@@ -843,6 +900,7 @@ def process_detect(uuid):
         print(f"  detect {uuid[:8]} rc={result.returncode}: "
               f"{(result.stderr or '')[-300:]}", flush=True)
         _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        _record_detect_failure(uuid)
         return False
     cutlist = result.stdout
     # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
@@ -865,6 +923,7 @@ def process_detect(uuid):
                     and "\t" in ln and not ln.startswith("FILE"))
     print(f"  detect {uuid[:8]}: {n_blocks} blocks, "
           f"{time.time()-t0:.0f}s", flush=True)
+    _record_detect_success(uuid)
     return True
 
 

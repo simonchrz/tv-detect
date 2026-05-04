@@ -233,6 +233,28 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  logo_avg=%.3f", sum/float64(len(res.LogoConfs)))
 		}
 		fmt.Fprintln(os.Stderr)
+		// Per-phase wall-time breakdown (= summed across chunk
+		// workers; with N parallel workers the wall total stacks).
+		// Drives optimisation hypothesis: which phase eats the
+		// budget on this recording? Bumper-heavy channels (RTL/VOX
+		// with 100+ templates) should show bumper as the dominant
+		// cost; logo-clean shows backbone+logo dominant. Bump
+		// --bumper-stride to 10 if bumper is >40 % of total.
+		ms := func(ns int64) float64 { return float64(ns) / 1e6 }
+		totalMs := ms(res.LogoNs + res.NNNs + res.BumperNs + res.OtherNs)
+		if totalMs > 0 {
+			fmt.Fprintf(os.Stderr,
+				"pipeline-timing (sum across %d chunks, ms): "+
+					"backbone=%.0f (%.0f%%)  bumper=%.0f (%.0f%%)  "+
+					"logo=%.0f (%.0f%%)  other=%.0f (%.0f%%)  "+
+					"sum=%.0f\n",
+				*workers,
+				ms(res.NNNs), 100*ms(res.NNNs)/totalMs,
+				ms(res.BumperNs), 100*ms(res.BumperNs)/totalMs,
+				ms(res.LogoNs), 100*ms(res.LogoNs)/totalMs,
+				ms(res.OtherNs), 100*ms(res.OtherNs)/totalMs,
+				totalMs)
+		}
 	}
 
 	// Debug emitters — write to stdout independent of --output format.

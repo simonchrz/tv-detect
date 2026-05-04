@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/simonchrz/tv-detect/internal/decode"
 	"github.com/simonchrz/tv-detect/internal/signals"
@@ -50,6 +51,13 @@ type Result struct {
 	BumperConfs      []float64 // per-frame max END-bumper match score, nil if no templates
 	BumperStartConfs []float64 // per-frame max START-bumper match score, nil if no start templates
 	Letterbox        []signals.LetterboxEvent
+	// Per-phase wall-time SUMMED across all chunk workers. Wall-time
+	// not CPU-time, so parallel chunks stack — divide by Workers for
+	// per-chunk feel. Driven by --quiet=false log emit in main.go.
+	LogoNs   int64
+	NNNs     int64
+	BumperNs int64
+	OtherNs  int64
 }
 
 // chunkPlan describes one worker's time-range slice.
@@ -72,6 +80,18 @@ type chunkRes struct {
 	bumperStartConfs []float64
 	letterbox        []signals.LetterboxEvent
 	err         error
+	// Per-phase cumulative wall-time for THIS chunk's worker. Summed
+	// across chunks at merge time + emitted as a "pipeline-timing:"
+	// line so a single-detect log shows where the budget went. Useful
+	// to confirm/refute optimisation hypotheses (= bumper-stride
+	// bump, nnBatch tuning, decode-pass speedup) before changing
+	// production parameters. Wall-time, NOT CPU-time, so parallel
+	// chunks' totals overlap — divide by Workers for an apples-to-
+	// apples per-chunk view.
+	logoNs   int64
+	nnNs     int64
+	bumperNs int64
+	otherNs  int64 // black + scene + letterbox + decode-iter waits
 }
 
 // Run probes the input, plans chunks, spawns workers, merges results.
@@ -227,6 +247,8 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		if nn == nil || len(nnPxBuf) == 0 {
 			return
 		}
+		tNN := time.Now()
+		defer func() { out.nnNs += time.Since(tNN).Nanoseconds() }()
 		// Pass nnRmsBuf only when audio is in play; nil signals the
 		// nn detector to use a neutral 0.5 if its head expects an
 		// audio dim but we have no data (=  recording with no audio
@@ -242,15 +264,19 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		nnRmsBuf = nnRmsBuf[:0]
 	}
 	for f := range d.Frames() {
+		tFrame := time.Now()
 		black.Push(f.Index, f.Pixels)
 		scene.Push(f.Index, f.Pixels)
 		letterbox.Push(f.Index, f.Pixels)
+		out.otherNs += time.Since(tFrame).Nanoseconds()
 		// Compute logo conf first; the NN may consume it (with-logo
 		// head format passes the same per-frame logoConf as the 1281st
 		// input feature). For a legacy head it's silently ignored.
 		var logoConf float64 = 0.5
 		if logo != nil {
+			tLogo := time.Now()
 			logoConf = logo.Confidence(f.Pixels)
+			out.logoNs += time.Since(tLogo).Nanoseconds()
 			out.logoConfs = append(out.logoConfs, logoConf)
 		}
 		if nn != nil {
@@ -288,6 +314,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 				s = 1
 			}
 			compute := count%s == 0
+			tBump := time.Now()
 			if bumper != nil {
 				if compute {
 					out.bumperConfs = append(out.bumperConfs, bumper.Confidence(f.Pixels))
@@ -301,6 +328,9 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 				} else {
 					out.bumperStartConfs = append(out.bumperStartConfs, 0)
 				}
+			}
+			if compute {
+				out.bumperNs += time.Since(tBump).Nanoseconds()
 			}
 		}
 		count++
@@ -337,6 +367,10 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBu
 	}
 	for i, c := range chunks {
 		r.FrameCount += c.frameCount
+		r.LogoNs += c.logoNs
+		r.NNNs += c.nnNs
+		r.BumperNs += c.bumperNs
+		r.OtherNs += c.otherNs
 		// Shift blackframes into full-file timeline.
 		for _, e := range c.blackframes {
 			r.Blackframes = append(r.Blackframes, signals.BlackEvent{

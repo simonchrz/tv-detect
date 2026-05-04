@@ -45,6 +45,20 @@ FFPROBE = "/opt/homebrew/bin/ffprobe"
 TVD = os.path.expanduser("~/.local/bin/tv-detect")
 SAFE_VIDEO = {"h264", "hevc"}
 
+# Sub-process environment with a sane PATH. launchd starts agents
+# with PATH=/usr/bin:/bin, so any tool spawn that internally exec's
+# a binary by NAME (= ffmpeg, fpcalc, ECAPA's audio loader inside
+# extract-speaker-embeddings) raises FileNotFoundError. The daemon
+# uses absolute paths for its OWN ffmpeg/ffprobe calls, but the
+# Python helpers it spawns (= speaker-extract, whisper-classify,
+# centroid-build, postprocess) all rely on PATH lookups internally.
+# Pass SPAWN_ENV to every subprocess.run/Popen for these helpers.
+# Includes ~/.local/bin (tv-detect), brew (Apple Silicon default),
+# and the standard system dirs.
+SPAWN_ENV = {**os.environ, "PATH": (
+    f"{os.path.expanduser('~/.local/bin')}:"
+    f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")}
+
 # Local cache for model files (head.bin, backbone.onnx) — refreshed
 # on size change so a nightly retrain auto-propagates without daemon
 # restart. Keyed by remote ETag/size; head.bin is small (~5 KB),
@@ -133,7 +147,7 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
         r = subprocess.run(
             [WHISPER_PYTHON, str(classify_py),
              "--src", str(src_path), "--output", str(whisper_path)],
-            capture_output=True, timeout=300)
+            capture_output=True, timeout=300, env=SPAWN_ENV)
         if r.returncode != 0 or not whisper_path.is_file():
             err = r.stderr.decode(errors='replace') if r.stderr else ''
             out = r.stdout.decode(errors='replace') if r.stdout else ''
@@ -164,7 +178,7 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
             [WHISPER_PYTHON, str(postprocess_py),
              "--whisper", str(whisper_path), "--diag-out", str(diag_path)],
             input=raw_cutlist.encode(),
-            capture_output=True, timeout=30)
+            capture_output=True, timeout=30, env=SPAWN_ENV)
         if r.returncode != 0 or not r.stdout:
             return raw_cutlist
         # Diagnostic log line — only when something actually changed
@@ -489,7 +503,8 @@ def process_recording(uuid, do_hls, do_thumbs):
                     [FFPROBE, "-v", "error", "-select_streams", "v:0",
                      "-show_entries", "stream=codec_name", "-of",
                      "default=nokey=1:noprint_wrappers=1", src_url],
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True, timeout=30,
+                    env=SPAWN_ENV)
                 vcodec = (probe.stdout or "").strip()
             except Exception:
                 vcodec = ""
@@ -529,7 +544,8 @@ def process_recording(uuid, do_hls, do_thumbs):
         # buries our own log lines). Capture stderr for failure
         # diagnosis.
         result = subprocess.run(cmd, timeout=TIMEOUT_S,
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True,
+                                  env=SPAWN_ENV)
         rc = result.returncode
         encode_s = time.time() - t0
         if rc != 0:
@@ -606,7 +622,8 @@ def detect_letterbox_offset(src):
              "-ss", "60", "-t", "5", "-i", str(src),
              "-vf", "cropdetect=24:16:0",
              "-an", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120,
+            env=SPAWN_ENV)
     except Exception as e:
         print(f"  cropdetect err: {e}", flush=True)
         return 0
@@ -657,10 +674,16 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
                 [SPEAKER_PYTHON,
                  str(SPEAKER_SCRIPTS / "extract-speaker-embeddings.py"),
                  src_path, str(emb_path)],
-                capture_output=True, text=True, timeout=2400)
+                capture_output=True, text=True, timeout=2400,
+                env=SPAWN_ENV)
             if r.returncode != 0:
+                # Show TAIL of stderr — the script logs progress to
+                # stderr and the failure is at the END, but a 300-char
+                # head truncation showed only the "loading audio from"
+                # progress line, hiding the actual traceback.
+                err_tail = (r.stderr or "")[-1500:]
                 print(f"  detect {uuid[:8]}: embedding extract failed "
-                      f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
+                      f"(rc={r.returncode}):\n{err_tail}", flush=True)
                 return None
             print(f"  detect {uuid[:8]}: embeddings extracted in "
                   f"{time.time()-t0:.0f}s", flush=True)
@@ -678,7 +701,8 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
              "--embeddings-dir", str(EMB_CACHE),
              "--gateway", GATEWAY,
              "--show-title", show_title],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120,
+            env=SPAWN_ENV)
         if r.returncode == 2:
             # Insufficient data (no edited episodes yet) — expected for
             # cold-start shows. Run detect without speaker.
@@ -697,7 +721,8 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
             [SPEAKER_PYTHON,
              str(SPEAKER_SCRIPTS / "compute-speaker-confs.py"),
              str(emb_path), str(centroid_path), str(csv_path)],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=60,
+            env=SPAWN_ENV)
         if r.returncode != 0:
             print(f"  detect {uuid[:8]}: speaker-csv compute failed "
                   f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
@@ -887,15 +912,11 @@ def process_detect(uuid):
 
     cmd += ["--output", "cutlist", src_url]
 
-    # tv-detect spawns ffprobe internally — give it a sane PATH that
-    # launchd doesn't otherwise provide. Includes brew (Apple Silicon
-    # default) and ~/.local/bin (where tv-detect itself lives).
+    # tv-detect spawns ffprobe internally — uses the shared SPAWN_ENV
+    # which sets PATH for launchd-spawned subprocesses.
     t0 = time.time()
-    env = os.environ.copy()
-    env["PATH"] = (f"{os.path.expanduser('~/.local/bin')}:"
-                   f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
     result = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=TIMEOUT_S, env=env)
+                              timeout=TIMEOUT_S, env=SPAWN_ENV)
     if result.returncode != 0:
         print(f"  detect {uuid[:8]} rc={result.returncode}: "
               f"{(result.stderr or '')[-300:]}", flush=True)
@@ -1049,7 +1070,8 @@ def main():
                          "--queue", "--limit", str(SPOT_EXTRACT_BATCH)],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
-                        start_new_session=True)
+                        start_new_session=True,
+                        env=SPAWN_ENV)
                 except Exception as e:
                     print(f"  spot-fp drain spawn err: {e}", flush=True)
         if (thumbs or hls or detect or detect_low or in_flight_n

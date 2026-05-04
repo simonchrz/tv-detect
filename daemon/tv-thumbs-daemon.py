@@ -612,10 +612,47 @@ def process_recording(uuid, do_hls, do_thumbs):
 LETTERBOX_LOGO_OVERHANG = 20
 
 
-def detect_letterbox_offset(src):
+# Per-recording cropdetect cache. cropdetect runs ffmpeg for 5 s of
+# decode at the 60 s mark — the underlying letterbox geometry is a
+# property of the recording, not the detect parameters, so the result
+# is stable across re-detects (= head deploys, manual /redetect
+# triggers). Cache file = {uuid: y_offset_int} JSON; file content is
+# the entire cache, atomic-rename on update. Cache is keyed by uuid
+# (= source content hash). Survives daemon restart.
+LETTERBOX_CACHE_FILE = MODEL_CACHE / "letterbox-offsets.json"
+
+
+def _load_letterbox_cache() -> dict:
+    try:
+        return json.loads(LETTERBOX_CACHE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_letterbox_cache(d: dict):
+    try:
+        tmp = LETTERBOX_CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d))
+        tmp.replace(LETTERBOX_CACHE_FILE)
+    except Exception:
+        pass
+
+
+def detect_letterbox_offset(src, uuid=None):
     """Quick cropdetect on a 5s sample 60s into the recording (skips
     intro/promo). Returns recommended --logo-y-offset, or 0 if no
-    meaningful letterbox. src may be a Path or HTTP URL."""
+    meaningful letterbox. src may be a Path or HTTP URL.
+
+    When uuid is supplied the result is cached per-uuid in
+    ~/.cache/tv-detect-daemon/letterbox-offsets.json; subsequent
+    detects of the same recording hit the cache instead of paying the
+    5 s ffmpeg pass. Letterbox geometry is invariant w.r.t. the
+    detect run (= depends on the recording's pixel content, not the
+    head/template config), so this cache never needs explicit
+    invalidation."""
+    cache = _load_letterbox_cache() if uuid else {}
+    if uuid and uuid in cache:
+        return int(cache[uuid])
     try:
         r = subprocess.run(
             [FFMPEG, "-hide_banner", "-loglevel", "info",
@@ -632,11 +669,17 @@ def detect_letterbox_offset(src):
     # confident aggregate.
     ys = re.findall(r"crop=\d+:\d+:\d+:(\d+)", r.stderr)
     if not ys:
-        return 0
-    y = int(ys[-1])
-    if y < 8:
-        return 0  # no meaningful letterbox
-    return max(0, y - LETTERBOX_LOGO_OVERHANG)
+        offset = 0
+    else:
+        y = int(ys[-1])
+        if y < 8:
+            offset = 0  # no meaningful letterbox
+        else:
+            offset = max(0, y - LETTERBOX_LOGO_OVERHANG)
+    if uuid:
+        cache[uuid] = offset
+        _save_letterbox_cache(cache)
+    return offset
 
 
 def _slugify_show(title: str) -> str:
@@ -869,7 +912,7 @@ def process_detect(uuid):
         cmd += ["--channel-slug", slug]
     if logo_path and logo_path.exists() and logo_path.stat().st_size > 0:
         cmd += ["--logo", str(logo_path)]
-        y_off = detect_letterbox_offset(src_url)
+        y_off = detect_letterbox_offset(src_url, uuid=uuid)
         if y_off > 0:
             cmd += ["--logo-y-offset", str(y_off)]
             print(f"  detect {uuid[:8]}: letterbox y-offset={y_off}",

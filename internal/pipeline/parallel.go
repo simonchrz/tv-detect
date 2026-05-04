@@ -237,7 +237,14 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 	// nnBatchSize frames + their logoConfs, run inference once, append
 	// confidences in order. Frame pixels must be COPIED into the buffer
 	// because the decoder reuses its slice for the next frame.
-	const nnBatchSize = 8
+	//
+	// 32 measured optimal on M-series CoreML (= 2026-05-04 A/B against
+	// 8/16/64 on a real recording: 8→44.0 s wall, 16→42.1 s, 32→35.1 s,
+	// 64→48.1 s — CoreML throughput curves up to 32 then regresses at
+	// 64 due to memory or kernel-launch overhead). Backbone shrinks
+	// from 95 s to 57 s sum (-40 %), wall -20 %. Pairs 1:1 with the
+	// nn.go session-creation nnBatch constant — both must match.
+	const nnBatchSize = 32
 	var (
 		nnPxBuf   [][]byte
 		nnLogoBuf []float64

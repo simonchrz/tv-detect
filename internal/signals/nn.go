@@ -94,7 +94,7 @@ const (
 	nnInputW  = 224
 	nnInputH  = 224
 	nnFeatDim = 1280 // backbone output size
-	nnBatch   = 8    // frames per ONNX inference call. CoreML on M-series benefits from batched matmul; see ConfidenceBatch. Sub-batches are zero-padded.
+	nnBatch   = 32   // frames per ONNX inference call. CoreML on M-series benefits from batched matmul (= 2026-05-04 A/B 8/16/32/64 found 32 optimal: -20 % wall vs 8, -40 % backbone-phase sum). Sub-batches are zero-padded. Pairs 1:1 with pipeline/parallel.go nnBatchSize.
 )
 
 var nnChannels = []string{

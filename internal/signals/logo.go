@@ -2,6 +2,7 @@ package signals
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/simonchrz/tv-detect/pkg/logotemplate"
 )
@@ -41,10 +42,30 @@ type LogoDetector struct {
 // but the actual logo appears further down in the visible area.
 // Returns an error only if the bounding box can't fit in the frame.
 func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yOffset int) (*LogoDetector, error) {
-	if tmpl.MaxX > frameW || tmpl.MaxY+yOffset > frameH {
+	// Hard requirement: bbox X must fit in frame width — there's no
+	// equivalent x-offset compensation, so an X-overflow really is a
+	// configuration error worth failing on.
+	if tmpl.MaxX > frameW {
 		return nil, fmt.Errorf(
-			"logo bbox (%d,%d)-(%d,%d) +yOffset=%d doesn't fit in %dx%d frame",
-			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, yOffset, frameW, frameH)
+			"logo bbox (%d,%d)-(%d,%d) MaxX > frameW %d",
+			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, frameW)
+	}
+	// If the requested Y offset would push the bbox past the bottom
+	// of the frame, ignore it and log a warning. Common case: logo
+	// templates trained with the logo at the bottom of the frame
+	// (rtlzwei: y=494-552 in a 720x576 frame; vox; sixx) can't
+	// physically shift down by the cropdetect-derived offset — the
+	// offset is a letterbox-bar height, sensible only for top-of-
+	// frame logos. Recording proceeds with the trained bbox; we lose
+	// the per-recording letterbox compensation but don't crash the
+	// pipeline. Pre-2026-05-04 this returned an error, which combined
+	// with the daemon's no-retry-clear policy stalled the entire
+	// re-detect queue on the first rtlzwei recording in a batch.
+	if tmpl.MaxY+yOffset > frameH {
+		fmt.Fprintf(os.Stderr,
+			"logo: y-offset %d would push bbox bottom (%d) past frameH (%d) — clamping to 0 (logo template likely bottom-positioned, letterbox compensation N/A)\n",
+			yOffset, tmpl.MaxY+yOffset, frameH)
+		yOffset = 0
 	}
 	if edgeThresh <= 0 {
 		edgeThresh = defaultEdgeThresh

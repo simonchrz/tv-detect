@@ -1027,13 +1027,20 @@ def main():
         # consuming Pi disk IO / link bandwidth (in_flight_n == 0).
         # Internal interval gate caps it at one cycle per 30 min.
         _maybe_prefetch_sources(in_flight_n)
-        # V2 low-prio queue: only fetch when high is fully drained AND
-        # no jobs in flight. This guarantees a freshly arriving manual
-        # /redetect (= high) always wins over background backfill,
-        # without needing preemption — the bg job just doesn't get
-        # picked next cycle. Worst case for high: one currently-running
-        # low job blocks the slot for ~3 min.
-        if not detect and in_flight_n == 0:
+        # V2 low-prio queue: fetch when there is no UNCLAIMED high-
+        # prio work AND we still have a parallel slot free.
+        # "Unclaimed" = the high-prio entry isn't the uuid we're
+        # already running (= the gateway only clears markers after
+        # cutlist upload, so a high-prio job in-flight keeps showing
+        # in detect-pending until it finishes). Without the in_flight
+        # subtraction, DETECT_PARALLEL=2 collapses to 1 the moment a
+        # high-prio job starts: bg gate fires `not detect` → False →
+        # bg skipped, the 2nd slot sits empty for the entire
+        # high-prio detect duration.
+        with detect_lock:
+            new_high = [r for r in detect
+                        if r.get("uuid") not in detect_in_flight]
+        if not new_high and in_flight_n < DETECT_PARALLEL:
             try:
                 detect_low = http_get_json(
                     f"{GATEWAY}/api/internal/detect-pending-low"
@@ -1107,17 +1114,25 @@ def main():
             print(f"  → {uuid[:8]} detect=True (parallel slot)", flush=True)
             detect_executor.submit(_run_detect, uuid)
             available -= 1
-        # V2 low-prio: at most ONE bg job per cycle so we re-check high
-        # at the next poll (5s later). Reused _run_detect — gateway-side
-        # cutlist-uploaded clears whichever marker tier triggered it.
+        # V2 low-prio: fill remaining slots with bg jobs. Earlier
+        # took only `detect_low[0]` per cycle which left slots empty
+        # if [0] was the in-flight uuid or in cooldown — iterate to
+        # find the next eligible candidate(s) instead. Still gated
+        # on `not detect` so any new high-prio marker pauses bg
+        # uptake on the next cycle.
         if available > 0 and detect_low and not detect:
-            j = detect_low[0]
-            uuid = j["uuid"]
-            if uuid not in already and uuid not in cooled:
+            for j in detect_low:
+                if available <= 0:
+                    break
+                uuid = j["uuid"]
+                if uuid in already or uuid in cooled:
+                    continue
                 with detect_lock:
                     detect_in_flight.add(uuid)
+                already.add(uuid)
                 print(f"  → {uuid[:8]} detect=True (bg slot)", flush=True)
                 detect_executor.submit(_run_detect, uuid)
+                available -= 1
 
         # HLS / thumbs stay sequential (cheap, doesn't benefit from parallel)
         for uuid in sorted((hls_uuids | thumb_uuids) - cooled):

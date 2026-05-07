@@ -238,7 +238,12 @@ def _maybe_gc_orphans():
     """Drop cached .ts whose recording has been deleted on the Pi.
     LRU alone would evict eventually but only when the cap is hit;
     explicit orphan removal frees space sooner and keeps the cache
-    aligned with Pi-side reality. Runs at most once per hour."""
+    aligned with Pi-side reality. Runs at most once per hour.
+
+    Also triggers Pi-side cleanup of orphaned _rec_<uuid>/ dirs
+    (= bundle-folders whose tvh DVR entry was deleted but the dir
+    stayed behind, leaving thumbs/.requested in an infinite retry
+    loop) and clears the local whisper-cache for deleted uuids."""
     global _last_orphan_gc
     now = time.time()
     if now - _last_orphan_gc < ORPHAN_GC_INTERVAL_S:
@@ -265,6 +270,35 @@ def _maybe_gc_orphans():
     if n_removed:
         print(f"  orphan-gc: removed {n_removed} cached .ts "
               f"({bytes_removed/1e6:.0f} MB)", flush=True)
+    # Whisper-cache: each recording leaves a <uuid>.whisper.json +
+    # <uuid>.postprocess.json. Clean both when the recording's gone.
+    whisper_dir = Path.home() / ".cache" / "tv-whisper"
+    if whisper_dir.is_dir():
+        n_w = 0
+        for f in whisper_dir.glob("*.json"):
+            uuid = f.name.split(".", 1)[0]
+            if uuid not in valid and len(uuid) >= 16:
+                try:
+                    f.unlink()
+                    n_w += 1
+                except Exception:
+                    pass
+        if n_w:
+            print(f"  orphan-gc: removed {n_w} whisper-cache files",
+                  flush=True)
+    # Pi-side: trigger HLS-bundle cleanup for deleted DVR entries.
+    # Gateway diffs against tvh's grid + only deletes _rec_/ dirs
+    # whose mtime is >1h old (= avoid race with in-flight finalize).
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY}/api/internal/cleanup-orphans", method="POST")
+        r = json.loads(urllib.request.urlopen(
+            req, timeout=30, context=CTX).read())
+        if r.get("n_removed"):
+            print(f"  orphan-gc: pi removed {r['n_removed']} _rec_/ dirs",
+                  flush=True)
+    except Exception as e:
+        print(f"  orphan-gc: pi cleanup err: {e}", flush=True)
 
 
 def _maybe_prefetch_sources(in_flight_n):

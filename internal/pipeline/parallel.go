@@ -23,6 +23,11 @@ type Opts struct {
 	Workers        int     // number of parallel chunk workers (>= 1)
 	DecodeWidth    int     // 0 = native
 	DecodeHeight   int     // 0 = native
+	// FFmpegExtraInputArgs are injected before -i in the decode
+	// subprocess. Use for error-tolerance flags on corrupt IPTV
+	// streams: ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt"]
+	// keeps frames flowing through h264 PPS / packet-loss errors.
+	FFmpegExtraInputArgs []string
 	BlackframeDurS float64
 	SceneThreshold float64
 	LogoTemplate    *logotemplate.Template // nil = skip logo
@@ -170,11 +175,12 @@ func planChunks(totalS float64, workers int) []chunkPlan {
 func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, audioRMS []float32) chunkRes {
 	out := chunkRes{index: p.index, startS: p.startS}
 	d, err := decode.NewDecoder(ctx, decode.DecodeOpts{
-		Input:  opts.Input,
-		Width:  opts.DecodeWidth,
-		Height: opts.DecodeHeight,
-		StartS: p.startS,
-		DurS:   p.durS,
+		Input:          opts.Input,
+		Width:          opts.DecodeWidth,
+		Height:         opts.DecodeHeight,
+		StartS:         p.startS,
+		DurS:           p.durS,
+		ExtraInputArgs: opts.FFmpegExtraInputArgs,
 	})
 	if err != nil {
 		out.err = err

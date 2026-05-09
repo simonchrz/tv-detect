@@ -22,6 +22,13 @@ type DecodeOpts struct {
 	Height   int     // target height (0 = native)
 	StartS   float64 // -ss seek offset (0 = beginning)
 	DurS     float64 // -t duration limit (0 = full input)
+	// ExtraInputArgs is injected BEFORE -i so it applies to the
+	// input stream. Use for error-tolerance flags on corrupt IPTV
+	// streams: ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt"]
+	// keeps ffmpeg producing frames through h264 PPS / packet-loss
+	// errors instead of aborting (which would leave the caller with a
+	// silent fallback for the affected range).
+	ExtraInputArgs []string
 }
 
 // Decoder streams decoded frames over a channel.
@@ -70,6 +77,10 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 	}
 	if opts.StartS > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", opts.StartS))
+	}
+	// Error-tolerance + similar input-side flags must come BEFORE -i.
+	if len(opts.ExtraInputArgs) > 0 {
+		args = append(args, opts.ExtraInputArgs...)
 	}
 	args = append(args, "-i", opts.Input)
 	if opts.DurS > 0 {

@@ -50,6 +50,7 @@ func main() {
 		probeOnly      = flag.Bool("probe", false, "only print stream metadata and exit")
 		decodeWidth    = flag.Int("decode-width", 0, "scale frames to width (0 = native)")
 		decodeHeight   = flag.Int("decode-height", 0, "scale frames to height (0 = native)")
+		ffmpegExtraIn  = flag.String("ffmpeg-extra-input-args", "", "space-separated ffmpeg flags to inject BEFORE -i in the decode subprocess. Use for error-tolerance on corrupt IPTV streams: '-err_detect ignore_err -fflags +discardcorrupt' keeps ffmpeg producing frames through h264 PPS/packet-loss errors instead of aborting, which would silently make the affected frame range unmeasurable (logo signal returns sentinel 0.5 → block-formation fails to find ad blocks).")
 		emitBlackframes = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout")
 		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
 		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
@@ -190,6 +191,7 @@ func main() {
 		Workers:        *workers,
 		DecodeWidth:    *decodeWidth,
 		DecodeHeight:   *decodeHeight,
+		FFmpegExtraInputArgs: parseFFmpegExtraArgs(*ffmpegExtraIn),
 		BlackframeDurS: *blackframeDur,
 		SceneThreshold: *sceneThreshold,
 		LogoTemplate:    tmpl,
@@ -498,6 +500,17 @@ func parseBumperTemplates(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseFFmpegExtraArgs splits a single shell-style string into the
+// argv slice ffmpeg expects. Single-arg flags like '-an' work too;
+// quoting / escaping is intentionally not supported (= these are
+// ffmpeg flags, not arbitrary shell expressions).
+func parseFFmpegExtraArgs(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return strings.Fields(s)
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

@@ -501,12 +501,25 @@ def extract_logo_per_second(src, logo_path, n_seconds, tv_detect, y_offset=0):
     lets the head learn channel-specific "trust the logo template"
     patterns instead of relying on post-hoc NNWeight blending.
 
-    Falls back to a constant 0.5 array on any failure (missing
-    template, tv-detect crash, parse glitch) so training doesn't die
-    just because one recording is missing a logo."""
-    neutral = np.full(n_seconds, 0.5, dtype=np.float32)
+    Sentinel for "not measured" is **NaN** (= train-head loaders detect
+    this and substitute 0.5 right before fit, BUT also log per-recording
+    miss rates so corruption-driven extraction failures stand out
+    instead of being masked as plain "neutral" 0.5s in the cache). The
+    earlier behaviour of writing a flat 0.5 array on failure made
+    catastrophic decode failures (= h264 PPS errors mid-stream killing
+    chunks 2+ silently) look identical to "logo present but ambiguous"
+    — block-formation could not distinguish, IoU collapsed.
+
+    NaN sources, in order of severity:
+      - missing template / file → all-NaN (= channel has no template at all)
+      - subprocess timeout / OSError → all-NaN
+      - subprocess returncode != 0 → keep partial CSV that DID parse;
+        mark untouched seconds NaN (= chunked decoder may produce
+        chunk 0+1 frames before chunk 2 corruption aborts the run)
+      - timestamps not present in CSV → NaN for those exact seconds"""
+    nan_arr = np.full(n_seconds, np.nan, dtype=np.float32)
     if not logo_path or not Path(logo_path).exists():
-        return neutral
+        return nan_arr
     cmd = [tv_detect, "--quiet", "--workers", "4",
            "--logo", str(logo_path)]
     if y_offset > 0:
@@ -515,9 +528,10 @@ def extract_logo_per_second(src, logo_path, n_seconds, tv_detect, y_offset=0):
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except (subprocess.TimeoutExpired, OSError):
-        return neutral
-    if out.returncode != 0:
-        return neutral
+        return nan_arr
+    # NOTE: do NOT bail on returncode != 0 — partial CSV (= what chunks
+    # successfully decoded before the failed one aborted) is still
+    # useful. Untouched seconds stay NaN.
     sums = np.zeros(n_seconds, dtype=np.float64)
     counts = np.zeros(n_seconds, dtype=np.int32)
     for line in out.stdout.splitlines():
@@ -534,7 +548,7 @@ def extract_logo_per_second(src, logo_path, n_seconds, tv_detect, y_offset=0):
         if 0 <= s < n_seconds:
             sums[s] += c
             counts[s] += 1
-    result = neutral.copy()
+    result = nan_arr.copy()
     mask = counts > 0
     result[mask] = (sums[mask] / counts[mask]).astype(np.float32)
     return result
@@ -1348,12 +1362,28 @@ def main():
     # adjacent frames are highly correlated).
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
     dropped_high = []
+    logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
     for rec_info, cache_path in cached + [(ri, cp) for ri, _, cp in todo]:
         if not Path(cache_path).exists():
             continue
         feats = np.load(cache_path)
         if feats.shape[0] == 0:
             continue
+        # NaN sentinel handling: extract_logo_per_second writes NaN
+        # for unmeasurable seconds (= corrupt stream chunk, missing
+        # template). For training we substitute 0.5 (= matches the
+        # head's "no opinion" expectation) but log per-recording
+        # miss rates so corruption-driven failures stand out.
+        if args.with_logo and feats.shape[1] > 1280:
+            logo_col = feats[:, 1280]
+            n_nan = int(np.isnan(logo_col).sum())
+            if n_nan > 0:
+                miss_pct = 100.0 * n_nan / len(logo_col)
+                if miss_pct >= 10.0:
+                    logo_nan_offenders.append(
+                        (rec_info[0][:8], rec_info[1][:30], miss_pct))
+                feats = feats.copy()
+                feats[np.isnan(feats[:, 1280]), 1280] = 0.5
         uuid, title, ads, which, *rest = rec_info
         rec_dir_path = Path(rest[1]) if len(rest) > 1 else None
         pseudo_data = rest[3] if len(rest) > 3 else None
@@ -1440,6 +1470,13 @@ def main():
               f"(suspect broken auto-labels):")
         for u, t, r in dropped_high:
             print(f"  {u} {t:30s} {r*100:.0f}%")
+    if logo_nan_offenders:
+        print(f"logo: {len(logo_nan_offenders)} recording(s) with "
+              f">=10% unmeasurable seconds (= NaN-sentinel from corrupt "
+              f"stream chunks; substituted with 0.5 for fit, but flagged "
+              f"because block-formation can't see logo signal there):")
+        for u, t, p in sorted(logo_nan_offenders, key=lambda x: -x[2])[:20]:
+            print(f"  {u} {t:30s} {p:.0f}% NaN")
 
     if not per_rec:
         print("no labelled recordings found", file=sys.stderr)

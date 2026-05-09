@@ -1363,6 +1363,7 @@ def main():
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
     dropped_high = []
     logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
+    logo_nan_mask_by_uuid = {}  # uuid → bool array, True where logo was NaN
     for rec_info, cache_path in cached + [(ri, cp) for ri, _, cp in todo]:
         if not Path(cache_path).exists():
             continue
@@ -1371,19 +1372,23 @@ def main():
             continue
         # NaN sentinel handling: extract_logo_per_second writes NaN
         # for unmeasurable seconds (= corrupt stream chunk, missing
-        # template). For training we substitute 0.5 (= matches the
-        # head's "no opinion" expectation) but log per-recording
-        # miss rates so corruption-driven failures stand out.
+        # template). For the X matrix we substitute 0.5 to keep
+        # arithmetic valid, but the per-frame NaN mask is preserved
+        # in logo_nan_mask_by_uuid so the sample-weight builder can
+        # zero out those frames in fit (= "head learns missing == skip"
+        # without coupling to a Go-side schema change). Per-recording
+        # miss rates ≥10% are surfaced in the post-load summary.
         if args.with_logo and feats.shape[1] > 1280:
-            logo_col = feats[:, 1280]
-            n_nan = int(np.isnan(logo_col).sum())
+            nan_mask = np.isnan(feats[:, 1280])
+            n_nan = int(nan_mask.sum())
             if n_nan > 0:
-                miss_pct = 100.0 * n_nan / len(logo_col)
+                miss_pct = 100.0 * n_nan / len(nan_mask)
                 if miss_pct >= 10.0:
                     logo_nan_offenders.append(
                         (rec_info[0][:8], rec_info[1][:30], miss_pct))
                 feats = feats.copy()
-                feats[np.isnan(feats[:, 1280]), 1280] = 0.5
+                feats[nan_mask, 1280] = 0.5
+                logo_nan_mask_by_uuid[rec_info[0]] = nan_mask
         uuid, title, ads, which, *rest = rec_info
         rec_dir_path = Path(rest[1]) if len(rest) > 1 else None
         pseudo_data = rest[3] if len(rest) > 3 else None
@@ -1732,6 +1737,16 @@ def main():
             globals().setdefault("_cluster_anchor_total", [0])[0] = (
                 globals().get("_cluster_anchor_total", [0])[0]
                 + cluster_anchor_frames)
+        # NaN-logo skip: frames where logo extraction failed (= NaN
+        # before substitute-with-0.5) contribute weight 0 to the fit.
+        # Without this the head sees "real 0.5" and "fallback 0.5" as
+        # identical, learns wrong patterns from the corrupt-stream
+        # frames. Trade-off: backbone signal for those frames is also
+        # discarded — acceptable because the recording's measured
+        # frames still cover most of the show / ad supervision.
+        nan_mask = logo_nan_mask_by_uuid.get(r[0])
+        if nan_mask is not None and len(nan_mask) == full_n:
+            sw_full[nan_mask] = 0.0
         sw_train_parts.append(sw_full[mask])
     if confirmed_extra_w:
         print(f"confirmed-show: upweighted {confirmed_extra_w} frame(s) "
@@ -2073,6 +2088,12 @@ def main():
                 y = r[4]
                 base_w = args.user_weight if r[5] else 1.0
                 sw = np.full(len(y), base_w, dtype=np.float32)
+                # NaN-logo skip (= same rationale as the LogReg sw
+                # path): zero out frames whose logo column was
+                # NaN-substituted so they don't poison the MLP fit.
+                nan_mask = logo_nan_mask_by_uuid.get(r[0])
+                if nan_mask is not None and len(nan_mask) == len(y):
+                    sw[nan_mask] = 0.0
                 Xs.append(X_aug); ys.append(y); sws.append(sw)
             return (np.concatenate(Xs), np.concatenate(ys),
                     np.concatenate(sws))
@@ -2537,7 +2558,14 @@ def main():
             else:
                 age_mult = 1.0 - 0.5 * age_d / 90.0
             bw *= age_mult
-            sw_parts.append(np.full(T, max(bw, 0.0), dtype=np.float32))
+            sw_arr = np.full(T, max(bw, 0.0), dtype=np.float32)
+            # NaN-logo skip in the all-data refit too — symmetric with
+            # the train-only fit so the production head doesn't learn
+            # corruption-driven 0.5s as legitimate signal.
+            nan_mask = logo_nan_mask_by_uuid.get(r[0])
+            if nan_mask is not None and len(nan_mask) == T:
+                sw_arr[nan_mask] = 0.0
+            sw_parts.append(sw_arr)
         sw_all_ch = np.concatenate(sw_parts) if sw_parts else np.empty(0)
         # Drop weight-0 rows (= rec older than 180 d); they'd just dilute.
         nz = sw_all_ch > 0

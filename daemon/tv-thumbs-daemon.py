@@ -40,6 +40,11 @@ GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
 # (ffmpeg decode buffers + NN backbone), so 3-parallel ≈ 4-6 GB peak.
 DETECT_PARALLEL = max(1, int(os.environ.get("DETECT_PARALLEL", "1")))
 TVD_WORKERS = max(2, 8 // DETECT_PARALLEL)
+# Watchdog: if a uuid sits in detect_in_flight longer than this AND no
+# subprocess for it exists, the worker thread leaked the slot (= hung
+# HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.
+# 30 min comfortably above worst-case detect+whisper combined runtime.
+IN_FLIGHT_STUCK_S = 30 * 60
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
 TVD = os.path.expanduser("~/.local/bin/tv-detect")
@@ -1043,7 +1048,16 @@ def process_detect(uuid):
             f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}",
             cutlist.encode())
     except Exception as e:
+        # Cutlist-upload failures (= gateway 404, network blip, etc.)
+        # used to fall through with no failure-tracking → daemon
+        # picked the same uuid up next cycle, ran tv-detect again
+        # (~6 min wall), failed upload again → endless loop.
+        # Treat as a detect failure: cool down + count toward the
+        # MAX_DETECT_RETRIES cap so persistent uploaders eventually
+        # get given-up via /api/internal/detect-give-up.
         print(f"  detect upload err: {e}", flush=True)
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        _record_detect_failure(uuid)
         return False
     n_blocks = sum(1 for ln in cutlist.splitlines() if ln.strip()
                     and "\t" in ln and not ln.startswith("FILE"))
@@ -1064,7 +1078,44 @@ def main():
     import threading
     detect_executor = ThreadPoolExecutor(max_workers=DETECT_PARALLEL)
     detect_in_flight = set()
+    detect_in_flight_since = {}  # uuid → time.time() at slot acquisition
     detect_lock = threading.Lock()
+
+    def _gc_stuck_in_flight():
+        """Free slots leaked by abnormally-exited worker threads (= the
+        try/except/finally in _run_detect should always discard, but a
+        thread killed by a C-extension segfault or stuck on a hung HTTP
+        POST never reaches finally). For each long-stale uuid: if no
+        subprocess has it in argv, the slot is dead — discard it so new
+        work can flow."""
+        if not detect_in_flight:
+            return
+        now = time.time()
+        with detect_lock:
+            stale = [u for u, t in detect_in_flight_since.items()
+                     if now - t > IN_FLIGHT_STUCK_S]
+        if not stale:
+            return
+        freed = []
+        for uuid in stale:
+            try:
+                r = subprocess.run(
+                    ["pgrep", "-f", uuid], capture_output=True, timeout=5)
+            except Exception:
+                continue
+            if r.returncode == 0 and r.stdout.strip():
+                continue  # live subprocess still running for this uuid
+            freed.append(uuid)
+        if not freed:
+            return
+        with detect_lock:
+            for uuid in freed:
+                detect_in_flight.discard(uuid)
+                detect_in_flight_since.pop(uuid, None)
+        for uuid in freed:
+            print(f"  [watchdog] in_flight stuck slot freed: {uuid[:8]} "
+                  f"(no live subprocess, > {IN_FLIGHT_STUCK_S//60} min)",
+                  flush=True)
 
     def _run_detect(uuid):
         # Tell the gateway we just picked this job up so the recordings
@@ -1085,6 +1136,7 @@ def main():
         finally:
             with detect_lock:
                 detect_in_flight.discard(uuid)
+                detect_in_flight_since.pop(uuid, None)
 
     def _maybe_fire_snapshot():
         """Per-show IoU snapshot trigger. Set by tv-train-head.sh dropping
@@ -1113,6 +1165,7 @@ def main():
     while True:
         cycle += 1
         _maybe_gc_orphans()
+        _gc_stuck_in_flight()
         thumbs = hls = detect = detect_low = []
         try:
             thumbs = http_get_json(
@@ -1216,6 +1269,7 @@ def main():
                 continue
             with detect_lock:
                 detect_in_flight.add(uuid)
+                detect_in_flight_since[uuid] = time.time()
             print(f"  → {uuid[:8]} detect=True (parallel slot)", flush=True)
             detect_executor.submit(_run_detect, uuid)
             available -= 1
@@ -1234,6 +1288,7 @@ def main():
                     continue
                 with detect_lock:
                     detect_in_flight.add(uuid)
+                    detect_in_flight_since[uuid] = time.time()
                 already.add(uuid)
                 print(f"  → {uuid[:8]} detect=True (bg slot)", flush=True)
                 detect_executor.submit(_run_detect, uuid)

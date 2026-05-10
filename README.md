@@ -22,22 +22,26 @@ the head fresh as new recordings come in. Current production: Block-IoU
 
 ## Status
 
-| Phase | Item | State |
-|---|---|---|
-| 1 | ffmpeg decode pipeline | ✅ |
-| 2 | Blackframe detector | ✅ |
-| 2 | Silence detector | ✅ parallel ffmpeg subprocess |
-| 2 | Scene-cut detector | ✅ luma histogram Bhattacharyya |
-| 2 | Logo detector | ✅ Sobel edge correlation vs trained template |
-| 2 | Logo trainer (`tv-detect-train-logo`) | ✅ |
-| 3 | Multi-thread chunk pipeline | ✅ |
-| 4 | Block-formation state machine | ✅ |
-| 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 |
-| 6 | Production swap (replaces legacy comskip-based pipelines) | ✅ |
-| 7 | NN evidence source via ONNX (`signals.NNDetector`) | ✅ MLP2 head (1290→32→1, channel one-hot) |
-| 8 | Letterbox-aware logo matching (`--logo-y-offset N`) | ✅ |
-| 9 | Self-improving training loop | ✅ nightly retrain, champion-challenger, active-learning, pseudo-label self-training |
-| 10 | Whisper ad-classifier post-processor | ✅ German ASR refines block boundaries; +5.4 pp Block-IoU on n=9 eval |
+Runtime estimates below are per 30-min recording at `--workers 4` on
+Apple silicon (M-series). Phases 1–4 share the same wall-clock budget
+because the per-frame signals run inline with the decode loop.
+
+| Phase | Item | State | Runtime |
+|---|---|---|---|
+| 1 | ffmpeg decode pipeline | ✅ | shared with phases 2–4 |
+| 2 | Blackframe detector | ✅ | inline with decode |
+| 2 | Silence detector | ✅ parallel ffmpeg subprocess | ~5 s (audio-only, runs concurrent) |
+| 2 | Scene-cut detector | ✅ luma histogram Bhattacharyya | inline with decode |
+| 2 | Logo detector | ✅ Sobel edge correlation vs trained template | inline with decode |
+| 2 | Logo trainer (`tv-detect-train-logo`) | ✅ | one-off per channel; ~30 s on 5 min of input |
+| 3 | Multi-thread chunk pipeline | ✅ | ~10 s wall (full pipeline 1–4) |
+| 4 | Block-formation state machine | ✅ | <1 s post-merge |
+| 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 | ~10 s build-time |
+| 6 | Production swap (replaces legacy comskip-based pipelines) | ✅ | n/a (one-time deployment) |
+| 7 | NN evidence source via ONNX (`signals.NNDetector`) | ✅ MLP2 head (1290→32→1, channel one-hot) | +~5 s (backbone embedding pass, parallel with decode) |
+| 8 | Letterbox-aware logo matching (`--logo-y-offset N`) | ✅ | ~3 s cropdetect sample (one-shot per recording) |
+| 9 | Self-improving training loop | ✅ nightly retrain, champion-challenger, active-learning, pseudo-label self-training | ~3 h wall (full corpus + shadow-eval + active-learning surface) |
+| 10 | Whisper ad-classifier post-processor | ✅ German ASR refines block boundaries; +5.4 pp Block-IoU on n=9 eval | ~30–60 s per recording (whisper.cpp 4-parallel) |
 
 ## Requirements
 

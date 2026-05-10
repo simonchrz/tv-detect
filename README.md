@@ -1,55 +1,52 @@
 # tv-detect
 
-Multi-threaded ad-block detector — single Go binary, drop-in
-replacement for the comskip detection stage.
+Multi-threaded ad-block detector for broadcast TV recordings — single
+Go binary, no CGO, ffmpeg as the only runtime dependency.
 
-## Why
+## What it does
 
-`comskip` is venerable but single-threaded, written in C with mixed-era
-ffmpeg bindings, and saturates one core for ~75 s on a typical
-30-minute MPEG-2 recording. This binary does the same job ~8× faster
-on a multi-core mac/Pi by chunk-splitting the input across N parallel
-ffmpeg subprocesses, processing per-frame signals in goroutines, and
-emitting the same frame-pair cutlist format so existing Python
-parsers consume it unchanged.
+Given an MPEG-TS recording (DVB-T/C/S, IPTV, cable), tv-detect emits
+a frame-pair cutlist of detected commercial blocks. Combines four
+per-frame signals through a small neural-network head:
+
+- **Edge-correlation logo matching** against a per-channel template.
+- **Black-frame and silence** transitions (typical ad-bumper signature).
+- **Scene-cut intensity** (luma-histogram Bhattacharyya).
+- **MobileNetV2 backbone** + trainable MLP head (channel-aware,
+  hot-reloadable on `head.bin` mtime change).
+
+A nightly self-improving training loop with champion-challenger
+gating, active-learning surfacing, and pseudo-label self-training keeps
+the head fresh as new recordings come in. Current production: Block-IoU
+0.92 / Test Acc 98.5 % at n=35 test recordings across 9 channels.
 
 ## Status
 
 | Phase | Item | State |
 |---|---|---|
 | 1 | ffmpeg decode pipeline | ✅ |
-| 2 | Blackframe detector | ✅ matches `ffmpeg blackdetect` |
+| 2 | Blackframe detector | ✅ |
 | 2 | Silence detector | ✅ parallel ffmpeg subprocess |
 | 2 | Scene-cut detector | ✅ luma histogram Bhattacharyya |
 | 2 | Logo detector | ✅ Sobel edge correlation vs trained template |
-| 2 | Logo trainer (`tv-detect-train-logo`) | ✅ comskip-format template from N min of content |
-| 3 | Multi-thread chunk pipeline | ✅ ~8× speedup vs comskip |
-| 4 | Block-formation state machine | ✅ logo-gated cutlist output |
+| 2 | Logo trainer (`tv-detect-train-logo`) | ✅ |
+| 3 | Multi-thread chunk pipeline | ✅ |
+| 4 | Block-formation state machine | ✅ |
 | 5 | Cross-compile | ✅ darwin-arm64 / linux-arm64 / linux-amd64 |
-| 5 | Validation suite | ✅ 7/19 frame-perfect, 5/19 close, see [VALIDATION.md](VALIDATION.md) |
-| 6a | Mac launchd agent swap (tv-comskip.sh → tv-detect) | ✅ full swap, comskip not invoked, see [PHASE6.md](PHASE6.md) |
-| 6b | Pi container swap (hls-gateway/_rec_cskip_spawn) | ✅ |
-| 7  | NN evidence source via ONNX (`signals.NNDetector`) | ✅ +LOGO head (1281 weights) deployed, blends with logo via `--nn-weight 0.3` |
-| 8  | Letterbox-aware logo matching (`--logo-y-offset N`) | ✅ daemon runs cropdetect, shifts template y-coords for 16:9-in-4:3 broadcasts |
-
-End-to-end output works once a per-channel template has been trained
-by `tv-detect-train-logo`. The cached comskip templates don't align
-with tv-detect's decode coordinates (see `CLAUDE.md` for the
-investigation), but training an own template from 5-25 min of show
-content produces a working detector: on a 50-min VOX CSI recording we
-find the same 2 ad blocks comskip finds, boundaries within ~60 s.
+| 6 | Production swap (replaces legacy comskip-based pipelines) | ✅ |
+| 7 | NN evidence source via ONNX (`signals.NNDetector`) | ✅ MLP2 head (1290→32→1, channel one-hot) |
+| 8 | Letterbox-aware logo matching (`--logo-y-offset N`) | ✅ |
+| 9 | Self-improving training loop | ✅ nightly retrain, champion-challenger, active-learning, pseudo-label self-training |
+| 10 | Whisper ad-classifier post-processor | ✅ German ASR refines block boundaries; +5.4 pp Block-IoU on n=9 eval |
 
 ## Requirements
 
 - **Go 1.22+** to build.
 - **`ffmpeg` and `ffprobe` on `$PATH` at runtime** — tv-detect itself
-  is a thin orchestrator that shells out for video decode (`ffmpeg`
-  raw rgb24 pipe), audio analysis (`ffmpeg` `silencedetect` filter),
-  and metadata (`ffprobe`). No CGO, no libav linkage; the trade-off is
-  that ffmpeg must be installed on every box you deploy to.
-
-  Already present on every target host this binary expects (Mac via
-  brew, the linuxserver/tvheadend image on the Pi, etc.).
+  is a thin orchestrator that shells out for video decode (raw rgb24
+  pipe), audio analysis (`silencedetect` filter), and metadata
+  (`ffprobe`). No CGO, no libav linkage; the trade-off is that
+  ffmpeg must be installed on every box you deploy to.
 
 ## Build
 
@@ -75,14 +72,13 @@ tv-detect --probe path/to/recording.ts
 # Full pipeline with a trained template, summary JSON to stdout.
 tv-detect --workers 4 --logo vox.logo.txt recording.ts
 
-# Cutlist output (comskip-compatible, line-delimited frame pairs).
+# Cutlist output (frame-pair format, line-delimited).
 tv-detect --workers 4 --output cutlist --logo vox.logo.txt recording.ts
 
 # Letterbox-aware logo matching for 16:9 movies in 4:3 broadcast
-# containers (e.g. RTL Spielfilm). Shifts the logo template's y-coords
-# down by N px so the matcher hits the actual logo position inside the
-# visible content area, not the top black bar. The Mac daemon computes
-# N automatically via ffmpeg cropdetect; pass it manually for one-offs.
+# containers. Shifts the logo template's y-coords down by N px so the
+# matcher hits the actual logo position inside the visible content
+# area, not the top black bar.
 tv-detect --workers 4 --logo rtl.logo.txt --logo-y-offset 60 recording.ts
 
 # Per-signal debug output (each independent of --output).
@@ -101,33 +97,28 @@ internal/decode/decode.go      # raw rgb24 frame stream from ffmpeg
 internal/signals/blackframe.go # mean-luma threshold + run aggregator
 internal/signals/silence.go    # ffmpeg silencedetect parser
 internal/signals/scenecut.go   # per-frame luma histogram + Bhattacharyya
-internal/signals/logo.go       # comskip-template edge correlation (WIP)
-internal/blocks/blocks.go      # logo+black+silence → final cutlist
+internal/signals/logo.go       # edge-correlation logo matcher
+internal/signals/nn.go         # ONNX MobileNetV2 + MLP head loader
+internal/blocks/blocks.go      # logo+nn+black+silence → final cutlist
 internal/pipeline/parallel.go  # chunk-split + N-worker orchestrator
-pkg/logotemplate/template.go   # parser for comskip's .logo.txt format
+pkg/logotemplate/template.go   # parser for logo template format
+scripts/model-anchor.sh        # snapshot+restore trained models via GitHub releases
 ```
 
 `pkg/` is consumable by external Go packages; `internal/` is private.
-The package boundary is intentional — logo template parsing is the
-only piece anyone outside this binary might want to embed (e.g. a
-training tool).
 
-## Performance baseline
+## Performance
 
-27-min MPEG-2 recording, 720x576, 25 fps, 41 034 frames, M5 Pro:
+27-min MPEG-2 recording, 720x576, 25 fps, 41 034 frames:
 
-| Host | Configuration | Wall time | fps |
-|---|---|---|---|
-| M5 Pro Mac | `comskip` (reference) | ~75 s | ~550 |
-| M5 Pro Mac | tv-detect, workers=1 | 27.2 s | 1 510 |
-| M5 Pro Mac | tv-detect, workers=4 | 10.0 s | 4 109 |
-| M5 Pro Mac | tv-detect, workers=8 |  9.2 s | 4 464 |
-| Pi 5 (4-core) | tv-detect, workers=4 | 221 s | 197 |
+| Configuration | fps |
+|---|---|
+| `--workers 1` | 1 510 |
+| `--workers 4` | 4 109 |
+| `--workers 8` | 4 464 |
 
-Diminishing returns past 4 workers on Apple silicon because the
-efficiency cores don't help video decode much. The Pi 5 is CPU-bound
-even at workers=4 (197 fps vs Mac's 4109 fps), but still lands ~1.4×
-faster than comskip on the same box.
+Diminishing returns past 4 workers on Apple silicon because efficiency
+cores don't help video decode much.
 
 ## Testing
 
@@ -135,5 +126,4 @@ faster than comskip on the same box.
 go test ./...
 ```
 
-All packages have unit tests for the per-frame algorithms. End-to-end
-validation against comskip cutlists on real recordings is Phase 5.
+All packages have unit tests for the per-frame algorithms.

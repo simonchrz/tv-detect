@@ -281,6 +281,18 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
   thresholds, dataset-size jumps), NOT for every nightly retrain
   — the rolling `archive/head.<unix-ts>.bin` already covers that.
   Anchor history (newest first):
+    - `test-set-n35-2026-05-10` — test-set composition jumped n=13 → 35
+      recordings (= broader sender coverage from continuing nightly
+      ingest), Block-IoU 0.92 / Test Acc 98.5 % / Train Acc 92.4 % at
+      n_train=199. Champion-Challenger comparison invalidated by
+      composition change → auto-deploy. Self-training Phase B wrote
+      13 fresh `pseudo_labels.json` files (99.29 % accuracy on 56969
+      high-confidence frames). Per-channel test acc 98.9–99.9 % across
+      all 9 sender slugs.
+    - `mlp2-whisper-cutover-2026-05-03` — MLP2 + Whisper post-
+      processor deployed jointly; Block-IoU 0.84 / Test Acc 97.8 %.
+      Whisper gives +5.4 pp Block-IoU on n=9 eval (German ASR refines
+      block boundaries via daemon-side WHISPER_ENABLE=1).
     - `mlp-head-cutover-2026-05-03` — MLP1 v1 production cutover,
       IoU 0.78 / Acc 97.5 % (= +0.15 IoU vs prior LogReg).
     - `full-logo-coverage-2026-05-03` — all 24 favourited channels

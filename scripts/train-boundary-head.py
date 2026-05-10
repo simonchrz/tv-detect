@@ -83,27 +83,218 @@ def write_boundary_head_v1(path, mlp, *, input_dim, hidden_dim):
         f.write(mlp.intercepts_[1].astype(np.float32).tobytes())
 
 
-WINDOW_OFFSETS = (-1, 0, 1)  # ±1 frame window (= ±1s at fps=1)
 BACKBONE_DIM = 1280
 
+# Cached feature column layout (= written by train-head.py
+# featurize_recording, post-2026-04 letterbox-v2 + audio-v1 era):
+#   [0..1280)  backbone embedding
+#   [1280]     logo conf  (NaN sentinel for missing/letterbox-broken)
+#   [1281]     audio RMS  ([0,1] normalised, present always since audio-v1)
+LOGO_COL = 1280
+AUDIO_COL = 1281
 
-def build_temporal_features(embeds):
-    """embeds: (n_frames, BACKBONE_DIM). Returns (n_frames, n_window*BACKBONE_DIM).
+SUMMARY_HALF_S = 10  # ±10s for mean(embed) summary feature
+AUDIO_VAR_HALF_S = 5  # ±5s for audio RMS variance feature
 
-    For each frame i, concat [embeds[i+off] for off in WINDOW_OFFSETS].
-    Out-of-range neighbours pad with the nearest in-range frame (= mirror
-    the boundary, NOT zero-pad — keeps statistics consistent for frames
-    near the recording start/end)."""
+
+def load_main_nn(head_path, channel_map_path):
+    """Load the production main NN classifier (MLP1 v1 OR MLP2 v2) so
+    we can compute per-frame ad-prob as a feature for the boundary head.
+    Returns dict with weights + chan_map. None on any error (= caller
+    falls back to omitting the feature)."""
+    try:
+        raw = Path(head_path).read_bytes()
+        magic = raw[:4]
+        if magic == b"MLP1":
+            header_len = 36
+            ver, in_dim, hid, out_dim, bb_dim, n_logo, n_audio, n_chan = \
+                struct.unpack("<IIIIIIII", raw[4:header_len])
+            n_whisper = 0
+        elif magic == b"MLP2":
+            header_len = 40
+            ver, in_dim, hid, out_dim, bb_dim, n_logo, n_audio, n_chan, n_whisper = \
+                struct.unpack("<IIIIIIIII", raw[4:header_len])
+        else:
+            return None
+        off = header_len
+        W1 = np.frombuffer(raw[off:off+in_dim*hid*4],
+                            dtype=np.float32).reshape(in_dim, hid)
+        off += in_dim * hid * 4
+        b1 = np.frombuffer(raw[off:off+hid*4], dtype=np.float32)
+        off += hid * 4
+        W2 = np.frombuffer(raw[off:off+hid*out_dim*4],
+                            dtype=np.float32).reshape(hid, out_dim)
+        off += hid * out_dim * 4
+        b2 = np.frombuffer(raw[off:off+out_dim*4], dtype=np.float32)
+        cm = json.loads(Path(channel_map_path).read_text())
+        return {
+            "W1": W1, "b1": b1, "W2": W2, "b2": b2,
+            "in_dim": in_dim, "hid": hid,
+            "n_logo": n_logo, "n_audio": n_audio,
+            "n_chan": n_chan, "n_whisper": n_whisper,
+            "slug_to_idx": {s: i for i, s in enumerate(cm.get("slugs", []))},
+        }
+    except Exception as e:
+        print(f"  load_main_nn err: {e}")
+        return None
+
+
+def main_nn_ad_probs(main_nn, embeds, logo_per_frame, audio_per_frame, slug):
+    """Run the main NN forward pass to get per-frame ad-prob. embeds is
+    (n, 1280). logo and audio are (n,) per-frame. slug → channel one-hot
+    via main_nn.slug_to_idx (-1 = unknown → all-zero one-hot).
+    Whisper slot (if MLP2) gets neutral 0.5 since we don't have whisper
+    data at boundary-head training time."""
     n = embeds.shape[0]
-    n_win = len(WINDOW_OFFSETS)
-    out = np.empty((n, n_win * BACKBONE_DIM), dtype=np.float32)
-    for i in range(n):
-        slots = []
-        for off in WINDOW_OFFSETS:
-            j = max(0, min(n - 1, i + off))
-            slots.append(embeds[j])
-        out[i] = np.concatenate(slots)
+    in_dim = main_nn["in_dim"]
+    n_logo = main_nn["n_logo"]
+    n_audio = main_nn["n_audio"]
+    n_chan = main_nn["n_chan"]
+    n_whisper = main_nn["n_whisper"]
+    slug_idx = main_nn["slug_to_idx"].get(slug, -1)
+    X = np.zeros((n, in_dim), dtype=np.float32)
+    X[:, :BACKBONE_DIM] = embeds
+    off = BACKBONE_DIM
+    if n_logo:
+        # Substitute 0.5 for NaN sentinels (= same as inference path).
+        l = np.where(np.isnan(logo_per_frame), 0.5, logo_per_frame)
+        X[:, off] = l
+        off += 1
+    if n_audio:
+        X[:, off] = audio_per_frame
+        off += 1
+    if n_chan and slug_idx >= 0:
+        X[:, off + slug_idx] = 1.0
+    off += n_chan
+    if n_whisper:
+        X[:, off] = 0.5
+    H = np.maximum(0, X @ main_nn["W1"] + main_nn["b1"])
+    logits = H @ main_nn["W2"] + main_nn["b2"]
+    return 1.0 / (1.0 + np.exp(-logits[:, 0]))
+
+
+def fetch_uuid_to_slug():
+    """Pull uuid → channel_slug mapping from gateway. Cached locally
+    so we don't hit the gateway every run."""
+    cache = Path.home() / ".cache" / "tvd-boundary-uuid-slug.json"
+    if cache.exists() and time.time() - cache.stat().st_mtime < 86400:
+        try:
+            return json.loads(cache.read_text())
+        except Exception:
+            pass
+    out = {}
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+                "http://raspberrypi5lan:8080/api/internal/training-snapshot",
+                timeout=15) as r:
+            data = json.loads(r.read())
+        for rec in data.get("recordings", []):
+            uuid = rec.get("uuid")
+            slug = rec.get("channel_slug") or ""
+            if uuid:
+                out[uuid] = slug
+        cache.write_text(json.dumps(out))
+    except Exception as e:
+        print(f"  uuid→slug fetch err: {e}")
     return out
+
+# Window half-width controls temporal context. Default 1 = (-1, 0, +1)
+# = 3-frame window = ±1s at fps=1. With half=3 = (-3..-1, 0, +1..+3) =
+# 7-frame window = ±3s — wider context lets the head distinguish
+# ad/show boundaries from intra-ad spot transitions (= the latter look
+# like local "visual change" within ±1s but show consistent ad-like
+# content within ±3s).
+def make_window_offsets(half):
+    return tuple(range(-half, half + 1))
+
+
+def _windowed_concat(arr, window_offsets):
+    """arr: (n,) or (n, d). Returns (n, |W|) or (n, |W|*d) — each
+    frame i concat'd with neighbours at offsets, mirror-padded."""
+    n = arr.shape[0]
+    n_win = len(window_offsets)
+    if arr.ndim == 1:
+        out = np.empty((n, n_win), dtype=np.float32)
+        for i in range(n):
+            for w, off in enumerate(window_offsets):
+                out[i, w] = arr[max(0, min(n-1, i+off))]
+    else:
+        d = arr.shape[1]
+        out = np.empty((n, n_win * d), dtype=np.float32)
+        for i in range(n):
+            for w, off in enumerate(window_offsets):
+                j = max(0, min(n-1, i+off))
+                out[i, w*d:(w+1)*d] = arr[j]
+    return out
+
+
+def _windowed_mean(arr, half):
+    """Centered mean over [i-half..i+half]. Mirror-padded at edges."""
+    n = arr.shape[0]
+    if arr.ndim == 1:
+        out = np.empty(n, dtype=np.float32)
+    else:
+        out = np.empty((n, arr.shape[1]), dtype=np.float32)
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        out[i] = arr[lo:hi].mean(axis=0)
+    return out
+
+
+def _windowed_var(arr, half):
+    """Centered variance over [i-half..i+half] for 1D arr."""
+    n = arr.shape[0]
+    out = np.empty(n, dtype=np.float32)
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        out[i] = float(np.var(arr[lo:hi]))
+    return out
+
+
+def build_temporal_features(embeds, window_offsets,
+                              *, main_nn_probs=None,
+                              audio_per_frame=None,
+                              logo_per_frame=None,
+                              channel_onehot=None,
+                              with_summary=False,
+                              audio_var_half=AUDIO_VAR_HALF_S):
+    """Composite per-frame feature builder.
+
+    Always-on:
+      - backbone window: |W| × 1280 (= 8960 at half=3, 3840 at half=1)
+
+    Optional (each adds columns when its source array is provided):
+      - main_nn_probs (n,): adds |W| columns (windowed ad-prob)
+      - audio_per_frame (n,): adds |W| columns + 1 variance summary
+      - logo_per_frame (n,): adds 1 column at center frame only
+      - channel_onehot (k,): repeated k columns per frame (constant
+        across frames within a recording — but the trained head can
+        weight it per-channel)
+      - with_summary=True: adds 1280 columns (mean(embed) ±10s)
+    """
+    n = embeds.shape[0]
+    chunks = [_windowed_concat(embeds, window_offsets)]
+    if main_nn_probs is not None:
+        chunks.append(_windowed_concat(main_nn_probs, window_offsets))
+    if audio_per_frame is not None:
+        chunks.append(_windowed_concat(audio_per_frame, window_offsets))
+        chunks.append(_windowed_var(audio_per_frame, audio_var_half)
+                      .reshape(-1, 1))
+    if logo_per_frame is not None:
+        # Center-only: NaN → 0.5 substitute.
+        center = np.where(np.isnan(logo_per_frame), 0.5, logo_per_frame)
+        chunks.append(center.reshape(-1, 1))
+    if with_summary:
+        chunks.append(_windowed_mean(embeds, SUMMARY_HALF_S))
+    if channel_onehot is not None:
+        # Constant per-frame block (= same one-hot all rows). Tile.
+        k = len(channel_onehot)
+        block = np.tile(channel_onehot.astype(np.float32), (n, 1))
+        chunks.append(block)
+    return np.concatenate(chunks, axis=1)
 
 
 def boundary_frames_from_ads(ads, fps):
@@ -143,15 +334,15 @@ def is_test_uuid(uuid, test_frac=0.20):
 
 
 def load_recording(rec_dir, cache_dir, fps):
-    """Returns (uuid, embeds, boundary_frames, n_frames) or None.
+    """Returns (uuid, embeds, logo_per_frame, audio_per_frame, ads,
+    boundary_frames, n_frames) or None. Now also returns the per-frame
+    logo + audio columns from the cached features (needed for both
+    the main-NN forward pass and the boundary-head extras).
 
     Recordings with `ads_user.json` containing a non-empty `ads` list
-    are positive-bearing (boundary frames at start/end of each block).
-    Recordings with `ads_user.json` AND empty `ads` are confirmed
-    no-boundary content (= user reviewed ARD/ZDF/music-show etc.) and
-    return with `boundary_frames=[]` — caller treats them as
-    negative-only contributors. Recordings with no ads_user.json or
-    no cached features are skipped entirely (cannot infer either way)."""
+    are positive-bearing. Empty-ads recordings return with bf=[] and
+    are used as negative-only contributors. Skips recordings without
+    ads_user.json or matching cached features."""
     uuid = rec_dir.name[len("_rec_"):]
     user_path = rec_dir / "ads_user.json"
     if not user_path.exists():
@@ -177,25 +368,67 @@ def load_recording(rec_dir, cache_dir, fps):
         return None
     embeds = feats[:, :BACKBONE_DIM].astype(np.float32)
     n_frames = embeds.shape[0]
+    logo_per_frame = (feats[:, LOGO_COL].astype(np.float32)
+                      if feats.shape[1] > LOGO_COL else None)
+    audio_per_frame = (feats[:, AUDIO_COL].astype(np.float32)
+                       if feats.shape[1] > AUDIO_COL else None)
     bf = boundary_frames_from_ads(ads, fps)
     bf = [b for b in bf if 0 <= b < n_frames]
-    return uuid, embeds, bf, n_frames
+    return uuid, embeds, logo_per_frame, audio_per_frame, ads, bf, n_frames
 
 
-def subsample_negatives(y_bound, neg_ratio, rng):
-    """Returns boolean keep-mask: all positives + neg_ratio × random
-    negatives (uniformly chosen from positions that are not within the
-    tolerance window of any boundary)."""
+def subsample_negatives(y_bound, neg_ratio, rng,
+                          *, intra_ad_mask=None, intra_ratio=0.0):
+    """Returns boolean keep-mask: all positives + neg_ratio × negatives.
+
+    With intra_ratio>0, that fraction of negatives is preferentially
+    drawn from `intra_ad_mask==True` positions (= frames inside an ad
+    block but NOT within ±tol of a boundary). Teaches the head that
+    visual changes inside an ad are NOT block boundaries — direct
+    fix for the missed_bumper false-positive flood."""
     pos_idx = np.flatnonzero(y_bound == 1)
     neg_idx = np.flatnonzero(y_bound == 0)
-    n_keep = min(len(neg_idx), len(pos_idx) * neg_ratio)
-    if n_keep == 0:
+    n_total_neg = min(len(neg_idx), len(pos_idx) * neg_ratio)
+    if n_total_neg == 0:
         return None
-    chosen_neg = rng.choice(neg_idx, size=n_keep, replace=False)
+    if intra_ad_mask is not None and intra_ratio > 0:
+        intra_idx = np.flatnonzero(intra_ad_mask & (y_bound == 0))
+        n_intra = min(len(intra_idx), int(n_total_neg * intra_ratio))
+        n_random = n_total_neg - n_intra
+        chosen_intra = rng.choice(intra_idx, size=n_intra, replace=False) \
+            if n_intra > 0 else np.array([], dtype=int)
+        # Random pool: negatives not already in chosen_intra
+        chosen_set = set(chosen_intra.tolist())
+        random_pool = np.array([i for i in neg_idx if i not in chosen_set])
+        if len(random_pool) < n_random:
+            n_random = len(random_pool)
+        chosen_random = rng.choice(random_pool, size=n_random, replace=False) \
+            if n_random > 0 else np.array([], dtype=int)
+        chosen_neg = np.concatenate([chosen_intra, chosen_random])
+    else:
+        chosen_neg = rng.choice(neg_idx, size=n_total_neg, replace=False)
     keep = np.zeros(len(y_bound), dtype=bool)
     keep[pos_idx] = True
     keep[chosen_neg] = True
     return keep
+
+
+def intra_ad_mask_from_ads(ads, n_frames, fps, boundary_tol):
+    """Mask: True for frames INSIDE any ad block but OUTSIDE the
+    boundary tolerance window. These are the "intra-ad spot
+    transition" candidates for explicit-negative sampling."""
+    inside = np.zeros(n_frames, dtype=bool)
+    near_boundary = np.zeros(n_frames, dtype=bool)
+    for s, e in ads:
+        sf = max(0, int(round(s * fps)))
+        ef = min(n_frames - 1, int(round(e * fps)))
+        if ef > sf:
+            inside[sf:ef+1] = True
+        for bf_pos in (sf, ef):
+            lo = max(0, bf_pos - boundary_tol)
+            hi = min(n_frames - 1, bf_pos + boundary_tol)
+            near_boundary[lo:hi+1] = True
+    return inside & ~near_boundary
 
 
 def per_recording_eval(mlp, per_rec_test, fps, tol):
@@ -284,8 +517,44 @@ def main():
                          "(= user-confirmed no-boundary content like "
                          "ÖR shows), sample N random frames per recording "
                          "as additional definite-negative training data.")
+    ap.add_argument("--window-half", type=int, default=1,
+                    help="temporal context half-width in frames. "
+                         "Default 1 → ±1s window (3 frames concat = "
+                         "3840 input dim). 3 → ±3s window (7 frames "
+                         "concat = 8960 input dim) — wider context "
+                         "helps distinguish ad/show transitions from "
+                         "intra-ad spot transitions, at ~2× train + "
+                         "inference cost.")
     ap.add_argument("--hidden-dim", type=int, default=64)
     ap.add_argument("--max-iter", type=int, default=200)
+    # Optimisation flags (= the 5 paths from the boundary-head review):
+    ap.add_argument("--with-main-nn", action="store_true",
+                    help="#4: per-frame main-NN ad-prob added as feature "
+                         "column (windowed). Direct fix for intra-ad-vs-"
+                         "boundary discrimination — main NN tells the "
+                         "head 'this region is ad-like' so a peak in a "
+                         "uniform-ad region won't fire.")
+    ap.add_argument("--with-summary", action="store_true",
+                    help="#6: mean(embed) ±10s as 1280 summary cols. "
+                         "Gives the head 'broader content type' info.")
+    ap.add_argument("--with-channel", action="store_true",
+                    help="#5: channel one-hot per frame (constant within "
+                         "recording but lets the head learn per-channel "
+                         "bumper styles).")
+    ap.add_argument("--with-audio", action="store_true",
+                    help="#7: audio RMS windowed cols + variance summary. "
+                         "Boundaries often have brief audio transitions.")
+    ap.add_argument("--intra-ad-negs-ratio", type=float, default=0.0,
+                    help="#1: bias negative sampling toward in-ad frames. "
+                         "0.0 = random sampling (default). 0.5 = half of "
+                         "negatives drawn from inside ad blocks specifically "
+                         "(= explicit intra-ad negatives, teaches the head "
+                         "'visual change inside ad ≠ boundary'). Recommend "
+                         "0.5-0.7.")
+    ap.add_argument("--main-head", default="/tmp/main_head.bin",
+                    help="path to the deployed MLP1/MLP2 head.bin")
+    ap.add_argument("--main-channel-map", default="/tmp/main_channel_map.json",
+                    help="path to the head.channel-map.json sidecar")
     ap.add_argument("--output", default=os.path.expanduser(
                     "~/mnt/pi-tv/hls/.tvd-models/boundary_head.bin"))
     ap.add_argument("--no-write", action="store_true",
@@ -298,14 +567,33 @@ def main():
     hls_root = Path(args.hls_root)
     if not hls_root.is_dir():
         sys.exit(f"hls root not found: {hls_root}")
+    window_offsets = make_window_offsets(args.window_half)
 
     print(f"loading recordings from {hls_root}")
     print(f"feature cache: {cache_dir} ({len(list(cache_dir.glob('*.npy')))} files)")
-    print(f"window offsets: {WINDOW_OFFSETS} (= input_dim "
-          f"{len(WINDOW_OFFSETS)*BACKBONE_DIM})")
+    print(f"window offsets: {window_offsets} (= input_dim "
+          f"{len(window_offsets)*BACKBONE_DIM})")
     print(f"boundary tolerance: ±{args.boundary_tol} frames "
           f"(±{args.boundary_tol/args.fps_extract:.1f}s at fps={args.fps_extract})")
     print(f"negative ratio: {args.neg_ratio}× positives per recording")
+
+    main_nn = None
+    uuid_to_slug = {}
+    if args.with_main_nn:
+        main_nn = load_main_nn(args.main_head, args.main_channel_map)
+        if main_nn is None:
+            sys.exit(f"--with-main-nn requires {args.main_head} + sidecar")
+        print(f"  main NN: in_dim={main_nn['in_dim']} hid={main_nn['hid']} "
+              f"n_chan={main_nn['n_chan']}")
+    if args.with_main_nn or args.with_channel:
+        uuid_to_slug = fetch_uuid_to_slug()
+        print(f"  uuid→slug: {len(uuid_to_slug)} entries")
+
+    n_chan = (main_nn["n_chan"] if main_nn
+              else (9 if args.with_channel else 0))
+    slug_list = (list(main_nn["slug_to_idx"].keys()) if main_nn
+                 else ["comedy-central", "kabel-eins", "nick", "prosieben",
+                       "rtl", "rtlzwei", "sat-1", "sixx", "vox"])
 
     rng = np.random.default_rng(42)
     per_rec_train = []
@@ -319,16 +607,40 @@ def main():
         if loaded is None:
             n_skipped += 1
             continue
-        uuid, embeds, bf, n_frames = loaded
+        uuid, embeds, logo_pf, audio_pf, ads, bf, n_frames = loaded
         n_loaded += 1
-        X_full = build_temporal_features(embeds)
+        slug = uuid_to_slug.get(uuid, "")
+        # Compute main NN ad-prob if requested + sources available
+        nn_probs = None
+        if args.with_main_nn and main_nn is not None and \
+                logo_pf is not None and audio_pf is not None:
+            nn_probs = main_nn_ad_probs(
+                main_nn, embeds, logo_pf, audio_pf, slug)
+        # Channel one-hot vector
+        chan_vec = None
+        if args.with_channel:
+            chan_vec = np.zeros(n_chan, dtype=np.float32)
+            if slug in slug_list:
+                chan_vec[slug_list.index(slug)] = 1.0
+        X_full = build_temporal_features(
+            embeds, window_offsets,
+            main_nn_probs=nn_probs,
+            audio_per_frame=audio_pf if args.with_audio else None,
+            logo_per_frame=logo_pf,  # always include center logo (cheap)
+            channel_onehot=chan_vec,
+            with_summary=args.with_summary,
+        )
         y_full = labels_with_tolerance(n_frames, bf, args.boundary_tol)
+        intra_mask = (intra_ad_mask_from_ads(ads, n_frames, args.fps_extract,
+                                               args.boundary_tol)
+                      if (bf and args.intra_ad_negs_ratio > 0) else None)
         rec_data = {
             "uuid": uuid,
             "X_full": X_full,
             "y_full": y_full,
             "boundary_frames": bf,
             "n_frames": n_frames,
+            "intra_mask": intra_mask,
         }
         if not bf:
             n_empty += 1
@@ -358,7 +670,11 @@ def main():
     n_pos_total = 0
     n_neg_total = 0
     for r in per_rec_train:
-        keep = subsample_negatives(r["y_full"], args.neg_ratio, rng)
+        keep = subsample_negatives(
+            r["y_full"], args.neg_ratio, rng,
+            intra_ad_mask=r["intra_mask"],
+            intra_ratio=args.intra_ad_negs_ratio,
+        )
         if keep is None or keep.sum() == 0:
             continue
         X_train_chunks.append(r["X_full"][keep])
@@ -458,7 +774,7 @@ def main():
         "ts": time.strftime("%Y%m%dT%H%M%S"),
         "input_dim": X_train.shape[1],
         "hidden_dim": args.hidden_dim,
-        "window_offsets": list(WINDOW_OFFSETS),
+        "window_offsets": list(window_offsets),
         "boundary_tol": args.boundary_tol,
         "neg_ratio": args.neg_ratio,
         "n_train_recs": len(per_rec_train),

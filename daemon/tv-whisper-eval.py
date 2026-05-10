@@ -57,25 +57,84 @@ def windows_overlapping(start: float, end: float, windows: list[dict],
 
 
 def fp_killer(ads: list[list[float]], windows: list[dict],
-              window_s: int, mean_thr: float = 0.45) -> tuple[list[list[float]], list]:
-    """Remove blocks whose mean whisper-prob over overlapping windows
-    is below `mean_thr`. Mean-based instead of majority-thresholded
-    because empirical n=9 showed even "mostly show" blocks rarely had
-    >50% windows below 0.3 — Whisper sits in 0.3-0.5 ambiguous range.
-    Mean<0.45 is the empirically-tuned cut that fires on the Galileo
-    drone-segment FP without touching any true ads."""
-    kept, removed = [], []
+              window_s: int,
+              kill_thr: float = 0.35,
+              trim_thr: float = 0.60,
+              trim_prob_thr: float = 0.40,
+              trim_min_run_s: int = 30) -> tuple[list[list[float]], list]:
+    """3-band classification per detected block based on mean whisper-prob:
+
+      mean < kill_thr            → drop (= clearly show)
+      kill_thr ≤ mean < trim_thr → trim to longest contiguous high-prob run
+                                    (= ambiguous / over-extended ad block,
+                                    common when state machine glued show
+                                    onto a real ad block)
+      mean ≥ trim_thr            → keep as-is (= clearly ad)
+
+    Earlier mean-only-killer (mean < 0.45 → drop, else keep) was binary
+    and dropped an entire 17-358s detection on f4803b26 because its
+    show-tail dragged the mean below threshold even though the leading
+    17-90s portion was a real ad (high-prob windows). Trim recovers
+    that lead segment.
+
+    Empirical sweep (n=232 corpus, 2026-05-10): kill 0.35 / trim 0.60
+    delivers +1.0 pp corpus IoU vs the legacy 0.45 binary. Recovers
+    6d9a240a (0.00 → 0.68) and 4b1a685f (0.00 → 0.82) without
+    catastrophic regressions on previously-correct calls.
+
+    Returns (kept_blocks, removed_or_trimmed_diag) where the diag is
+    a list of [block, mean_prob, action] tuples for /learning surface."""
+    kept, diag = [], []
     for block in ads:
         s, e = block[0], block[1]
         ovlp = windows_overlapping(s, e, windows, window_s)
         if not ovlp:
             kept.append(block); continue
         mean_p = sum(w["prob"] for w in ovlp) / len(ovlp)
-        if mean_p < mean_thr:
-            removed.append((list(block), round(mean_p, 3)))
-        else:
+        if mean_p < kill_thr:
+            diag.append((list(block), round(mean_p, 3)))
+            continue
+        if mean_p >= trim_thr:
             kept.append(block)
-    return kept, removed
+            continue
+        # Ambiguous: try trim
+        trimmed = _trim_to_high_prob(s, e, windows, window_s,
+                                       trim_prob_thr, trim_min_run_s)
+        if trimmed is None:
+            diag.append((list(block), round(mean_p, 3)))
+        else:
+            kept.append(trimmed)
+    return kept, diag
+
+
+def _trim_to_high_prob(s: float, e: float, windows: list[dict],
+                         window_s: int, prob_thr: float,
+                         min_run_s: int) -> list | None:
+    """Find the longest contiguous run of windows with prob > prob_thr
+    overlapping [s, e]. Return [run_start, run_end] clamped to [s, e]
+    or None if no run lasts at least min_run_s seconds."""
+    inside = [w for w in windows if w["t"] + window_s > s and w["t"] < e]
+    if not inside:
+        return None
+    runs = []
+    cur_s = cur_e = None
+    for w in inside:
+        if w["prob"] > prob_thr:
+            if cur_s is None:
+                cur_s = max(s, w["t"])
+            cur_e = min(e, w["t"] + window_s)
+        else:
+            if cur_s is not None:
+                runs.append((cur_s, cur_e, cur_e - cur_s))
+                cur_s = None
+    if cur_s is not None:
+        runs.append((cur_s, cur_e, cur_e - cur_s))
+    if not runs:
+        return None
+    runs.sort(key=lambda r: -r[2])
+    if runs[0][2] < min_run_s:
+        return None
+    return [runs[0][0], runs[0][1]]
 
 
 def boundary_extend(ads: list[list[float]], windows: list[dict],

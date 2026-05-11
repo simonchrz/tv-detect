@@ -341,6 +341,32 @@ def _maybe_prefetch_sources(in_flight_n):
     print(f"  prefetch: cycle done in {time.time()-t0:.0f}s", flush=True)
 
 
+def _drop_pi_source(uuid):
+    """After successful T7-cache, tell gateway it can delete the
+    Pi-original .ts. Gateway has its own safety guards (= sched_status
+    == completed, age > 72h, HLS-VOD exists); 409 just means "not
+    eligible yet" and is normal for fresh recordings. Best-effort —
+    failures don't break the cache flow."""
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY}/api/internal/drop-pi-source/{uuid}",
+            method="POST")
+        with urllib.request.urlopen(req, timeout=10, context=CTX) as r:
+            resp = json.loads(r.read())
+        if resp.get("ok"):
+            freed_mb = resp.get("deleted_bytes", 0) / 1e6
+            print(f"  drop-pi-source {uuid[:8]}: freed {freed_mb:.0f} MB "
+                  f"on Pi (age={resp.get('age_h')}h)", flush=True)
+    except urllib.error.HTTPError as e:
+        # 409 = gateway-side guard fired (= too fresh, recording in
+        # progress, no HLS yet). Normal + expected for new recordings;
+        # they'll dedup successfully on a later cache-touch.
+        if e.code != 409:
+            print(f"  drop-pi-source {uuid[:8]}: HTTP {e.code}", flush=True)
+    except Exception as e:
+        print(f"  drop-pi-source {uuid[:8]}: err {e}", flush=True)
+
+
 def get_source(uuid):
     """Return local .ts path. Cached: serve from disk. Cold: HTTP-fetch
     + cache for next time. Falls back to None on any error — caller
@@ -364,6 +390,10 @@ def get_source(uuid):
         print(f"  cached {uuid[:8]} ({size_mb:.0f} MB in "
               f"{time.time()-t0:.0f}s)", flush=True)
         _maybe_evict_source_cache()
+        # T7 has it now → ask gateway to dedup the Pi-original .ts.
+        # Gateway's safety guards (age, HLS-VOD presence, sched_status)
+        # decide eligibility; daemon just signals "we have it cached".
+        _drop_pi_source(uuid)
         return cache_path
     except Exception as e:
         print(f"  cache-fill err: {e}", flush=True)

@@ -39,7 +39,7 @@ GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
 # Python + ffmpeg overhead. Memory bound: each detect carries ~1-2 GB
 # (ffmpeg decode buffers + NN backbone), so 3-parallel ≈ 4-6 GB peak.
 DETECT_PARALLEL = max(1, int(os.environ.get("DETECT_PARALLEL", "1")))
-TVD_WORKERS = max(2, 8 // DETECT_PARALLEL)
+TVD_WORKERS = max(2, 12 // DETECT_PARALLEL)  # 2026-05-11: 18-core Mac, bumped from 8 → 12 divisor
 # Watchdog: if a uuid sits in detect_in_flight longer than this AND no
 # subprocess for it exists, the worker thread leaked the slot (= hung
 # HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.

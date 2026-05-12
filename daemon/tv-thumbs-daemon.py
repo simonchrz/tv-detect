@@ -372,10 +372,13 @@ def get_source(uuid):
     + cache for next time. Falls back to None on any error — caller
     should use the HTTP URL directly as a last resort."""
     cache_path = SOURCE_CACHE / f"{uuid}.ts"
-    if cache_path.exists() and cache_path.stat().st_size > 100_000:
+    if cache_path.exists() and cache_path.stat().st_size > 100_000_000:
         try: cache_path.touch()  # update atime for LRU
         except Exception: pass
         return cache_path
+    if cache_path.exists():
+        try: cache_path.unlink()  # stub from a half-finished fetch
+        except Exception: pass
     src_url = f"{GATEWAY}/recording/{uuid}/source"
     tmp = cache_path.with_suffix(".tmp")
     t0 = time.time()

@@ -927,24 +927,41 @@ def process_detect(uuid):
                 f"{GATEWAY}/api/internal/detect-bumpers/{slug}")
             bdir = MODEL_CACHE / "bumpers" / slug
             bdir.mkdir(parents=True, exist_ok=True)
+            # Per-file mtime+size compare (= no HEAD request needed).
+            # Pre-2026-05-12 daemon did 1 HEAD per template per detect
+            # (= 2000+ network roundtrips, ~30-90s wallclock for ProSieben).
+            # Now: gateway lists size+mtime in the bumper-list response;
+            # daemon stat()s local file + skips download if both match.
+            n_fetched = n_cached = 0
+            def _ensure_local(entry, kind, paths_list):
+                nonlocal n_fetched, n_cached
+                local = bdir / kind / entry["name"]
+                local.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    if local.is_file():
+                        st = local.stat()
+                        if (entry.get("size", -1) == st.st_size
+                                and entry.get("mtime", -1) <= int(st.st_mtime)):
+                            paths_list.append(str(local))
+                            n_cached += 1
+                            return
+                    with urllib.request.urlopen(
+                            f"{GATEWAY}{entry['url']}",
+                            timeout=30, context=CTX) as r:
+                        local.write_bytes(r.read())
+                    paths_list.append(str(local))
+                    n_fetched += 1
+                except Exception as e:
+                    print(f"  detect {uuid[:8]}: bumper {kind}/{entry['name']} "
+                          f"err: {e}", flush=True)
             for entry in blist.get("templates", []):
-                local = bdir / "end" / entry["name"]
-                local.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    http_download(f"{GATEWAY}{entry['url']}", local)
-                    bumper_paths.append(str(local))
-                except Exception as e:
-                    print(f"  detect {uuid[:8]}: bumper fetch end/{entry['name']} "
-                          f"err: {e}", flush=True)
+                _ensure_local(entry, "end", bumper_paths)
             for entry in blist.get("start_templates", []):
-                local = bdir / "start" / entry["name"]
-                local.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    http_download(f"{GATEWAY}{entry['url']}", local)
-                    bumper_start_paths.append(str(local))
-                except Exception as e:
-                    print(f"  detect {uuid[:8]}: bumper fetch start/{entry['name']} "
-                          f"err: {e}", flush=True)
+                _ensure_local(entry, "start", bumper_start_paths)
+            if n_fetched:
+                print(f"  detect {uuid[:8]}: {n_cached} cached + "
+                      f"{n_fetched} fetched bumper(s) for {slug}",
+                      flush=True)
         except Exception as e:
             print(f"  detect {uuid[:8]}: bumper-list err: {e}",
                   flush=True)
@@ -1069,7 +1086,16 @@ def process_detect(uuid):
     # rebinds `local` to the LAST bumper PNG path it processed, which
     # is wrong here. get_source is cached/idempotent so the second call
     # is a stat() + return.
-    if WHISPER_ENABLE:
+    #
+    # Conditional skip (2026-05-12): for older recordings (>14d, NOT in
+    # test-set) the whisper-refinement gain is marginal vs the 20-60s
+    # wallclock cost. Mirror the gateway's Smart-V2 invalidation logic
+    # to drop the cost on bulk-redetect cycles. Test-set + recent stay
+    # whisper-refined for full quality where it matters.
+    rec_ts = cfg.get("start_real") or cfg.get("start") or 0
+    is_recent = (time.time() - rec_ts) < 14 * 86400 if rec_ts else True
+    is_test_uuid = cfg.get("is_test_uuid", False)
+    if WHISPER_ENABLE and (is_recent or is_test_uuid):
         local_ts = get_source(uuid)
         if local_ts:
             cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)

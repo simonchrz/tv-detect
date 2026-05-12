@@ -57,6 +57,30 @@ fi
 # the full Pi corpus fits locally — daemon-cache is the sole source
 # for .ts files since the SMB-fallback was removed (2026-05-02).
 
+# Conditional skip: only retrain when there are >=NEW_REVIEWS_THR
+# fresh user reviews since the last deploy. Otherwise we'd burn 12+h
+# of detect-drain post-deploy for no IoU gain. Threshold tunable via
+# TVH_TRAIN_NEW_REVIEWS_MIN env (default 10; set 1 to always run).
+NEW_REVIEWS_THR="${TVH_TRAIN_NEW_REVIEWS_MIN:-10}"
+LAST_DEPLOY_TS=$(grep -oE '"ts": "[0-9T]+"' "$SNAPSHOT_DIR/.tvd-models/head.history.json" 2>/dev/null \
+                  | tail -1 | grep -oE '[0-9T]+' \
+                  | python3 -c "import sys, datetime
+ts = sys.stdin.read().strip()
+if ts:
+    print(int(datetime.datetime.strptime(ts, '%Y%m%dT%H%M%S').timestamp()))
+" 2>/dev/null)
+if [ -n "$LAST_DEPLOY_TS" ]; then
+  # Count ads_user.json files modified since last deploy
+  N_NEW=$(find "$SNAPSHOT_DIR" -maxdepth 2 -name "ads_user.json" \
+                -newermt "@$LAST_DEPLOY_TS" 2>/dev/null | wc -l | tr -d ' ')
+  echo "  conditional check: $N_NEW reviews since last deploy "
+  echo "  (threshold $NEW_REVIEWS_THR; override via TVH_TRAIN_NEW_REVIEWS_MIN=1)"
+  if [ "$N_NEW" -lt "$NEW_REVIEWS_THR" ]; then
+    echo "  → SKIP training (= not enough new data, save ~12h drain cycle)"
+    exit 0
+  fi
+fi
+
 # Training-active marker for the /learning page banner. Posted via
 # HTTP (no SMB needed) so the gateway can show "Training läuft seit
 # N min" — gateway writes the file on its own filesystem; trap fires

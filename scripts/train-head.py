@@ -1123,6 +1123,7 @@ def main():
     # Failure is non-fatal: missing entries fall back to neutral defaults.
     uuid_slug = {}
     uuid_start = {}
+    uuid_cohort = {}  # uuid → (title, channel_name) for cohort-trust gate
     if args.with_logo or args.with_minute_prior:
         try:
             import urllib.request, ssl
@@ -1135,7 +1136,7 @@ def main():
                               for c in chans.get("channels", [])
                               if c.get("name") and c.get("slug")}
             entries = json.loads(urllib.request.urlopen(
-                "http://raspberrypi5lan:9981/api/dvr/entry/grid?limit=500",
+                "http://raspberrypi5lan:9981/api/dvr/entry/grid?limit=2000",
                 timeout=10).read())
             for e in entries.get("entries", []):
                 u = e.get("uuid"); cn = e.get("channelname", "")
@@ -1145,10 +1146,44 @@ def main():
                     uuid_start[u] = int(e["start_real"])
                 elif u and e.get("start"):
                     uuid_start[u] = int(e["start"])
+                if u:
+                    uuid_cohort[u] = (
+                        (e.get("disp_title") or "").strip(),
+                        cn or "")
             print(f"slug map: {len(uuid_slug)} uuid→slug entries from gateway")
         except Exception as ex:
             print(f"slug map: gateway unreachable ({ex}) — "
                   f"all logo confs will fall back to 0.5", flush=True)
+
+    # Cohort-trust scan for auto_confirmed_no_ads gating.
+    # Auto-confirm pipeline currently produces false-positives for
+    # shows on under-bumper-templated channels (e.g. Nick SpongeBob:
+    # 91 of 118 auto-confirmed "no ads" but 11 user-reviewed have
+    # ad blocks → the 91 are likely also wrong, just never reviewed).
+    # If we feed those 91 into training as "all-show" we poison the
+    # model. Build a set of (title, channel) cohorts that have at
+    # least one user-confirmed-with-ads recording — for any auto-
+    # confirm-no-ads in those cohorts, fall back to bootstrap rather
+    # than trusting the empty signal.
+    suspect_cohorts = set()
+    for rec_dir in Path(args.hls_root).glob("_rec_*"):
+        u = rec_dir.name[5:]
+        cohort = uuid_cohort.get(u)
+        if not cohort or not cohort[0]:
+            continue
+        user_p = rec_dir / "ads_user.json"
+        if not user_p.is_file(): continue
+        try:
+            d = json.loads(user_p.read_text())
+            if not isinstance(d, dict): continue
+            ads = d.get("ads") or []
+            if ads:
+                suspect_cohorts.add(cohort)
+        except Exception:
+            pass
+    print(f"cohort-trust: {len(suspect_cohorts)} (title,channel) cohorts "
+          f"have ≥1 user-confirmed-with-ads — auto-confirm-empty in those "
+          f"cohorts will be treated as bootstrap (not labels)")
 
     # Pass 1 — discover labelled recordings, separate cached from
     # uncached. Cached ones we just load synchronously; uncached
@@ -1235,16 +1270,21 @@ def main():
         # this run (frame_mask = all False) but seeds the next run.
         is_bootstrap = False
         if not ads and pseudo_data is None:
-            if auto_confirmed_no_ads:
-                # Treat as labeled "no ads": ads stays empty, but
+            cohort = uuid_cohort.get(uuid)
+            cohort_suspect = cohort in suspect_cohorts if cohort else False
+            if auto_confirmed_no_ads and not cohort_suspect:
+                # Trusted "no ads" signal: empty ads_user.json from
+                # the auto-confirm pipeline AND no other recording in
+                # this (title, channel) cohort has user-confirmed ads
+                # → confidence the recording really has no ads is high.
                 # labels_for(seconds, []) returns all-zero per-frame
-                # labels — exactly the signal the model needs to learn
-                # "this whole recording is show". which="auto-confirm"
-                # tags the source for the per-channel breakdown logs.
+                # labels — the signal the model needs to learn "this
+                # whole recording is show".
                 which = "auto-confirm"
             elif args.write_pseudo_labels:
                 is_bootstrap = True
-                which = "bootstrap"
+                which = ("bootstrap-cohort-suspect" if cohort_suspect
+                         and auto_confirmed_no_ads else "bootstrap")
             else:
                 continue
 

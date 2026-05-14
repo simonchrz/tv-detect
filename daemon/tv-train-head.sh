@@ -144,6 +144,16 @@ if [ "$rc" -eq 0 ]; then
       rc=2
   fi
   rm -f "$BUNDLE"
+elif [ "$rc" -eq 3 ]; then
+  # Python rejected the candidate (regression vs last-deployed). Skip
+  # bundle+upload — Pi keeps its current head. Without this gate, the
+  # local /tmp/tv-train-head-out/head.bin (which can drift from Pi
+  # after a manual rollback) would be bundled + pushed, silently
+  # overwriting Pi with whatever stale candidate happened to be in
+  # the local dir (14.05 incident: rejected 0.87 candidate but
+  # uploaded the morning's 0.83 regression that was left in /tmp).
+  echo "REJECTED by python — skipping bundle+upload (Pi keeps current head)"
+  rc=0  # not a script-level failure, just a no-op deploy
 fi
 
 # Persist the wall-time of this run to the history file so the

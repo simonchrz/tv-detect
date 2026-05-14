@@ -2969,6 +2969,17 @@ def main():
     history = history[-200:]
     history_path.write_text(json.dumps(history, indent=2))
 
+    # Signal the sh-wrapper whether this run actually deployed. Wrapper
+    # uses rc=3 to skip the bundle/upload step — without that signal,
+    # a rejected candidate's previous-head local file (which can be
+    # stale vs Pi after a manual rollback) gets bundled + pushed,
+    # silently overwriting Pi's current head with the local stale
+    # version (= 14.05: rejected today's 0.87 candidate, but bundle
+    # still uploaded the morning's 0.83 regression head that was
+    # left in /tmp from before the manual rollback). Pi-state is
+    # source of truth when no new head is being shipped.
+    return 0 if deploy else 3
+
 
 if __name__ == "__main__":
     sys.exit(main())

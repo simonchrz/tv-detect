@@ -212,6 +212,26 @@ def _maybe_evict_source_cache():
     cap = SOURCE_CACHE_MAX_GB * 1024 ** 3
     while total > cap and files:
         oldest = files.pop(0)
+        # Sole-copy guard: if Pi no longer has the source (= drop-pi-
+        # source already fired for this uuid), the T7 cache is the
+        # ONLY remaining .ts. Evicting it loses the recording's
+        # source forever — re-extraction during the next train cycle
+        # then drops the recording and silently shrinks the corpus.
+        # 404 from /recording/<uuid>/source means dual-existence is
+        # already broken; skip evict and try the next-oldest dup.
+        uuid = oldest.stem
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
+            with urllib.request.urlopen(req, timeout=4) as r:
+                pi_has = r.status == 200
+        except urllib.error.HTTPError as e:
+            pi_has = (e.code != 404)
+        except Exception:
+            # Gateway unreachable → don't risk evicting; pause cycle.
+            break
+        if not pi_has:
+            continue  # protected — try older dups instead
         sz = oldest.stat().st_size
         try: oldest.unlink(); total -= sz
         except Exception: pass

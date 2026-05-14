@@ -185,6 +185,25 @@ cmd_install() {
     [ -f "$stage/$f" ] && cp "$stage/$f" "$MODELS_DIR/$f"
   done
 
+  # When models live on the Pi but SMB isn't mounted, MODELS_DIR is a
+  # local tmp-staging dir — push the installed files back to the Pi
+  # so tv-detect actually picks them up. Without this, install
+  # silently succeeds while leaving the Pi running the old (or worse)
+  # head; rolling back a regression looks effective until you query
+  # head.history on the Pi and find nothing changed.
+  if [ "${MODELS_REMOTE:-0}" = "1" ]; then
+    echo "→ pushing models back to $PI_HOST:$PI_REMOTE_DIR ..."
+    ssh "$PI_HOST" "mkdir -p '$PI_REMOTE_DIR/rollback-bak-$ts' && \
+      for f in head.bin backbone.onnx head.history.json head.calibration.json; do \
+        [ -f '$PI_REMOTE_DIR'/\$f ] && cp '$PI_REMOTE_DIR'/\$f '$PI_REMOTE_DIR/rollback-bak-$ts/'; \
+      done"
+    for f in head.bin backbone.onnx head.history.json head.calibration.json; do
+      [ -f "$MODELS_DIR/$f" ] && scp -q "$MODELS_DIR/$f" \
+        "$PI_HOST:$PI_REMOTE_DIR/$f"
+    done
+    echo "  → Pi backups under rollback-bak-$ts/"
+  fi
+
   echo "✓ installed $tag → $MODELS_DIR"
   echo "  previous files backed up as *.bak.$ts (delete after verifying)"
   echo "  tv-detect picks up head.bin automatically via mtime watch"

@@ -1173,6 +1173,14 @@ def main():
         user_raw = _load(user) if user.exists() else None
         confirmed_show = []  # explicit "this frame is show" labels from /mark-reviewed
         confirmed_ad_skips = []  # implicit "user pressed skip here = ad" labels
+        # auto-confirmed: gateway tagged this recording's ads.json as
+        # "high-confidence 0 ad blocks" via the auto-confirm pipeline,
+        # then snapshotted that into ads_user.json with empty ads. The
+        # informational signal is "no ads in this recording" — every
+        # frame is show. Pre-2026-05-14 the bootstrap branch dropped
+        # these from training (treated as "no labels"), losing ~150
+        # recordings of negative-class signal per cron run.
+        auto_confirmed_no_ads = False
         if isinstance(user_raw, list):
             user_ads, deleted = user_raw, []
         elif isinstance(user_raw, dict):
@@ -1182,6 +1190,10 @@ def main():
                               user_raw.get("confirmed_show", []) or []]
             confirmed_ad_skips = [float(x) for x in
                                    user_raw.get("confirmed_ad_skips", []) or []]
+            if (user_raw.get("auto_confirmed_at")
+                    and (user_raw.get("auto_confirm_n_blocks") or 0) == 0
+                    and (user_raw.get("auto_confirm_score") or 0) >= 0.9):
+                auto_confirmed_no_ads = True
         else:
             user_ads, deleted = [], []
 
@@ -1223,7 +1235,14 @@ def main():
         # this run (frame_mask = all False) but seeds the next run.
         is_bootstrap = False
         if not ads and pseudo_data is None:
-            if args.write_pseudo_labels:
+            if auto_confirmed_no_ads:
+                # Treat as labeled "no ads": ads stays empty, but
+                # labels_for(seconds, []) returns all-zero per-frame
+                # labels — exactly the signal the model needs to learn
+                # "this whole recording is show". which="auto-confirm"
+                # tags the source for the per-channel breakdown logs.
+                which = "auto-confirm"
+            elif args.write_pseudo_labels:
                 is_bootstrap = True
                 which = "bootstrap"
             else:
@@ -2722,12 +2741,37 @@ def main():
                       f"architecture switch, deploying & resetting baseline")
         elif prev_n != cur_n:
             # Test set changed (e.g. recording added/dropped/relabelled
-            # turned from skip→include). Direct metric comparison is
-            # apples-to-oranges — a single hard recording can shift the
-            # mean by 10+ pp without the model getting worse. Deploy
-            # and reset the baseline.
-            reason = (f"test-set composition changed ({prev_n}→{cur_n} "
-                      f"recordings) — comparison invalidated, deploying")
+            # turned from skip→include). Direct metric comparison vs
+            # the immediately-previous run is apples-to-oranges — a
+            # single hard recording can shift the mean by 10+ pp
+            # without the model getting worse. BUT a soft floor still
+            # applies: if the candidate is dramatically below the
+            # historical median, we're regressing structurally
+            # (= 2026-05-13 + 14 cron runs both regressed -4pp on
+            # test-set-changes and auto-deployed worse heads).
+            # Take median IoU of last 5 deployed entries (excluding
+            # the current candidate). If candidate is below floor by
+            # MEDIAN_FLOOR_DROP, refuse the deploy.
+            cur_iou = metrics_smooth["iou"]
+            recent_deployed = [h for h in reversed(history)
+                               if h.get("deployed")][:5]
+            recent_ious = [h.get("test_iou", 0) for h in recent_deployed
+                           if h.get("test_iou")]
+            MEDIAN_FLOOR_DROP = 0.04  # 4 pp slack vs median
+            if recent_ious and cur_iou < (
+                    sorted(recent_ious)[len(recent_ious)//2]
+                    - MEDIAN_FLOOR_DROP):
+                deploy = False
+                med = sorted(recent_ious)[len(recent_ious)//2]
+                reason = (f"test-set composition changed "
+                          f"({prev_n}→{cur_n}), but IoU "
+                          f"{cur_iou:.3f} < median(last "
+                          f"{len(recent_ious)})={med:.3f} - "
+                          f"{MEDIAN_FLOOR_DROP*100:.0f}pp floor — "
+                          f"refusing deploy of likely-regression head")
+            else:
+                reason = (f"test-set composition changed ({prev_n}→{cur_n} "
+                          f"recordings) — comparison invalidated, deploying")
         else:
             d_iou = last_deployed["test_iou"] - metrics_smooth["iou"]
             d_acc = last_deployed["test_acc"] - metrics_smooth["acc"]

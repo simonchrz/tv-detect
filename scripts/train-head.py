@@ -1315,13 +1315,26 @@ def main():
                      logo_path, args.tv_detect, chan_slug,
                      args.with_audio, args.with_yamnet,
                      args.with_uniformity))] = rec_info
-            done = 0
+            done = 0; skipped = 0
             for fut in cf.as_completed(future_map):
                 rec_info = future_map[fut]
-                cache_path_str, feats = fut.result()
+                try:
+                    cache_path_str, feats = fut.result()
+                except Exception as e:
+                    # ffprobe / ffmpeg failures (= source missing,
+                    # corrupt, or evicted from T7 cache between snapshot
+                    # fetch and worker run) used to crash the whole
+                    # train script. Skip the recording, keep going.
+                    skipped += 1
+                    print(f"  [SKIP] {rec_info[0][:8]} {rec_info[1][:35]} — {type(e).__name__}: {str(e)[:120]}",
+                          flush=True)
+                    continue
                 np.save(cache_path_str, feats)
                 done += 1
                 print(f"  [{done}/{len(todo)}] {rec_info[0][:8]} {rec_info[1][:35]} → {feats.shape}",
+                      flush=True)
+            if skipped:
+                print(f"  ⚠ skipped {skipped} recording(s) due to extract errors",
                       flush=True)
         print(f"  parallel extract: {time.time()-t0:.1f}s for {len(todo)} recordings")
 

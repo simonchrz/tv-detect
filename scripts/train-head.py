@@ -790,6 +790,12 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     overall_acc = overall_correct / overall_frames if overall_frames else 0
     all_ious = [i for b in by_show.values() for i in b["ious"]]
     overall_iou = sum(all_ious) / len(all_ious) if all_ious else 0
+    # Median IoU as a 2nd metric robust to per-recording outliers
+    # (= a single Moonfall at 0.56 IoU drags 37-recording mean by
+    # 1.5 pp on its own; median ignores it). Used by the deploy
+    # gate downstream — mean-IoU still printed for continuity.
+    overall_iou_median = (float(np.median(all_ious))
+                          if all_ious else 0)
     tp = sum(b["tp"] for b in by_show.values())
     fp = sum(b["fp"] for b in by_show.values())
     fn = sum(b["fn"] for b in by_show.values())
@@ -797,8 +803,10 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     rec  = tp/(tp+fn) if (tp+fn) else 0
     f1 = 2*prec*rec/(prec+rec) if (prec+rec) else 0
     print(f"{'OVERALL':40s} {len(recs):>4} {overall_frames:>7} "
-          f"{overall_acc*100:>5.1f}% {f1:>5.2f} {overall_iou:>5.2f}")
+          f"{overall_acc*100:>5.1f}% {f1:>5.2f} {overall_iou:>5.2f} "
+          f"(median {overall_iou_median:.2f})")
     return {"acc": overall_acc, "f1": f1, "iou": overall_iou,
+            "iou_median": overall_iou_median,
             "n_recs": len(recs), "n_frames": overall_frames}
 
 
@@ -2780,38 +2788,53 @@ def main():
             reason = (f"feature dim changed ({prev_feat}→{cur_feat}) — "
                       f"architecture switch, deploying & resetting baseline")
         elif prev_n != cur_n:
-            # Test set changed (e.g. recording added/dropped/relabelled
-            # turned from skip→include). Direct metric comparison vs
-            # the immediately-previous run is apples-to-oranges — a
-            # single hard recording can shift the mean by 10+ pp
-            # without the model getting worse. BUT a soft floor still
-            # applies: if the candidate is dramatically below the
-            # historical median, we're regressing structurally
-            # (= 2026-05-13 + 14 cron runs both regressed -4pp on
-            # test-set-changes and auto-deployed worse heads).
-            # Take median IoU of last 5 deployed entries (excluding
-            # the current candidate). If candidate is below floor by
-            # MEDIAN_FLOOR_DROP, refuse the deploy.
-            cur_iou = metrics_smooth["iou"]
+            # Test set changed → mean-IoU comparison is apples-to-
+            # oranges (a single Moonfall-style outlier shifts mean
+            # 5+ pp). Use MEDIAN-IoU as the gate metric — robust to
+            # outliers, captures actual model quality. Plus require
+            # the train-corpus to not have collapsed (15.05: cron
+            # corpus shrank 216→172 trains over 3 days from cohort-
+            # gate dropping auto-confirms; no labels = no training).
+            cur_iou_med = metrics_smooth.get("iou_median",
+                                              metrics_smooth["iou"])
+            cur_train_n = len(train_recs)
             recent_deployed = [h for h in reversed(history)
                                if h.get("deployed")][:5]
-            recent_ious = [h.get("test_iou", 0) for h in recent_deployed
-                           if h.get("test_iou")]
-            MEDIAN_FLOOR_DROP = 0.04  # 4 pp slack vs median
-            if recent_ious and cur_iou < (
-                    sorted(recent_ious)[len(recent_ious)//2]
-                    - MEDIAN_FLOOR_DROP):
+            recent_ious_med = [h.get("test_iou_median",
+                                     h.get("test_iou", 0))
+                               for h in recent_deployed
+                               if h.get("test_iou") is not None]
+            recent_train_ns = [h.get("n_train_recs", 0)
+                               for h in recent_deployed
+                               if h.get("n_train_recs", 0)]
+            MEDIAN_FLOOR_DROP = 0.03  # 3 pp slack vs median (was 4)
+            CORPUS_FLOOR_RATIO = 0.85  # require >=85% of recent train-N
+            floor_med = (sorted(recent_ious_med)[len(recent_ious_med)//2]
+                         - MEDIAN_FLOOR_DROP) if recent_ious_med else 0
+            floor_train_n = int(
+                (sorted(recent_train_ns)[len(recent_train_ns)//2]
+                 if recent_train_ns else 0) * CORPUS_FLOOR_RATIO)
+            if recent_ious_med and cur_iou_med < floor_med:
                 deploy = False
-                med = sorted(recent_ious)[len(recent_ious)//2]
+                med = sorted(recent_ious_med)[len(recent_ious_med)//2]
                 reason = (f"test-set composition changed "
-                          f"({prev_n}→{cur_n}), but IoU "
-                          f"{cur_iou:.3f} < median(last "
-                          f"{len(recent_ious)})={med:.3f} - "
+                          f"({prev_n}→{cur_n}), but median-IoU "
+                          f"{cur_iou_med:.3f} < median(last "
+                          f"{len(recent_ious_med)})={med:.3f} - "
                           f"{MEDIAN_FLOOR_DROP*100:.0f}pp floor — "
                           f"refusing deploy of likely-regression head")
+            elif recent_train_ns and cur_train_n < floor_train_n:
+                deploy = False
+                med_n = sorted(recent_train_ns)[len(recent_train_ns)//2]
+                reason = (f"test-set composition changed "
+                          f"({prev_n}→{cur_n}), but train-corpus "
+                          f"{cur_train_n} < {int(CORPUS_FLOOR_RATIO*100)}% of "
+                          f"median-recent={med_n} (={floor_train_n}) — "
+                          f"refusing deploy on shrunk training set")
             else:
                 reason = (f"test-set composition changed ({prev_n}→{cur_n} "
-                          f"recordings) — comparison invalidated, deploying")
+                          f"recordings) — comparison invalidated, deploying "
+                          f"(median-IoU {cur_iou_med:.3f}, train {cur_train_n})")
         else:
             d_iou = last_deployed["test_iou"] - metrics_smooth["iou"]
             d_acc = last_deployed["test_acc"] - metrics_smooth["acc"]
@@ -2960,6 +2983,9 @@ def main():
         "train_acc": float(train_acc),
         "test_acc": float(metrics_smooth["acc"]) if metrics_smooth else None,
         "test_iou": float(metrics_smooth["iou"]) if metrics_smooth else None,
+        "test_iou_median": float(metrics_smooth.get("iou_median",
+                                                     metrics_smooth["iou"]))
+                            if metrics_smooth else None,
         "test_f1":  float(metrics_smooth["f1"])  if metrics_smooth else None,
         "deployed": deploy,
         "reason":   reason,

@@ -32,6 +32,7 @@ type Opts struct {
 	SceneThreshold float64
 	LogoTemplate    *logotemplate.Template // nil = skip logo
 	LogoYOffset     int                    // shift template y-coords by N pixels (letterbox correction)
+	LogoEdgeThresh  int                    // Sobel |Gx|+|Gy| above which a frame pixel counts as edge. 0 = use defaultEdgeThresh (80). Raise per-channel for visually-busy channels where ad content scores false-positive logo-conf at the default — VOX/Nick/RTL ads have high edge density everywhere, so the asymmetric "fraction of template-edges with frame-edge" metric trips at 1.0 even when logo absent. Higher threshold = fewer frame pixels qualify as edge = harder for non-logo content to match.
 	BumperTemplates      []string          // PNG paths for END-of-ad-block reference frames; nil/empty = skip
 	BumperStartTemplates []string          // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
 	BumperStride         int               // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
@@ -193,7 +194,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 	letterbox := signals.NewLetterboxDetector(d.FPS, d.Width, d.Height, 0, 0)
 	var logo *signals.LogoDetector
 	if opts.LogoTemplate != nil {
-		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, 0, opts.LogoYOffset)
+		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, opts.LogoEdgeThresh, opts.LogoYOffset)
 		if err != nil {
 			out.err = err
 			return out

@@ -75,6 +75,7 @@ func main() {
 		logoSmoothS     = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
 		logoYOffset     = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
+		logoEdgeThresh  = flag.Int("logo-edge-threshold", 0, "Sobel |Gx|+|Gy| above which a frame pixel counts as edge during MATCH-time logo confidence. 0 = use built-in default 80. Raise per-channel for visually-busy channels (VOX/Nick/RTL ad content has high edge density everywhere → asymmetric template-match scores 1.0 even with no logo present). Higher value = fewer frame pixels qualify as edge = harder for non-logo content to false-positive. Try 100-140 for noisy channels.")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 	)
@@ -196,6 +197,7 @@ func main() {
 		SceneThreshold: *sceneThreshold,
 		LogoTemplate:    tmpl,
 		LogoYOffset:     *logoYOffset,
+		LogoEdgeThresh:  *logoEdgeThresh,
 		BumperTemplates:      parseBumperTemplates(*bumperTemplates),
 		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
 		BumperStride:         *bumperStride,

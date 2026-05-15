@@ -954,6 +954,25 @@ def process_detect(uuid):
                   flush=True)
             logo_path = None
 
+    # Per-channel logo CNN. Gateway sets cached_logo_cnn_url only when:
+    # (a) channel-config opts in via "logo_cnn": true, AND
+    # (b) Pi-side .tvd-logo-cnn/<slug>.logo-cnn.onnx exists.
+    # tv-detect prefers CNN over edge-template when both are passed;
+    # silent fallback if the ONNX load fails inside the Go binary.
+    # Replaces the broken edge-template Sobel signal on busy channels
+    # (VOX/Nick/RTL) where ad content false-positives at 0.95+ conf.
+    logo_cnn_path = None
+    if cfg.get("cached_logo_cnn_url") and slug:
+        logo_cnn_path = MODEL_CACHE / "logo-cnn" / f"{slug}.logo-cnn.onnx"
+        logo_cnn_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            http_download(f"{GATEWAY}{cfg['cached_logo_cnn_url']}",
+                          logo_cnn_path)
+        except Exception as e:
+            print(f"  detect {uuid[:8]}: logo-cnn fetch err: {e}",
+                  flush=True)
+            logo_cnn_path = None
+
     # Per-channel bumper templates (channel station-id cards). One Pi
     # endpoint lists all PNGs configured for the slug; we download each
     # into MODEL_CACHE / "bumpers" / slug / <name>.png and pass the
@@ -1059,6 +1078,13 @@ def process_detect(uuid):
         if y_off > 0:
             cmd += ["--logo-y-offset", str(y_off)]
             print(f"  detect {uuid[:8]}: letterbox y-offset={y_off}",
+                  flush=True)
+        if logo_cnn_path and logo_cnn_path.exists() and logo_cnn_path.stat().st_size > 1024:
+            # Pass alongside --logo so tv-detect keeps the bbox from
+            # the template but uses the CNN for confidence. Falls back
+            # to template internally if ONNX load fails.
+            cmd += ["--logo-cnn", str(logo_cnn_path)]
+            print(f"  detect {uuid[:8]}: using CNN logo for {slug}",
                   flush=True)
     else:
         cmd += ["--auto-train", "5"]

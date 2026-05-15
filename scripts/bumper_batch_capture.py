@@ -3,11 +3,19 @@
 target channel by walking ads_user.json boundaries and POSTing to
 /api/recording/<uuid>/bumper-capture for each block edge.
 
-Pattern (proven 2026-05-11 on kabel-eins/sat-1/prosieben → 0.04→0.826
-IoU, 111 zero-block recordings recovered):
+Pattern: tv-detect's "start-bumper" = "WERBUNG"-card at AD START
+(= shown in the FIRST seconds of the ad block), "end-bumper" =
+"back to show" card at AD END (= shown in the LAST seconds of the
+ad block). Both are bumper frames INSIDE the ad block, NOT show
+frames flanking it.
   - For each user-confirmed ad block [s, e]:
-      end-bumper   = window [s-3, s]   (last 3s of show before ad)
-      start-bumper = window [e,   e+3] (first 3s of show after ad)
+      start-bumper = window [s,   s+3] (first 3s of ad block)
+      end-bumper   = window [e-3, e]   (last 3s of ad block)
+
+Earlier version of this script captured [s-3, s] / [e, e+3] (= show
+frames before/after the ad), producing ~489 useless show-content
+templates that never matched anything during detect. Drain found 0
+blocks on 89% of the corpus until this was fixed 2026-05-15.
 
 Run on Pi (gateway-local; needs source .ts via /source endpoint).
 
@@ -81,8 +89,8 @@ def main():
             if e - s < 5:
                 n_skipped += 1
                 continue
-            for kind, win in (("end",   (max(0, s - 3), s)),
-                              ("start", (e, e + 3))):
+            for kind, win in (("start", (s, s + 3)),
+                              ("end",   (max(0, e - 3), e))):
                 if win[1] - win[0] < 1.5:
                     n_skipped += 1
                     continue

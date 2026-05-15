@@ -76,6 +76,8 @@ func main() {
 		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
 		logoYOffset     = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
 		logoEdgeThresh  = flag.Int("logo-edge-threshold", 0, "Sobel |Gx|+|Gy| above which a frame pixel counts as edge during MATCH-time logo confidence. 0 = use built-in default 80. Raise per-channel for visually-busy channels (VOX/Nick/RTL ad content has high edge density everywhere → asymmetric template-match scores 1.0 even with no logo present). Higher value = fewer frame pixels qualify as edge = harder for non-logo content to false-positive. Try 100-140 for noisy channels.")
+		logoCNN         = flag.String("logo-cnn", "", "path to per-channel logo CNN ONNX (= scripts/train_logo_cnn.py output). When set + --logo also set, replaces the edge-template Sobel signal with CNN inference on the same bbox region. CNN is 87-100% accurate per channel vs ~50% random for edge-template on hard channels (VOX/Nick/RTL). Falls back to edge-template if the ONNX file fails to load.")
+		logoCNNMargin   = flag.Int("logo-cnn-margin", 50, "padding (px) around the template bbox for CNN crop input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX used for training. Only relevant when --logo-cnn is set.")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 	)
@@ -198,6 +200,8 @@ func main() {
 		LogoTemplate:    tmpl,
 		LogoYOffset:     *logoYOffset,
 		LogoEdgeThresh:  *logoEdgeThresh,
+		LogoCNNPath:     *logoCNN,
+		LogoCNNMargin:   *logoCNNMargin,
 		BumperTemplates:      parseBumperTemplates(*bumperTemplates),
 		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
 		BumperStride:         *bumperStride,

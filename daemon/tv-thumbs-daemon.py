@@ -921,14 +921,34 @@ def process_detect(uuid):
             print(f"  detect {uuid[:8]}: channel-map sidecar fetch "
                   f"err (non-fatal): {e}", flush=True)
 
-    # Per-channel logo (auto-train fallback if absent)
+    # Per-channel logo. Resolution-aware: HD recordings (= width >=1280)
+    # need an HD-trained logo because the bbox pixel-coords differ
+    # between SD (720x576) and HD (1920x1080). Probe source width
+    # once; pass ?res=hd to the gateway logo endpoint. Gateway falls
+    # back to SD logo if no HD-trained file exists yet.
     logo_path = None
     if cfg.get("cached_logo_url"):
-        logo_path = MODEL_CACHE / "logos" / f"{slug}.logo.txt"
+        src_w = 0
+        if local and Path(local).is_file():
+            try:
+                pr = subprocess.run(
+                    [FFPROBE, "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width", "-of",
+                     "default=nokey=1:noprint_wrappers=1", str(local)],
+                    capture_output=True, text=True, timeout=15,
+                    env=SPAWN_ENV)
+                src_w = int((pr.stdout or "0").strip().splitlines()[0] or 0)
+            except Exception:
+                src_w = 0
+        is_hd = src_w >= 1280
+        suffix = ".hd" if is_hd else ""
+        logo_path = MODEL_CACHE / "logos" / f"{slug}.logo{suffix}.txt"
         logo_path.parent.mkdir(exist_ok=True)
+        url = f"{GATEWAY}{cfg['cached_logo_url']}"
+        if is_hd:
+            url += ("&" if "?" in url else "?") + "res=hd"
         try:
-            http_download(f"{GATEWAY}{cfg['cached_logo_url']}",
-                          logo_path)
+            http_download(url, logo_path)
         except Exception as e:
             print(f"  detect {uuid[:8]}: logo fetch err: {e}",
                   flush=True)

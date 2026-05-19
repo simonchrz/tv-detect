@@ -2798,22 +2798,30 @@ def main():
             cur_iou_med = metrics_smooth.get("iou_median",
                                               metrics_smooth["iou"])
             cur_train_n = len(train_recs)
+            cur_total_n = cur_train_n + cur_n  # cur_n is current test
             recent_deployed = [h for h in reversed(history)
                                if h.get("deployed")][:5]
             recent_ious_med = [h.get("test_iou_median",
                                      h.get("test_iou", 0))
                                for h in recent_deployed
                                if h.get("test_iou") is not None]
-            recent_train_ns = [h.get("n_train_recs", 0)
+            # Corpus shrinkage gate: check TOTAL corpus (train + test),
+            # not train alone. When test grows via UUID-hash split moving
+            # a few recordings from train→test, train shrinks but total
+            # stays the same — that's not a real corpus collapse, just
+            # rebalancing. The original 15.05 incident the gate was
+            # added for was a real total-corpus collapse from cohort-
+            # gate dropping auto-confirms, which DOES show up in total.
+            recent_total_ns = [h.get("n_train_recs", 0) + h.get("n_test_recs", 0)
                                for h in recent_deployed
                                if h.get("n_train_recs", 0)]
             MEDIAN_FLOOR_DROP = 0.03  # 3 pp slack vs median (was 4)
-            CORPUS_FLOOR_RATIO = 0.85  # require >=85% of recent train-N
+            CORPUS_FLOOR_RATIO = 0.85  # require >=85% of recent total-N
             floor_med = (sorted(recent_ious_med)[len(recent_ious_med)//2]
                          - MEDIAN_FLOOR_DROP) if recent_ious_med else 0
-            floor_train_n = int(
-                (sorted(recent_train_ns)[len(recent_train_ns)//2]
-                 if recent_train_ns else 0) * CORPUS_FLOOR_RATIO)
+            floor_total_n = int(
+                (sorted(recent_total_ns)[len(recent_total_ns)//2]
+                 if recent_total_ns else 0) * CORPUS_FLOOR_RATIO)
             if recent_ious_med and cur_iou_med < floor_med:
                 deploy = False
                 med = sorted(recent_ious_med)[len(recent_ious_med)//2]
@@ -2823,18 +2831,46 @@ def main():
                           f"{len(recent_ious_med)})={med:.3f} - "
                           f"{MEDIAN_FLOOR_DROP*100:.0f}pp floor — "
                           f"refusing deploy of likely-regression head")
-            elif recent_train_ns and cur_train_n < floor_train_n:
-                deploy = False
-                med_n = sorted(recent_train_ns)[len(recent_train_ns)//2]
-                reason = (f"test-set composition changed "
-                          f"({prev_n}→{cur_n}), but train-corpus "
-                          f"{cur_train_n} < {int(CORPUS_FLOOR_RATIO*100)}% of "
-                          f"median-recent={med_n} (={floor_train_n}) — "
-                          f"refusing deploy on shrunk training set")
+            elif recent_total_ns and cur_total_n < floor_total_n:
+                # Bypass corpus-shrinkage gate when low-prio invalidation
+                # drain is still in progress — the missing recordings
+                # aren't lost forever, they're awaiting re-detect with
+                # the just-deployed head. Cron fires mid-drain look like
+                # corpus collapse but resolve naturally. Threshold: if
+                # >30 low-prio markers pending, the corpus IS in drain
+                # mode (= post-deploy invalidation phase) and the
+                # comparison is invalid. 2026-05-17 incident.
+                invalidation_pending = 0
+                try:
+                    import urllib.request
+                    invalidation_pending = len(json.loads(
+                        urllib.request.urlopen(
+                            "http://raspberrypi5lan:8080/api/internal/detect-pending-low",
+                            timeout=5).read()).get("pending", []))
+                except Exception:
+                    pass
+                if invalidation_pending > 30:
+                    med_n = sorted(recent_total_ns)[len(recent_total_ns)//2]
+                    reason = (f"test-set composition changed "
+                              f"({prev_n}→{cur_n}), total-corpus "
+                              f"{cur_total_n} < median {med_n} but "
+                              f"{invalidation_pending} re-detects pending "
+                              f"(post-deploy drain) — deploying anyway "
+                              f"(median-IoU {cur_iou_med:.3f})")
+                else:
+                    deploy = False
+                    med_n = sorted(recent_total_ns)[len(recent_total_ns)//2]
+                    reason = (f"test-set composition changed "
+                              f"({prev_n}→{cur_n}), but total-corpus "
+                              f"{cur_total_n} (train {cur_train_n}+test {cur_n}) < "
+                              f"{int(CORPUS_FLOOR_RATIO*100)}% of "
+                              f"median-recent={med_n} (={floor_total_n}) — "
+                              f"refusing deploy on shrunk corpus")
             else:
                 reason = (f"test-set composition changed ({prev_n}→{cur_n} "
                           f"recordings) — comparison invalidated, deploying "
-                          f"(median-IoU {cur_iou_med:.3f}, train {cur_train_n})")
+                          f"(median-IoU {cur_iou_med:.3f}, "
+                          f"train+test {cur_train_n}+{cur_n}={cur_total_n})")
         else:
             d_iou = last_deployed["test_iou"] - metrics_smooth["iou"]
             d_acc = last_deployed["test_acc"] - metrics_smooth["acc"]

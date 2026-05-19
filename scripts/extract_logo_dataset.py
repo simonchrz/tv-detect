@@ -189,12 +189,18 @@ def main():
             show_segs.append((cur, duration_s))
 
         # Per-rec sampling caps: split MAX_FRAMES_PER_REC across segments
-        # proportionally to length, up to the cap.
+        # proportionally to length, up to the cap. Spacing is class-specific:
+        # ad-blocks are typically short (82-290s on CC South Park) so 30s
+        # spacing yielded 2-9 ad frames vs ~30 show frames per recording,
+        # producing 4:1 imbalance. 10s spacing for ad balances the dataset
+        # without requiring more recordings — BCE pos_weight alone didn't
+        # rescue calibration (CC show-conf stuck at 0.4-0.7).
         def _sample_class(segs, kind, out_dir):
             if not segs:
                 return 0
+            spacing = 10 if kind == "ad" else 30
             total_len = sum(e - s for s, e in segs)
-            n_total = min(MAX_FRAMES_PER_REC, int(total_len // 30))
+            n_total = min(MAX_FRAMES_PER_REC, int(total_len // spacing))
             if n_total <= 0:
                 return 0
             timestamps = []

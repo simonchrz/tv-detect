@@ -405,9 +405,23 @@ def get_source(uuid):
     try:
         with urllib.request.urlopen(src_url, timeout=600,
                                        context=CTX) as r:
+            expected = r.headers.get("Content-Length")
+            expected = int(expected) if expected and expected.isdigit() else None
             with open(tmp, "wb") as f:
                 import shutil
                 shutil.copyfileobj(r, f, length=1 << 20)
+        # Content-Length sanity: if the gateway sent a length and we
+        # have fewer bytes, the connection died mid-stream and the .ts
+        # is truncated. Don't cache it — caller falls back to HTTP URL
+        # or the next cycle retries. Tolerate <8 KB delta (= TCP
+        # tail-loss / final-segment slack).
+        actual = tmp.stat().st_size
+        if expected is not None and expected - actual > 8192:
+            tmp.unlink()
+            print(f"  cache-fill TRUNCATED {uuid[:8]}: "
+                  f"{actual}/{expected} bytes "
+                  f"({100*actual/expected:.1f}%), discarded", flush=True)
+            return None
         tmp.rename(cache_path)
         size_mb = cache_path.stat().st_size / 1e6
         print(f"  cached {uuid[:8]} ({size_mb:.0f} MB in "
@@ -585,6 +599,29 @@ def process_recording(uuid, do_hls, do_thumbs):
     first (NVMe ~3 GB/s); HTTP fallback only on cache miss."""
     local = get_source(uuid)
     src_url = str(local) if local else f"{GATEWAY}/recording/{uuid}/source"
+    # Stub-source short-circuit: ffmpeg can't extract thumbnails from
+    # a 500KB-1MB broken recording (tuner cut mid-stream), produces 0
+    # jpgs, daemon retried forever (= 2026-05-18+19 incidents). Probe
+    # source size via HTTP HEAD (cheap, ~50ms) and skip with cooldown
+    # if <2 MB. Recordings legitimately that small don't exist — even
+    # 1 min of DVB-C ~25 Mbit/s is 180 MB.
+    try:
+        if local:
+            src_size = local.stat().st_size
+        else:
+            import urllib.request
+            with urllib.request.urlopen(
+                    urllib.request.Request(src_url, method="HEAD"),
+                    timeout=5, context=CTX) as r:
+                src_size = int(r.headers.get("Content-Length") or 0)
+        if 0 < src_size < 2 * 1024 * 1024:
+            print(f"  skipping {uuid[:8]}: source is stub "
+                  f"({src_size} bytes, recording likely cut mid-stream)",
+                  flush=True)
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            return False
+    except Exception:
+        pass  # probe failed → fall through to ffmpeg, normal failure path will catch
     with tempfile.TemporaryDirectory() as td:
         td_p = Path(td)
         cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
@@ -692,6 +729,12 @@ def process_recording(uuid, do_hls, do_thumbs):
                 except Exception as e:
                     print(f"  thumbs upload err: {e}", flush=True)
                     ok_thumbs = False
+        # ffmpeg-rc=0 but post-processing failed (no jpgs, upload err)
+        # also needs cooldown — otherwise daemon spins on this uuid
+        # every poll cycle (= the stub-thumbs retry loop from same
+        # incidents above). The rc!=0 branch above already sets it.
+        if not (ok_hls and ok_thumbs):
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
         return ok_hls and ok_thumbs
 
 

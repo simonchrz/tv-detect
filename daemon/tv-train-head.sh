@@ -89,6 +89,29 @@ fi
 # training started.
 curl -fsS -X POST "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true
 trap 'curl -fsS -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true' EXIT
+
+# Pre-train drain check: after a head deploy, Smart-V2 invalidates
+# ~250+ cutlists which the daemon re-detects via low-prio queue.
+# When cron fires mid-drain, train-head sees a shrunk corpus and
+# the gate rejects (= 2026-05-17 incident: 173 < 214 floor).
+# Wait up to 30 min for the low-prio queue to drain below 30 before
+# starting — daemon makes ~50/h so 30min is enough headroom for
+# 25-30 pending markers. Cap at 30min so cron eventually runs even
+# if drain stalls (= per-channel detect-spawn loop tends to recover
+# but no guarantees).
+WAIT_DEADLINE=$(( $(date +%s) + 1800 ))
+while [ "$(date +%s)" -lt "$WAIT_DEADLINE" ]; do
+  N=$(curl -fsS "$GATEWAY/api/internal/detect-pending-low" 2>/dev/null \
+       | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("pending",[])))' \
+       2>/dev/null || echo 999)
+  if [ "$N" -lt 30 ]; then
+    echo "pre-train drain check: low-prio queue=$N (<30 threshold) — proceeding"
+    break
+  fi
+  echo "pre-train drain check: low-prio queue=$N, waiting up to $((WAIT_DEADLINE - $(date +%s)))s..."
+  sleep 60
+done
+
 TRAIN_START_TS=$(date +%s)
 
 # Local output dir — head.bin + sidecars + archive/ all land here.

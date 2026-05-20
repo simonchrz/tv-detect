@@ -2799,8 +2799,16 @@ def main():
                                               metrics_smooth["iou"])
             cur_train_n = len(train_recs)
             cur_total_n = cur_train_n + cur_n  # cur_n is current test
+            # 3-run window (was 5) so a baseline-shift event (e.g.
+            # new channel column → arch-reset deploy with lower IoU)
+            # rolls out of the floor calc within 3 cron days. With 5
+            # the floor stayed anchored to pre-shift heads for ~5 days,
+            # rejecting candidates that were strictly better than the
+            # last deployed (2026-05-20: 0.874 rejected vs 0.849 last
+            # deployed, but median(last 5) still 0.911 from pre-disney
+            # heads).
             recent_deployed = [h for h in reversed(history)
-                               if h.get("deployed")][:5]
+                               if h.get("deployed")][:3]
             recent_ious_med = [h.get("test_iou_median",
                                      h.get("test_iou", 0))
                                for h in recent_deployed

@@ -739,6 +739,27 @@ def confusion_analysis(clf, recs, fps_extract, smooth_s, output_path):
     print(f"\nconfusion: {written} test recordings analysed → {output_path}")
 
 
+def _is_likely_movie(title, n_recs, total_frames, fps_extract):
+    """Pragmatic movie-vs-TV split for eval reporting. Mirrors the
+    /bibliothek heuristic loosely: long broadcast + single recording
+    + no series-style subtitle in the title. Recordings that fail any
+    check default to TV-class.
+
+    Heuristic only — there will be edge cases (Staying Alive 157 min
+    has " - Stars singen mit Legenden" subtitle → correctly TV; a true
+    movie rebroadcast without subtitle stays movie). Goal is not
+    perfection but stopping a single ~150 min Moonfall-like outlier
+    from dominating the headline OVERALL IoU."""
+    if n_recs > 1:
+        return False
+    avg_duration_s = total_frames / fps_extract
+    if avg_duration_s < 80 * 60:
+        return False
+    if " - " in title or " — " in title:
+        return False
+    return True
+
+
 def eval_split(clf, recs, fps_extract, smooth_s=0):
     """Per-frame + block-level evaluation of `clf` on the held-out
     recordings, broken down by show title (proxy for channel since
@@ -802,6 +823,37 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     prec = tp/(tp+fp) if (tp+fp) else 0
     rec  = tp/(tp+fn) if (tp+fn) else 0
     f1 = 2*prec*rec/(prec+rec) if (prec+rec) else 0
+
+    # Movies vs TV split — movies have fundamentally different ad
+    # structure (no periodic breaks) and a single 150-min film with
+    # 0.40 IoU dominates the mean. Report both classes separately
+    # so the headline OVERALL is still comparable run-to-run, but
+    # movie-class regressions can also be tracked. Headline OVERALL
+    # remains unified for backward compat with the deploy-gate.
+    movie_titles = {t for t, b in by_show.items()
+                    if _is_likely_movie(t, b["n_recs"], b["frames"],
+                                         fps_extract)}
+    for label, titles in (("TV", set(by_show.keys()) - movie_titles),
+                          ("movies", movie_titles)):
+        if not titles:
+            continue
+        sub_b = [by_show[t] for t in titles]
+        sub_frames = sum(b["frames"] for b in sub_b)
+        sub_correct = sum(b["correct"] for b in sub_b)
+        sub_ious = [i for b in sub_b for i in b["ious"]]
+        sub_n_recs = sum(b["n_recs"] for b in sub_b)
+        sub_acc = sub_correct / sub_frames if sub_frames else 0
+        sub_iou = sum(sub_ious) / len(sub_ious) if sub_ious else 0
+        sub_med = float(np.median(sub_ious)) if sub_ious else 0
+        sub_tp = sum(b["tp"] for b in sub_b)
+        sub_fp = sum(b["fp"] for b in sub_b)
+        sub_fn = sum(b["fn"] for b in sub_b)
+        sub_p = sub_tp/(sub_tp+sub_fp) if (sub_tp+sub_fp) else 0
+        sub_r = sub_tp/(sub_tp+sub_fn) if (sub_tp+sub_fn) else 0
+        sub_f1 = 2*sub_p*sub_r/(sub_p+sub_r) if (sub_p+sub_r) else 0
+        print(f"{'OVERALL (' + label + ')':40s} {sub_n_recs:>4} "
+              f"{sub_frames:>7} {sub_acc*100:>5.1f}% {sub_f1:>5.2f} "
+              f"{sub_iou:>5.2f} (median {sub_med:.2f})")
     print(f"{'OVERALL':40s} {len(recs):>4} {overall_frames:>7} "
           f"{overall_acc*100:>5.1f}% {f1:>5.2f} {overall_iou:>5.2f} "
           f"(median {overall_iou_median:.2f})")

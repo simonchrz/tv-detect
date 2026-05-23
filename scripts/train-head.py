@@ -952,6 +952,11 @@ def main():
     ap.add_argument("--feature-cache", default=os.path.expanduser(
         "~/.cache/tvd-features"))
     ap.add_argument("--fps-extract", type=float, default=1.0)
+    ap.add_argument("--reextract-logo-nan-pct", type=float, default=10.0,
+                    help="re-extract a cached .npy if its logo column has "
+                         "this percent or more NaN-sentinels. Catches stale "
+                         "features from older buggy extractors. Default 10. "
+                         "Set to 100 to disable (= trust any cached file).")
     ap.add_argument("--prefer", choices=["user", "auto", "any"], default="any",
                     help="user = only ads_user.json; auto = only ads.json; "
                          "any = user where present, else auto")
@@ -1406,7 +1411,30 @@ def main():
         rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
                      pseudo_data, is_bootstrap)
         if cache_path.exists():
-            cached.append((rec_info, cache_path))
+            # Re-extract if the cached features have a high NaN-rate in
+            # the logo column. Stale .npy from the pre-2026-05-23
+            # tv-detect (= interlaced-PTS bug, half the timestamps so
+            # back-half rows came back NaN) live in the cache until the
+            # source .ts file's mtime changes, which never happens on
+            # finalized recordings. Without this check the broken
+            # features would persist forever even after the Go fix
+            # landed. mmap-peek is cheap (~50 ms per file at corpus
+            # size).
+            reextract = False
+            if args.with_logo:
+                try:
+                    arr = np.load(cache_path, mmap_mode="r")
+                    if arr.shape[1] > 1280 and len(arr) > 0:
+                        nan_pct = (100.0 * np.isnan(arr[:, 1280]).sum()
+                                   / len(arr))
+                        if nan_pct >= args.reextract_logo_nan_pct:
+                            reextract = True
+                except Exception:
+                    reextract = True
+            if reextract:
+                todo.append((rec_info, str(src), cache_path))
+            else:
+                cached.append((rec_info, cache_path))
         else:
             todo.append((rec_info, str(src), cache_path))
 

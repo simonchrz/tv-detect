@@ -24,7 +24,7 @@ Triggered by launchd at boot via
 ~/Library/LaunchAgents/com.user.tv-thumbs-daemon.plist."""
 
 import io, json, os, re, ssl, subprocess, sys, tarfile, tempfile, time
-import urllib.request
+import urllib.error, urllib.request
 from pathlib import Path
 
 POLL_INTERVAL_S = 5
@@ -432,6 +432,21 @@ def get_source(uuid):
         # decide eligibility; daemon just signals "we have it cached".
         _drop_pi_source(uuid)
         return cache_path
+    except urllib.error.HTTPError as e:
+        try: tmp.unlink()
+        except Exception: pass
+        if e.code == 425:
+            # tvh still writing — gateway guard says retry later. Set
+            # cooldown so we don't hammer, but DO NOT tick the persistent
+            # retry counter: this is a transient state, not a broken
+            # recording. After cooldown the next cycle re-tries and will
+            # succeed once sched_status flips to completed.
+            print(f"  source {uuid[:8]}: recording in progress (425), "
+                  f"cooldown {FAIL_COOLDOWN_S}s", flush=True)
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            return None
+        print(f"  cache-fill err: HTTP {e.code} {e.reason}", flush=True)
+        return None
     except Exception as e:
         print(f"  cache-fill err: {e}", flush=True)
         try: tmp.unlink()

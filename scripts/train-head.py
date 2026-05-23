@@ -2748,6 +2748,9 @@ def main():
         # [0, ~0.6], so divergence cases never surface.
         n_unc = max(1, args.surface_uncertain // 2)
         n_div = args.surface_uncertain - n_unc
+        skipped_logo = 0
+        skipped_whisper = 0
+        emitted = 0
         with open(out_path, "w") as f:
             f.write("# uuid\ttime_s\tprobability\ttitle\tsource\n")
             for uuid, title, ads, X, y, *_ in per_rec:
@@ -2764,14 +2767,42 @@ def main():
                 # reflects the model's true confidence, not the
                 # over-confidence of an uncalibrated logistic head.
                 proba = calibrated_proba(X)
+                n = len(proba)
+                # Filter 1 — logo-sentinel strip. Frames whose logo
+                # column was the NaN sentinel (= extract_logo silently
+                # failed on a corrupt stream chunk) get a calibrated
+                # proba near 0.5 because the head sees the substituted
+                # neutral input. They're not real uncertainty — they're
+                # missing data. Surfacing them wastes review time.
+                skip_mask = np.zeros(n, dtype=bool)
+                logo_nan = logo_nan_mask_by_uuid.get(uuid)
+                if logo_nan is not None and len(logo_nan) == n:
+                    skip_mask |= logo_nan
+                # Filter 2 — whisper-agreement strip. If the per-second
+                # whisper ad-classifier (F1=0.94) is highly confident
+                # AND agrees with the head's lean, the frame is
+                # effectively already labelled — the whisper feature
+                # block carries that signal into the next retrain, so a
+                # manual review adds nothing. Disagreements stay (they
+                # are exactly the frames worth labelling).
+                whisper_ps = _load_whisper_per_sec(uuid, n)
+                whisper_conf = np.abs(whisper_ps - 0.5) > 0.35
+                whisper_agrees = (whisper_ps > 0.5) == (proba > 0.5)
+                whisper_skip = whisper_conf & whisper_agrees
+                pre_logo = int(skip_mask.sum())
+                skip_mask |= whisper_skip
+                skipped_logo += pre_logo
+                skipped_whisper += int(skip_mask.sum()) - pre_logo
                 unc = 1.0 - 2.0 * np.abs(proba - 0.5)
-                top_unc = set(np.argsort(-unc)[:n_unc].tolist())
+                unc_masked = np.where(skip_mask, -1.0, unc)
+                top_unc_idx = np.argsort(-unc_masked)[:n_unc]
+                top_unc = set(int(i) for i in top_unc_idx
+                              if unc_masked[i] >= 0)
                 top_div = set()
                 slug = uuid_slug.get(uuid, "")
                 start = uuid_start.get(uuid, 0)
                 if minute_prior.get(slug) and start and n_div > 0:
                     prior_arr = np.array(minute_prior[slug])
-                    n = len(proba)
                     minutes = ((start + np.arange(n) / args.fps_extract)
                                // 60 % 60).astype(int)
                     p_prior = prior_arr[minutes]
@@ -2780,8 +2811,11 @@ def main():
                     # actually CONFIDENT (|p-0.5| > 0.3) — otherwise
                     # they overlap with the unc bucket and add nothing.
                     confident_mask = np.abs(proba - 0.5) > 0.3
-                    div_masked = np.where(confident_mask, div, -1.0)
-                    top_div = set(np.argsort(-div_masked)[:n_div].tolist())
+                    div_masked = np.where(confident_mask & ~skip_mask,
+                                          div, -1.0)
+                    top_div_idx = np.argsort(-div_masked)[:n_div]
+                    top_div = set(int(i) for i in top_div_idx
+                                  if div_masked[i] >= 0)
                 # dedupe + chronological order; tag source for the UI
                 rows = []
                 for i in sorted(top_unc | top_div):
@@ -2791,8 +2825,14 @@ def main():
                     rows.append((t, proba[i], src))
                 for t, p, src in rows:
                     f.write(f"{uuid}\t{t:.1f}\t{p:.3f}\t{title[:35]}\t{src}\n")
+                    emitted += 1
+        cap = (n_unc + n_div) * len(per_rec)
         print(f"\nactive-learning: top-{n_unc} uncertain + top-{n_div} divergent "
               f"frames per recording → {out_path}")
+        print(f"  emitted {emitted} (cap {cap}, "
+              f"−{cap - emitted} from filters)")
+        print(f"  corpus filter populations: {skipped_logo} logo-sentinel, "
+              f"{skipped_whisper} whisper-agreement")
 
     # ── Champion-challenger gate ──────────────────────────────────
     # Don't ship a head that regressed against the last successful

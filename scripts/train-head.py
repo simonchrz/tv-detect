@@ -829,10 +829,13 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     # 0.40 IoU dominates the mean. Report both classes separately
     # so the headline OVERALL is still comparable run-to-run, but
     # movie-class regressions can also be tracked. Headline OVERALL
-    # remains unified for backward compat with the deploy-gate.
+    # remains unified for backward compat with display; the deploy-
+    # gate downstream prefers iou_tv_median (TV-class only) so a
+    # rebroadcast of one tricky film doesn't block a TV deployment.
     movie_titles = {t for t, b in by_show.items()
                     if _is_likely_movie(t, b["n_recs"], b["frames"],
                                          fps_extract)}
+    iou_tv = iou_tv_median = None
     for label, titles in (("TV", set(by_show.keys()) - movie_titles),
                           ("movies", movie_titles)):
         if not titles:
@@ -851,6 +854,9 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         sub_p = sub_tp/(sub_tp+sub_fp) if (sub_tp+sub_fp) else 0
         sub_r = sub_tp/(sub_tp+sub_fn) if (sub_tp+sub_fn) else 0
         sub_f1 = 2*sub_p*sub_r/(sub_p+sub_r) if (sub_p+sub_r) else 0
+        if label == "TV":
+            iou_tv = sub_iou
+            iou_tv_median = sub_med
         print(f"{'OVERALL (' + label + ')':40s} {sub_n_recs:>4} "
               f"{sub_frames:>7} {sub_acc*100:>5.1f}% {sub_f1:>5.2f} "
               f"{sub_iou:>5.2f} (median {sub_med:.2f})")
@@ -859,6 +865,9 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
           f"(median {overall_iou_median:.2f})")
     return {"acc": overall_acc, "f1": f1, "iou": overall_iou,
             "iou_median": overall_iou_median,
+            "iou_tv": iou_tv if iou_tv is not None else overall_iou,
+            "iou_tv_median": (iou_tv_median if iou_tv_median is not None
+                              else overall_iou_median),
             "n_recs": len(recs), "n_frames": overall_frames}
 
 
@@ -2847,8 +2856,16 @@ def main():
             # the train-corpus to not have collapsed (15.05: cron
             # corpus shrank 216→172 trains over 3 days from cohort-
             # gate dropping auto-confirms; no labels = no training).
-            cur_iou_med = metrics_smooth.get("iou_median",
-                                              metrics_smooth["iou"])
+            # Prefer TV-class median: movies (rebroadcast of Moonfall
+            # etc) have fundamentally different ad structure and a
+            # single new film at 0.40 IoU can pull unified median
+            # under the floor and reject a deployment that improves
+            # TV-class performance. Fallback chain: tv_median →
+            # unified median → mean — old history entries that don't
+            # have tv_median fall through gracefully.
+            cur_iou_med = metrics_smooth.get(
+                "iou_tv_median",
+                metrics_smooth.get("iou_median", metrics_smooth["iou"]))
             cur_train_n = len(train_recs)
             cur_total_n = cur_train_n + cur_n  # cur_n is current test
             # 3-run window (was 5) so a baseline-shift event (e.g.
@@ -2861,8 +2878,9 @@ def main():
             # heads).
             recent_deployed = [h for h in reversed(history)
                                if h.get("deployed")][:3]
-            recent_ious_med = [h.get("test_iou_median",
-                                     h.get("test_iou", 0))
+            recent_ious_med = [h.get("test_iou_tv_median",
+                                     h.get("test_iou_median",
+                                           h.get("test_iou", 0)))
                                for h in recent_deployed
                                if h.get("test_iou") is not None]
             # Corpus shrinkage gate: check TOTAL corpus (train + test),
@@ -2886,7 +2904,7 @@ def main():
                 deploy = False
                 med = sorted(recent_ious_med)[len(recent_ious_med)//2]
                 reason = (f"test-set composition changed "
-                          f"({prev_n}→{cur_n}), but median-IoU "
+                          f"({prev_n}→{cur_n}), but TV-class median-IoU "
                           f"{cur_iou_med:.3f} < median(last "
                           f"{len(recent_ious_med)})={med:.3f} - "
                           f"{MEDIAN_FLOOR_DROP*100:.0f}pp floor — "
@@ -3082,6 +3100,16 @@ def main():
         "test_iou_median": float(metrics_smooth.get("iou_median",
                                                      metrics_smooth["iou"]))
                             if metrics_smooth else None,
+        # TV-class metrics (= excludes single-rec movies). Deploy-gate
+        # prefers test_iou_tv_median; iou_median stays for display.
+        "test_iou_tv": (float(metrics_smooth.get("iou_tv",
+                                                   metrics_smooth["iou"]))
+                        if metrics_smooth else None),
+        "test_iou_tv_median": (float(metrics_smooth.get(
+                                       "iou_tv_median",
+                                       metrics_smooth.get("iou_median",
+                                                            metrics_smooth["iou"])))
+                                if metrics_smooth else None),
         "test_f1":  float(metrics_smooth["f1"])  if metrics_smooth else None,
         "deployed": deploy,
         "reason":   reason,

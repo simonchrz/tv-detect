@@ -10,7 +10,8 @@ in two upstream Python orchestrators:
 
 - `~/bin/tv-live-comskip.py` — Mac launchd agent that does sliding-
   window scans on live HLS streams.
-- `~/src/tvheadend/hls-gateway/service.py` — Pi container that runs
+- `~/src/hls-gateway/service.py` (= `simonchrz/hls-gateway` repo,
+  graduated out of tvheadend on 2026-05-22) — Pi container that runs
   comskip on completed DVR recordings.
 
 Both currently shell out to `comskip --ini ... --output ... <src>` and
@@ -150,19 +151,41 @@ output, same Python parsers (`_rec_parse_comskip` in service.py,
        - 1.5× skip-press frames (Werbung-Skip-Button → forced label=1)
        - Age decay: linear ramp 1.0 → 0.5 over [0, 90] days, 0.5 → 0
          over [90, 180], skipped beyond 180.
-    6. **Champion-challenger** with two waivers:
-       - If test-set composition changed (different rec count) →
-         deploy + reset baseline.
+    6. **Champion-challenger** with several waivers (evolved past the
+       simple drop-threshold below):
        - If feature dim changed (e.g. `--with-channel` toggled) →
          deploy + reset baseline. Reads `n_features` from history;
          falls back to deployed head.bin file size when missing.
-       - Otherwise: REJECT if IoU drops > 5 pp OR Acc > 3 pp vs
-         last deployed.
+       - If test-set composition changed → use median-IoU floor:
+         `cur_iou_tv_median ≥ median(last 3 deployed) − 3 pp` (= TV
+         class only, see below). If under floor → REJECT as
+         likely-regression. If over → DEPLOY with "test-set
+         invalidated" reason.
+       - Corpus-shrinkage gate: total corpus (train + test) must be
+         ≥ 85 % of recent median. Bypass when >30 low-prio detect
+         markers are pending (= post-deploy V2 invalidation drain
+         in progress, naturally resolves).
+       - Default case (same test-set + same feature dim): REJECT if
+         IoU drops > 5 pp OR Acc > 3 pp vs last deployed.
     7. Writes `head.bin`, `archive/head.<ts>.bin`, `head.history.json`
        (now includes `n_features`), `head.uncertain.txt` (top-N
        split half between high-uncertainty + half between
        high-divergence-from-minute-prior frames; tagged `unc`/`div`/
        `both`), `head.confusion.txt` (with `--emit-confusion`).
+
+- **Movie-vs-TV split in eval** (added 2026-05-22): `eval_split` partitions
+  the per-show table into TV-class and movie-class using a simple heuristic
+  (n_recs == 1 + duration ≥ 80 min + no ` - ` or ` — ` subtitle in title).
+  Mirrors the `/bibliothek` classifier loosely. Prints two extra OVERALL
+  lines (`OVERALL (TV)`, `OVERALL (movies)`) above the unified one. The
+  deploy gate above prefers `iou_tv_median` so a single 150-min film at
+  0.40 IoU doesn't drag the headline under the floor and block a TV
+  deployment. History entries gain `test_iou_tv` + `test_iou_tv_median`
+  fields; the floor lookup falls back through `iou_tv_median → iou_median
+  → iou` for old entries that predate the field. Backfilled 2026-05-23
+  via show-replicated approximation (= per-show mean IoU × n_recs), so
+  the first ~3 deploys after the change have approximate TV-medians in
+  history; after that it's all real-per-rec medians.
 
 - **Pseudo-label self-training (Phase A + B)**:
   - **Phase A** (`--with-self-training`): on the held-out test set,

@@ -53,9 +53,15 @@ func Probe(input string) (Info, error) {
 		if s.CodecType != "video" {
 			continue
 		}
-		fps := parseFPS(s.RFrameRate)
+		// Prefer avg_frame_rate over r_frame_rate. For interlaced sources
+		// (= 50i SD broadcast: r=50/1, avg=25/1), r is the FIELD rate while
+		// the decoder yields PROGRESSIVE frames at avg rate — using r
+		// halves every downstream timestamp (= back-half-NaN in
+		// extract_logo's CSV, 2026-05-23 incident). For progressive
+		// sources both fields are equal, so this is a no-op.
+		fps := parseFPS(s.AvgFrameRate)
 		if fps == 0 {
-			fps = parseFPS(s.AvgFrameRate)
+			fps = parseFPS(s.RFrameRate)
 		}
 		dur := parseFloat(s.Duration)
 		if dur == 0 {

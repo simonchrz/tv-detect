@@ -47,7 +47,7 @@ echo "=== VALIDATION ==="
 printf '%-45s %-12s %-25s %-25s %s\n' RECORDING CHANNEL TVD_BLOCKS COMSKIP_BLOCKS DIFF
 echo "----------------------------------------------------------------------------------------------------------------------------------"
 
-curl -s "http://raspberrypi5lan:9981/api/dvr/entry/grid_finished?limit=500" | python3 -c "
+curl -s "http://raspberrypi5lan:9983/api/dvr/entry/grid_finished?limit=500" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 for e in d.get('entries', []):

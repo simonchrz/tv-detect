@@ -1210,7 +1210,7 @@ def main():
                               for c in chans.get("channels", [])
                               if c.get("name") and c.get("slug")}
             entries = json.loads(urllib.request.urlopen(
-                "http://raspberrypi5lan:9981/api/dvr/entry/grid?limit=2000",
+                "http://raspberrypi5lan:9983/api/dvr/entry/grid?limit=2000",
                 timeout=10).read())
             for e in entries.get("entries", []):
                 u = e.get("uuid"); cn = e.get("channelname", "")

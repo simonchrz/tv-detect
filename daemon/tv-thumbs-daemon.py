@@ -40,6 +40,12 @@ GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
 # (ffmpeg decode buffers + NN backbone), so 3-parallel ≈ 4-6 GB peak.
 DETECT_PARALLEL = max(1, int(os.environ.get("DETECT_PARALLEL", "1")))
 TVD_WORKERS = max(2, 12 // DETECT_PARALLEL)  # 2026-05-11: 18-core Mac, bumped from 8 → 12 divisor
+# HLS+thumbs jobs (process_recording) used to run sequential in the main
+# poll loop with a `break` after the first hls — meant Pi-fallback fired
+# whenever the queue grew past ~15 markers (= 30 min × 1 per ~2 min).
+# Mac M5 Pro VideoToolbox HW-encoder handles 2-3 parallel HLS encodes
+# without thermal/CPU concern; thumbs is cheap (~10s) and rides along.
+HLS_PARALLEL = max(1, int(os.environ.get("HLS_PARALLEL", "2")))
 # Watchdog: if a uuid sits in detect_in_flight longer than this AND no
 # subprocess for it exists, the worker thread leaked the slot (= hung
 # HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.
@@ -1263,6 +1269,13 @@ def main():
     detect_in_flight = set()
     detect_in_flight_since = {}  # uuid → time.time() at slot acquisition
     detect_lock = threading.Lock()
+    # HLS+thumbs concurrency: same idea as detect but separate pool +
+    # in_flight set. process_recording does HLS+thumbs in one call, so
+    # a single worker owns both for a uuid.
+    hls_executor = ThreadPoolExecutor(max_workers=HLS_PARALLEL,
+                                       thread_name_prefix="hls")
+    hls_in_flight = set()
+    hls_lock = threading.Lock()
 
     def _gc_stuck_in_flight():
         """Free slots leaked by abnormally-exited worker threads (= the
@@ -1477,19 +1490,34 @@ def main():
                 detect_executor.submit(_run_detect, uuid)
                 available -= 1
 
-        # HLS / thumbs stay sequential (cheap, doesn't benefit from parallel)
+        # HLS+thumbs: parallel via hls_executor. Each uuid gets one
+        # worker-thread that runs process_recording (= HLS+thumbs in one
+        # shot). Pool cap = HLS_PARALLEL. Skip if already in-flight on
+        # this pool OR on the detect pool (= same uuid being touched).
+        def _run_hls(uuid, do_hls, do_thumbs):
+            try:
+                process_recording(uuid, do_hls, do_thumbs)
+            except Exception as e:
+                print(f"  hls {uuid[:8]}: unhandled err: {e}", flush=True)
+            finally:
+                with hls_lock:
+                    hls_in_flight.discard(uuid)
         for uuid in sorted((hls_uuids | thumb_uuids) - cooled):
             do_hls = uuid in hls_uuids
             do_thumbs = uuid in thumb_uuids
             with detect_lock:
                 if uuid in detect_in_flight:
-                    continue  # let detect-thread own this uuid this cycle
-            print(f"  → {uuid[:8]} hls={do_hls} thumbs={do_thumbs}",
+                    continue
+            with hls_lock:
+                if uuid in hls_in_flight:
+                    continue
+                if len(hls_in_flight) >= HLS_PARALLEL:
+                    break  # pool full, try again next cycle
+                hls_in_flight.add(uuid)
+            print(f"  → {uuid[:8]} hls={do_hls} thumbs={do_thumbs} "
+                  f"(pool {len(hls_in_flight)}/{HLS_PARALLEL})",
                   flush=True)
-            if do_hls or do_thumbs:
-                process_recording(uuid, do_hls, do_thumbs)
-            if do_hls:
-                break
+            hls_executor.submit(_run_hls, uuid, do_hls, do_thumbs)
         time.sleep(POLL_INTERVAL_S)
 
 

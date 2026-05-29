@@ -262,7 +262,14 @@ PREFETCH_INTERVAL_S = 1800
 PREFETCH_PARALLEL   = 3
 PREFETCH_PER_CYCLE  = 5
 PREFETCH_HEADROOM_GB = 10
+DROP_SWEEP_PER_CYCLE = 25   # re-attempt drop-pi-source for N aged cached recs/cycle
 _last_prefetch = 0.0
+# uuids that 404 on /source (= no raw .ts on Pi; HLS-VOD-only orphan).
+# Skipped in prefetch so we stop re-probing them every cycle.
+_known_orphans = set()
+# uuids confirmed dropped (or permanently un-droppable). Skipped in the
+# drop-sweep so it advances through the backlog instead of re-hitting them.
+_dropped_uuids = set()
 
 
 def _maybe_gc_orphans():
@@ -342,9 +349,6 @@ def _maybe_prefetch_sources(in_flight_n):
     now = time.time()
     if now - _last_prefetch < PREFETCH_INTERVAL_S:
         return
-    used_b = sum(f.stat().st_size for f in SOURCE_CACHE.glob("*.ts"))
-    if used_b > (SOURCE_CACHE_MAX_GB - PREFETCH_HEADROOM_GB) * 1024**3:
-        return
     try:
         valid = http_get_json(
             f"{GATEWAY}/api/internal/recording-uuids").get("uuids", [])
@@ -352,9 +356,21 @@ def _maybe_prefetch_sources(in_flight_n):
         print(f"  prefetch: pi unreachable: {e}", flush=True); return
     if not valid:
         return
-    cached = {p.stem for p in SOURCE_CACHE.glob("*.ts")}
-    missing = [u for u in valid if u not in cached]
     _last_prefetch = now
+    cache_files = list(SOURCE_CACHE.glob("*.ts"))
+    cached = {p.stem for p in cache_files}
+    # Drop-sweep FIRST — runs regardless of cache fullness, since deleting
+    # Pi-original .ts files frees the Pi disk without touching the T7 cache.
+    # This catches recordings whose drop was skipped at cache time (too
+    # fresh) and never retried once they aged past the gateway's 3-day gate.
+    _drop_sweep(cached)
+    # Prefetch only if the T7 cache has headroom.
+    used_b = sum(f.stat().st_size for f in cache_files)
+    if used_b > (SOURCE_CACHE_MAX_GB - PREFETCH_HEADROOM_GB) * 1024**3:
+        return
+    # Skip known HLS-VOD-only orphans (404 on /source) so we don't re-probe
+    # recordings whose raw .ts is gone every cycle.
+    missing = [u for u in valid if u not in cached and u not in _known_orphans]
     if not missing:
         return
     todo = missing[:PREFETCH_PER_CYCLE]
@@ -368,11 +384,15 @@ def _maybe_prefetch_sources(in_flight_n):
 
 
 def _drop_pi_source(uuid):
-    """After successful T7-cache, tell gateway it can delete the
-    Pi-original .ts. Gateway has its own safety guards (= sched_status
-    == completed, age > 72h, HLS-VOD exists); 409 just means "not
-    eligible yet" and is normal for fresh recordings. Best-effort —
-    failures don't break the cache flow."""
+    """Tell gateway it can delete the Pi-original .ts for a T7-cached
+    recording. Gateway has its own safety guards (sched_status==completed,
+    age>72h, HLS-VOD exists). Returns a status the drop-sweep uses to
+    decide whether to retry:
+      'dropped' — .ts deleted (returns freed MB via the print)
+      'done'    — nothing to do (already gone / unknown uuid); stop retrying
+      'retry'   — guard fired (too fresh / in progress); eligible later
+      'error'   — transient failure; retry later
+    Best-effort — never raises."""
     try:
         req = urllib.request.Request(
             f"{GATEWAY}/api/internal/drop-pi-source/{uuid}",
@@ -383,14 +403,48 @@ def _drop_pi_source(uuid):
             freed_mb = resp.get("deleted_bytes", 0) / 1e6
             print(f"  drop-pi-source {uuid[:8]}: freed {freed_mb:.0f} MB "
                   f"on Pi (age={resp.get('age_h')}h)", flush=True)
+            return "dropped"
+        # ok:False at HTTP 200 = already gone / no filename → nothing to retry
+        return "done"
     except urllib.error.HTTPError as e:
-        # 409 = gateway-side guard fired (= too fresh, recording in
-        # progress, no HLS yet). Normal + expected for new recordings;
-        # they'll dedup successfully on a later cache-touch.
-        if e.code != 409:
-            print(f"  drop-pi-source {uuid[:8]}: HTTP {e.code}", flush=True)
+        # 409 = guard fired (too fresh / recording in progress / no HLS yet).
+        # Normal for new recordings — becomes eligible once they age.
+        if e.code == 409:
+            return "retry"
+        if e.code == 404:           # unknown uuid → will never drop
+            return "done"
+        print(f"  drop-pi-source {uuid[:8]}: HTTP {e.code}", flush=True)
+        return "error"
     except Exception as e:
         print(f"  drop-pi-source {uuid[:8]}: err {e}", flush=True)
+        return "error"
+
+
+def _drop_sweep(cached):
+    """Re-attempt drop-pi-source for already-T7-cached recordings whose
+    Pi-original .ts may still be sitting on the Pi. The drop is fired once
+    at cache time (in get_source), but if the recording was <3 days old
+    then the gateway's age-gate returned 409 and nothing ever retried it —
+    so the .ts accumulates forever. This sweeps a batch per cycle; the
+    gateway's guards still decide eligibility. Sorted + _dropped_uuids
+    bookkeeping make it advance through the backlog without re-hitting
+    already-handled recordings."""
+    candidates = sorted(cached - _dropped_uuids)
+    if not candidates:
+        return
+    batch = candidates[:DROP_SWEEP_PER_CYCLE]
+    dropped = 0
+    for u in batch:
+        status = _drop_pi_source(u)
+        if status in ("dropped", "done"):
+            _dropped_uuids.add(u)
+            if status == "dropped":
+                dropped += 1
+        # 'retry'/'error' stay candidates for a future cycle.
+    if dropped:
+        print(f"  drop-sweep: dropped {dropped} aged Pi-source(s); "
+              f"{len(candidates) - len(batch)} cached still to check",
+              flush=True)
 
 
 def get_source(uuid):
@@ -450,6 +504,16 @@ def get_source(uuid):
             print(f"  source {uuid[:8]}: recording in progress (425), "
                   f"cooldown {FAIL_COOLDOWN_S}s", flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            return None
+        if e.code == 404:
+            # No raw .ts on the Pi for this uuid: HLS-VOD-only orphan (the
+            # original was already dropped and never cached here). Nothing
+            # to fetch — remember it so the prefetch loop stops re-probing
+            # it every cycle. Logged once; silent thereafter.
+            if uuid not in _known_orphans:
+                _known_orphans.add(uuid)
+                print(f"  source {uuid[:8]}: 404 — HLS-VOD-only orphan, "
+                      f"skipping in future prefetch", flush=True)
             return None
         print(f"  cache-fill err: HTTP {e.code} {e.reason}", flush=True)
         return None

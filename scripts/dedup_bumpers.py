@@ -1,121 +1,128 @@
 #!/usr/bin/env python3
-"""Per-channel + per-kind perceptual-hash dedup of bumper templates.
+"""Dedup near-duplicate bumper PNGs per channel via dHash + Hamming
+clustering. RTL/ProSieben/VOX accumulate 50+ templates each over time
+as the user captures bumpers from new airings; many are pixel-identical
+or off-by-a-few-bits (= same bumper, different I-frame). Each template
+adds per-frame correlation work in tv-detect, so trimming the set is
+direct production-time savings.
 
-Computes dHash (8x8 grayscale gradient to 64-bit hash) per PNG, groups
-templates with hamming distance < 5 (= near-identical), keeps the first
-per group + MOVES the rest into <slug>/dedup-archive/<kind>/.
+Production drain measurement (= 2026-05-04 sample of ~3 detects):
+  bumper phase ≈ 17 % of total wall time avg, up to 20 % on
+  RTL Let's Dance (= 99 templates). Halving the template count
+  via dedup cuts ~8 % of per-detect wall time on bumper-heavy
+  channels.
 
-Designed to fix the 2026-05-11 bumper-batch fallout: after auto-capture
-added 4057 templates without dedup, ProSieben had 1182+1185 templates
-which inflated tv-detect's bumper-matching to 60-70 % of pipeline-time
-+ caused many '0 blocks' detections from over-snapping.
+Algorithm:
+  1. For each channel + each direction (start/end) separately:
+     a. Compute dHash of every PNG (= 9x8 grayscale, diff adjacent
+        pixels horizontally → 64-bit hash).
+     b. Greedy clustering: walk PNGs in mtime order; keep one only if
+        no kept PNG within Hamming distance ≤ HAMMING_THRESHOLD.
+     c. Move rejected PNGs to <dir>/dedup-archive/ (NOT delete; safe
+        rollback if a kept template turns out to miss a regression).
 
-Run on Pi (= where /mnt/tv/hls/.tvd-bumpers lives, has PIL installed).
-Estimated dedup ratio: prosieben ~10-15× (= 1500 to 100-150), kabel-eins
-similar, sat-1 maybe 3-5×.
+Usage:
+  ./dedup-bumpers.py /mnt/tv/hls/.tvd-bumpers           # all channels, dry-run
+  ./dedup-bumpers.py --apply /mnt/tv/hls/.tvd-bumpers   # actually move files
+  ./dedup-bumpers.py --apply --slug rtl /path           # one channel only
 """
-import os
+from __future__ import annotations
+import argparse
 import shutil
-import sys
 from pathlib import Path
-
 from PIL import Image
 
-ROOT = Path("/mnt/tv/hls/.tvd-bumpers")
-HAMMING_THRESHOLD = 5  # <=5 = near-duplicate, group together
+HAMMING_THRESHOLD = 6  # bits-different ≤ this = same template
 
 
-def dhash(img_path, size=8):
-    """8x8 dHash: gradient between adjacent pixels, returns 64-bit int."""
-    try:
-        with Image.open(img_path) as img:
-            small = img.convert("L").resize((size + 1, size), Image.LANCZOS)
-            pixels = list(small.getdata())
-        bits = 0
-        for row in range(size):
-            for col in range(size):
-                left = pixels[row * (size + 1) + col]
-                right = pixels[row * (size + 1) + col + 1]
-                bits = (bits << 1) | (1 if left > right else 0)
-        return bits
-    except Exception as e:
-        print(f"  ERR {img_path.name}: {e}", flush=True)
-        return None
+def dhash(path: Path) -> int:
+    """9x8 horizontal-difference dHash → 64-bit int. Robust to small
+    pixel shifts; near-identical bumpers hash within 0-3 bits."""
+    img = Image.open(path).convert("L").resize((9, 8), Image.BILINEAR)
+    px = img.load()
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = (bits << 1) | (1 if px[x, y] > px[x + 1, y] else 0)
+    return bits
 
 
-def hamming(a, b):
+def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-def dedup_dir(d, archive_root):
-    """Cluster files by dHash, keep first per cluster, move rest."""
-    files = sorted(d.glob("*.png"))
-    if not files:
+def dedup_dir(d: Path, threshold: int, apply: bool) -> tuple[int, int]:
+    """Returns (kept, dropped) counts for the directory."""
+    pngs = sorted(d.glob("*.png"), key=lambda p: p.stat().st_mtime)
+    if not pngs:
         return 0, 0
-    hashes = []
-    for f in files:
-        h = dhash(f)
-        if h is not None:
-            hashes.append((f, h))
-    # Greedy clustering: walk files, assign each to first cluster within
-    # threshold or open new cluster
-    clusters = []  # list of (rep_hash, [files])
-    for f, h in hashes:
-        placed = False
-        for i, (rh, members) in enumerate(clusters):
-            if hamming(h, rh) <= HAMMING_THRESHOLD:
-                members.append(f)
-                placed = True
+    archive = d / "dedup-archive"
+    if apply:
+        archive.mkdir(exist_ok=True)
+    keepers: list[tuple[Path, int]] = []
+    dropped = 0
+    for p in pngs:
+        try:
+            h = dhash(p)
+        except Exception as e:
+            print(f"    {p.name}: dhash err {e} — keeping conservatively")
+            keepers.append((p, -1))
+            continue
+        # near-duplicate of any keeper?
+        dup_of = None
+        for kp, kh in keepers:
+            if kh < 0:
+                continue
+            if hamming(h, kh) <= threshold:
+                dup_of = kp.name
                 break
-        if not placed:
-            clusters.append((h, [f]))
-    # Move all but first per cluster
-    archive_root.mkdir(parents=True, exist_ok=True)
-    moved = 0
-    for _, members in clusters:
-        for extra in members[1:]:
-            try:
-                target = archive_root / extra.name
-                shutil.move(str(extra), str(target))
-                moved += 1
-            except Exception as e:
-                print(f"  move-err {extra.name}: {e}", flush=True)
-    return len(files), len(clusters)
+        if dup_of:
+            dropped += 1
+            arrow = "->" if apply else "would ->"
+            print(f"    {p.name}  {arrow} dedup-archive/  "
+                  f"(dup of {dup_of})")
+            if apply:
+                shutil.move(str(p), str(archive / p.name))
+        else:
+            keepers.append((p, h))
+    return len(keepers), dropped
 
 
 def main():
-    if not ROOT.is_dir():
-        sys.exit(f"missing {ROOT}")
-    print(f"Bumper-dedup with hamming threshold <= {HAMMING_THRESHOLD}\n")
-    print(f"{'channel':16}  {'end beforetoafter':>18}  {'start beforetoafter':>20}  saved")
-    print("-" * 70)
-    total_before = total_after = 0
-    for slug_dir in sorted(ROOT.iterdir()):
-        if not slug_dir.is_dir():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root", type=Path,
+                    help="bumper root, e.g. /mnt/tv/hls/.tvd-bumpers")
+    ap.add_argument("--apply", action="store_true",
+                    help="actually move duplicates (default = dry-run)")
+    ap.add_argument("--slug", default="",
+                    help="restrict to one channel slug")
+    ap.add_argument("--threshold", type=int, default=HAMMING_THRESHOLD,
+                    help="Hamming distance under which two PNGs are "
+                         "considered duplicates (default 6/64 bits)")
+    args = ap.parse_args()
+    if not args.root.is_dir():
+        raise SystemExit(f"{args.root} not a directory")
+    total_kept = total_dropped = 0
+    for chan_dir in sorted(args.root.iterdir()):
+        if not chan_dir.is_dir():
             continue
-        slug = slug_dir.name
-        archive = slug_dir / "dedup-archive"
-        n_e_before = n_e_after = 0
-        n_s_before = n_s_after = 0
-        end_dir = slug_dir / "end"
-        start_dir = slug_dir / "start"
-        if end_dir.is_dir():
-            n_e_before, n_e_after = dedup_dir(end_dir, archive / "end")
-        if start_dir.is_dir():
-            n_s_before, n_s_after = dedup_dir(start_dir, archive / "start")
-        before = n_e_before + n_s_before
-        after = n_e_after + n_s_after
-        total_before += before
-        total_after += after
-        if before == 0:
+        if args.slug and chan_dir.name != args.slug:
             continue
-        print(f"{slug:16}  {n_e_before:>4} to {n_e_after:<11}  "
-              f"{n_s_before:>5} to {n_s_after:<12}  "
-              f"-{before - after:>4} ({(before-after)/max(1,before)*100:>3.0f}%)")
-    print("-" * 70)
-    saved = total_before - total_after
-    pct = saved / max(1, total_before) * 100
-    print(f"  TOTAL: {total_before} to {total_after}  (saved {saved} = {pct:.0f}%)")
+        print(f"\n=== {chan_dir.name} ===")
+        for kind in ("end", "start"):
+            sub = chan_dir / kind
+            if not sub.is_dir():
+                continue
+            print(f"  {kind}/:")
+            kept, dropped = dedup_dir(sub, args.threshold, args.apply)
+            total_kept += kept
+            total_dropped += dropped
+            print(f"    {kept} kept, {dropped} dropped")
+    print()
+    print(f"=== Total: {total_kept} kept, {total_dropped} dropped "
+          f"({100*total_dropped/(total_kept+total_dropped):.0f}%) ===")
+    if not args.apply:
+        print("(dry-run — re-run with --apply to actually move files)")
 
 
 if __name__ == "__main__":

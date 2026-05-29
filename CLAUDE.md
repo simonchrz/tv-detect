@@ -27,13 +27,17 @@ daemon that drives it (moved here from the old `tvheadend/mac-daemon/`,
 history preserved):
 
 - `cmd/`, `internal/`, `pkg/` — the Go engine.
-- `scripts/` — Python that TRAINS the engine's models (`train-head.py`,
-  `train-boundary-head.py`, `export-backbone.py`, speaker/centroid).
+- `scripts/` — Python batch/training tools (run manually or by cron, NOT
+  the daemon loop): model training (`train-head.py`,
+  `train-boundary-head.py`, `export-backbone.py`, speaker/centroid) +
+  logo/bumper tooling (`extract_logo_dataset.py`, `train_logo_cnn.py`,
+  `batch_hd_logo_train.sh`, `bumper_batch_capture.py`, `cap_bumpers.py`,
+  `dedup_bumpers.py`, `bumper-detect.py`, `revert_suspect_autoconfirms.py`).
 - `daemon/` — the Mac launchd worker fleet (Python): `tv-thumbs-daemon.py`
   (HLS-remux + thumbs + detect-dispatch), `tv-live-detect.py`,
   `tv-train-head.sh` (wrapper → `scripts/train-head.py`),
   `tv-train-snapshot-fetch.py`, `tv-whisper-*.py`, `capture-bumper.py`,
-  `dedup-bumpers.py`, `tv-spot-extract.py`, `tv-detect-daily-summary.sh`,
+  `tv-spot-extract.py`, `tv-detect-daily-summary.sh`,
   plus `daemon/launchd/*.plist`.
 
 The live launchd agents run via `~/bin/<script>` symlinks pointing into

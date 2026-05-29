@@ -2,7 +2,7 @@
 """Mac-side live-buffer ad detection for the Pi's HLS streams.
 
 Drop-in replacement for the _live_adskip_loop + _live_ads_analyze
-path in simonchrz/tvheadend/hls-gateway/service.py. SMB-free as of
+path in simonchrz/hls-gateway/service.py. SMB-free as of
 2026-05-01 — all gateway state goes via HTTP:
 
   - .m3u8 + segments via Caddy file_server fast path on :8443

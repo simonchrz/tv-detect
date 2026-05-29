@@ -20,6 +20,27 @@ tv-detect is to be a behaviourally identical drop-in: same cutlist
 output, same Python parsers (`_rec_parse_comskip` in service.py,
 `parse_comskip` in tv-live-comskip), no Python changes required.
 
+## Repo layout — engine + Mac worker daemon (consolidated 2026-05-29)
+
+This repo now owns BOTH the detection engine and the Mac-side worker
+daemon that drives it (moved here from the old `tvheadend/mac-daemon/`,
+history preserved):
+
+- `cmd/`, `internal/`, `pkg/` — the Go engine.
+- `scripts/` — Python that TRAINS the engine's models (`train-head.py`,
+  `train-boundary-head.py`, `export-backbone.py`, speaker/centroid).
+- `daemon/` — the Mac launchd worker fleet (Python): `tv-thumbs-daemon.py`
+  (HLS-remux + thumbs + detect-dispatch), `tv-live-detect.py`,
+  `tv-train-head.sh` (wrapper → `scripts/train-head.py`),
+  `tv-train-snapshot-fetch.py`, `tv-whisper-*.py`, `capture-bumper.py`,
+  `dedup-bumpers.py`, `tv-spot-extract.py`, `tv-detect-daily-summary.sh`,
+  plus `daemon/launchd/*.plist`.
+
+The live launchd agents run via `~/bin/<script>` symlinks pointing into
+`daemon/`. Editing a `daemon/` script + `launchctl kickstart -k
+gui/$(id -u)/com.user.<agent>` deploys it. Hardware split + which agents
+exist: see project memory `pi5_mac_split_design`.
+
 ## Architecture decisions worth remembering
 
 - **No CGO.** Cross-compile for `darwin/arm64` and `linux/arm64` from

@@ -133,7 +133,7 @@ SPOT_EXTRACT_BATCH  = int(os.environ.get("SPOT_EXTRACT_BATCH", "5"))
 WHISPER_PYTHON = os.environ.get(
     "WHISPER_PYTHON",
     "/Users/simon/ml/tv-classifier/.venv/bin/python")
-WHISPER_SCRIPTS = Path("/Users/simon/src/tvheadend/mac-daemon")
+WHISPER_SCRIPTS = Path("/Users/simon/src/tv-detect/daemon")
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
 if WHISPER_ENABLE:
     WHISPER_CACHE.mkdir(parents=True, exist_ok=True)

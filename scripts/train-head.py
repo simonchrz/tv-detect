@@ -2908,12 +2908,20 @@ def main():
                     prev_feat = (sz - 4) // 4
             except Exception:
                 pass
-        if prev_feat and cur_feat and prev_feat != cur_feat:
-            # Architecture changed (e.g. --with-channel toggled, head
-            # grew from 1281 → 1287 weights). Direct IoU comparison
-            # against the old architecture is meaningless — the new
-            # one might be objectively better even if the absolute
-            # number on the test set looks worse during the warm-up.
+        # Only a LARGE feature-dim change is a genuine architecture switch
+        # (new feature TYPE: whisper/audio block added, head re-shaped) where
+        # the old baseline is incomparable and a reset is warranted. A SMALL
+        # change is just the channel-one-hot block growing/shrinking as the
+        # channel-map tracks whichever channels have labels this cycle — that
+        # is NOT an architecture change and must NOT waive the IoU floor.
+        # 2026-05-30 regression: a 10→7 channel-map shrink (dim 1293→1290)
+        # took the bypass and deployed a median-IoU 0.85 head that the floor
+        # (0.863) would have rejected — and DID reject for two sibling runs
+        # the same night. Channel-column changes now fall through to the
+        # floor/regression checks below.
+        CHANNEL_DIM_TOL = 32  # channel-one-hot block is <= ~20 slugs
+        if (prev_feat and cur_feat and prev_feat != cur_feat
+                and abs(cur_feat - prev_feat) > CHANNEL_DIM_TOL):
             reason = (f"feature dim changed ({prev_feat}→{cur_feat}) — "
                       f"architecture switch, deploying & resetting baseline")
         elif prev_n != cur_n:

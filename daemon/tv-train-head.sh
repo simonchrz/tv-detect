@@ -167,6 +167,14 @@ if [ "$rc" -eq 0 ]; then
       rc=2
   fi
   rm -f "$BUNDLE"
+  # Auto-anchor the just-deployed champion off-site so rollback never needs a
+  # manual step. Fail-soft (gh/keychain may be unreachable under launchd) — the
+  # local full-bundle archive + rollback-head.sh is the reliable path; this is
+  # the off-site DR bonus. Only on a real deploy (rc==0, head changed).
+  if [ "$rc" -eq 0 ]; then
+    TVD_MODELS_DIR="$TRAIN_OUT" \
+      "$HOME/src/tv-detect/scripts/model-anchor.sh" auto 2>&1 | sed 's/^/  /' || true
+  fi
 elif [ "$rc" -eq 3 ]; then
   # Python rejected the candidate (regression vs last-deployed). Skip
   # bundle+upload — Pi keeps its current head. Without this gate, the

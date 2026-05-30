@@ -124,6 +124,13 @@ cmd_create() {
   # bit-for-bit reproducible including the calibration constants.
   [ -f "$MODELS_DIR/head.calibration.json" ] && \
     cp "$MODELS_DIR/head.calibration.json" "$stage/head.calibration.json"
+  # Channel-map + test-set sidecars (since 2026-05-30): a channel-aware head
+  # restored WITHOUT its channel-map misaligns the one-hot columns = broken
+  # inference. Bundle them so an anchor is a SELF-CONTAINED, restorable unit.
+  [ -f "$MODELS_DIR/head.channel-map.json" ] && \
+    cp "$MODELS_DIR/head.channel-map.json" "$stage/head.channel-map.json"
+  [ -f "$MODELS_DIR/head.test-set.json" ] && \
+    cp "$MODELS_DIR/head.test-set.json" "$stage/head.test-set.json"
 
   local body; body=$(mktemp)
   {
@@ -155,6 +162,8 @@ cmd_create() {
   local assets=("$stage/head.bin" "$stage/backbone.onnx")
   [ -f "$stage/head.history.json" ]     && assets+=("$stage/head.history.json")
   [ -f "$stage/head.calibration.json" ] && assets+=("$stage/head.calibration.json")
+  [ -f "$stage/head.channel-map.json" ] && assets+=("$stage/head.channel-map.json")
+  [ -f "$stage/head.test-set.json" ]    && assets+=("$stage/head.test-set.json")
   gh release create "$tag" \
     --title "Model anchor: $raw_tag" \
     --notes-file "$body" \
@@ -174,13 +183,17 @@ cmd_install() {
 
   echo "→ downloading $tag from GitHub..."
   gh release download "$tag" --dir "$stage"
-  for f in head.bin backbone.onnx; do
-    [ -f "$stage/$f" ] || { echo "error: $f missing from release" >&2; exit 1; }
-  done
+  [ -f "$stage/head.bin" ] || { echo "error: head.bin missing from release" >&2; exit 1; }
+  # backbone.onnx is optional: lightweight auto-anchors omit it (it changes
+  # rarely) — install then keeps whatever backbone is already deployed.
+  [ -f "$stage/backbone.onnx" ] || echo "  note: no backbone in release — keeping current backbone.onnx"
 
   local ts; ts=$(date +%s)
   mkdir -p "$MODELS_DIR"
-  for f in head.bin backbone.onnx head.history.json head.calibration.json; do
+  # head.bin LAST so a daemon watching it never sees a new head with the
+  # old (mismatched) channel-map.
+  for f in backbone.onnx head.history.json head.calibration.json \
+           head.channel-map.json head.test-set.json head.bin; do
     [ -f "$MODELS_DIR/$f" ] && cp "$MODELS_DIR/$f" "$MODELS_DIR/$f.bak.$ts"
     [ -f "$stage/$f" ] && cp "$stage/$f" "$MODELS_DIR/$f"
   done
@@ -194,10 +207,12 @@ cmd_install() {
   if [ "${MODELS_REMOTE:-0}" = "1" ]; then
     echo "→ pushing models back to $PI_HOST:$PI_REMOTE_DIR ..."
     ssh "$PI_HOST" "mkdir -p '$PI_REMOTE_DIR/rollback-bak-$ts' && \
-      for f in head.bin backbone.onnx head.history.json head.calibration.json; do \
+      for f in head.bin backbone.onnx head.history.json head.calibration.json head.channel-map.json head.test-set.json; do \
         [ -f '$PI_REMOTE_DIR'/\$f ] && cp '$PI_REMOTE_DIR'/\$f '$PI_REMOTE_DIR/rollback-bak-$ts/'; \
       done"
-    for f in head.bin backbone.onnx head.history.json head.calibration.json; do
+    # head.bin LAST (daemon mtime-watch consistency, see above).
+    for f in backbone.onnx head.history.json head.calibration.json \
+             head.channel-map.json head.test-set.json head.bin; do
       [ -f "$MODELS_DIR/$f" ] && scp -q "$MODELS_DIR/$f" \
         "$PI_HOST:$PI_REMOTE_DIR/$f"
     done
@@ -214,9 +229,49 @@ cmd_list() {
     echo "(no anchors yet — create one with: model-anchor.sh create <tag>)"
 }
 
+# cmd_auto — automatic off-site anchor of the just-deployed champion, called
+# by the nightly trainer after each deploy so rollback never needs a manual
+# `create`. Release-only (no git tag = no tag spam), keeps the last
+# MODEL_ANCHOR_AUTO_KEEP (default 14). FAIL-SOFT: any gh/auth/keychain hiccup
+# (e.g. launchd can't reach the login keychain) just warns and returns 0 —
+# it must never break the trainer. The reliable rollback path is the local
+# full-bundle archive (rollback-head.sh); this is the off-site DR bonus.
+cmd_auto() {
+  command -v gh >/dev/null 2>&1 || { echo "auto-anchor: gh missing, skip" >&2; return 0; }
+  [ -f "$MODELS_DIR/head.bin" ] || { echo "auto-anchor: no head.bin, skip" >&2; return 0; }
+  # A channel-aware head is only restorable WITH its channel-map.
+  [ -f "$MODELS_DIR/head.channel-map.json" ] || {
+    echo "auto-anchor: no channel-map sidecar — skip (would be un-restorable)" >&2; return 0; }
+  local ts
+  ts=$(grep -oE '"ts":[ ]*"[0-9T]+"' "$MODELS_DIR/head.channel-map.json" 2>/dev/null \
+        | grep -oE '[0-9T]+' | head -1)
+  [ -n "$ts" ] || ts=$(date +%Y%m%dT%H%M%S)
+  local tag="${ANCHOR_PREFIX}auto-$ts"
+  local stage; stage="$(mktemp -d)"; trap "rm -rf '$stage'" RETURN
+  local assets=()
+  for f in head.bin head.channel-map.json head.calibration.json \
+           head.test-set.json head.history.json backbone.onnx; do
+    [ -f "$MODELS_DIR/$f" ] && { cp "$MODELS_DIR/$f" "$stage/$f"; assets+=("$stage/$f"); }
+  done
+  if gh release create "$tag" --title "Auto champion $ts" \
+       --notes "Nightly auto-anchor of the deployed head. Restore: model-anchor.sh install auto-$ts" \
+       "${assets[@]}" >/dev/null 2>&1; then
+    echo "✓ auto-anchored $tag"
+  else
+    echo "auto-anchor: gh release create failed (auth/keychain?) — skip" >&2
+    return 0
+  fi
+  # Prune to the last N auto-anchors (release + tag).
+  local keep="${MODEL_ANCHOR_AUTO_KEEP:-14}"
+  gh release list --limit 100 2>/dev/null \
+    | grep -oE "${ANCHOR_PREFIX}auto-[0-9T]+" | sort -ru | tail -n +$((keep + 1)) \
+    | while read -r old; do gh release delete "$old" --yes --cleanup-tag >/dev/null 2>&1 || true; done
+}
+
 [ $# -ge 1 ] || usage
 case "$1" in
   create)  shift; cmd_create  "$@" ;;
+  auto)    shift; cmd_auto    "$@" ;;
   install) shift; cmd_install "$@" ;;
   list)    shift; cmd_list    "$@" ;;
   -h|--help) usage ;;

@@ -3151,6 +3151,24 @@ def main():
                   f"({len(chan_slugs)} slugs)")
         except Exception as e:
             print(f"  channel-map sidecar err: {e}")
+        # Archive the FULL bundle (head + its sidecars) under the same ts, so
+        # any past champion is restorable as a unit. The live sidecars next to
+        # head.bin get overwritten on every deploy, so an archived head.<ts>.bin
+        # alone is useless for rollback without its matching channel-map /
+        # calibration. 2026-05-30: a regression deployed via the channel-dim
+        # bypass turned out un-rollbackable for exactly this reason — only
+        # head.bin was archived, the champion's 10-slug channel-map was gone.
+        try:
+            for suffix in (".calibration.json", ".test-set.json",
+                           ".channel-map.json"):
+                live = Path(args.output).with_suffix(suffix)
+                if live.exists():
+                    (archive_dir / f"head.{ts}{suffix}").write_text(
+                        live.read_text())
+            print(f"  archived full bundle → head.{ts}.* "
+                  f"(rollback-restorable)")
+        except Exception as e:
+            print(f"  bundle archive err: {e}")
     else:
         print(f"\nREJECTED — kept previous {args.output}")
         print(f"  candidate archived as {archive_path.name}")

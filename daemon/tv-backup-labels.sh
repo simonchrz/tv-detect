@@ -48,6 +48,7 @@ rsync -av --delete \
     --include='.tvd-models/' --include='.tvd-models/head.bin' \
     --include='.tvd-models/head.calibration.json' \
     --include='.tvd-models/head.test-set.json' \
+    --include='.tvd-models/head.channel-map.json' \
     --include='.channel-config.json' \
     --include='.detection_learning.json' \
     --include='.block_length_prior.json' \

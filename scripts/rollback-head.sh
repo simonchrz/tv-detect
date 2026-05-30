@@ -1,0 +1,91 @@
+#!/bin/bash
+# Roll the deployed ad-detection head back to an archived nightly champion.
+#
+# Since 2026-05-30 the trainer archives the FULL bundle per deploy
+# (head.<ts>.bin + its channel-map / calibration / test-set sidecars) under
+# $TRAIN_OUT/archive/. This restores one such bundle to the Pi gateway via
+# the same /api/internal/head-bundle endpoint the trainer uses (atomic
+# extract on the Pi, head.bin written last). The gateway keeps the replaced
+# bundle as a rollback-bak.
+#
+#   rollback-head.sh list             # restorable bundles (ts, slugs, IoU)
+#   rollback-head.sh restore <ts>     # restore head.<ts>.* to the Pi
+#
+# REFUSES to restore a head WITHOUT its matching channel-map sidecar:
+# restoring a channel-aware head with the wrong/missing channel-map
+# misaligns the channel one-hot columns -> degraded/broken inference. This
+# is exactly the trap that made the 2026-05-30 regression un-rollbackable
+# (head.bin was archived but the champion's 10-slug channel-map was gone).
+# Pre-2026-05-30 archives are head-only and therefore NOT safely restorable.
+set -euo pipefail
+
+GATEWAY="${GATEWAY:-http://raspberrypi5lan:8080}"
+ARCHIVE="${TRAIN_OUT:-/tmp/tv-train-head-out}/archive"
+HISTORY="${TRAIN_OUT:-/tmp/tv-train-head-out}/head.history.json"
+
+usage() { echo "usage: $0 {list | restore <ts>}" >&2; exit 1; }
+[ $# -ge 1 ] || usage
+
+iou_for_ts() {  # best-effort median-IoU lookup from history.json
+  [ -f "$HISTORY" ] || { echo "?"; return; }
+  python3 - "$1" "$HISTORY" <<'PY' 2>/dev/null || echo "?"
+import json,sys
+ts,hp=sys.argv[1],sys.argv[2]
+h=json.load(open(hp))
+es=h if isinstance(h,list) else h.get("entries",h.get("history",[]))
+for e in es:
+    if e.get("ts")==ts:
+        v=e.get("test_iou_tv_median",e.get("test_iou_median",e.get("test_iou")))
+        print(f"{v:.3f}" if isinstance(v,(int,float)) else "?"); break
+else: print("?")
+PY
+}
+
+case "$1" in
+  list)
+    [ -d "$ARCHIVE" ] || { echo "no archive at $ARCHIVE"; exit 1; }
+    echo "restorable bundles in $ARCHIVE:"
+    found=0
+    for h in "$ARCHIVE"/head.*.bin; do
+      [ -e "$h" ] || continue
+      found=1
+      b=$(basename "$h" .bin); ts=${b#head.}
+      cm="$ARCHIVE/head.$ts.channel-map.json"
+      sz=$(wc -c < "$h" | tr -d ' ')
+      iou=$(iou_for_ts "$ts")
+      if [ -f "$cm" ]; then
+        n=$(grep -oE '"n":[ ]*[0-9]+' "$cm" | grep -oE '[0-9]+' | head -1)
+        printf "  %-18s %7s B  IoU %-6s  channel-map %s slugs  [full ✓]\n" "$ts" "$sz" "$iou" "$n"
+      else
+        printf "  %-18s %7s B  IoU %-6s  [head-only — NOT restorable]\n" "$ts" "$sz" "$iou"
+      fi
+    done
+    [ "$found" = 1 ] || echo "  (none)"
+    ;;
+
+  restore)
+    [ $# -eq 2 ] || usage
+    ts="$2"
+    h="$ARCHIVE/head.$ts.bin"
+    cm="$ARCHIVE/head.$ts.channel-map.json"
+    [ -f "$h" ] || { echo "no archived head for ts=$ts (try: $0 list)" >&2; exit 1; }
+    [ -f "$cm" ] || { echo "REFUSING: head.$ts has no channel-map sidecar — restoring it would misalign channel one-hots (degraded inference). Head-only archive, not safely restorable." >&2; exit 1; }
+
+    stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
+    cp "$h" "$stage/head.bin"
+    for suf in channel-map calibration test-set; do
+      [ -f "$ARCHIVE/head.$ts.$suf.json" ] && cp "$ARCHIVE/head.$ts.$suf.json" "$stage/head.$suf.json"
+    done
+    ( cd "$stage" && tar czf bundle.tar.gz head.bin head.*.json )
+
+    echo "rolling back to head.$ts (IoU $(iou_for_ts "$ts")) → $GATEWAY …"
+    resp=$(curl -fsS -X POST --data-binary "@$stage/bundle.tar.gz" \
+        -H "Content-Type: application/gzip" \
+        "$GATEWAY/api/internal/head-bundle")
+    echo "  gateway: $resp"
+    echo "✓ rolled back to head.$ts — gateway keeps the replaced head as a rollback-bak."
+    echo "  (verify on /learning; the daemon picks up head.bin via mtime watch)"
+    ;;
+
+  *) usage ;;
+esac

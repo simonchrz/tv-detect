@@ -10,13 +10,16 @@
   <!-- Long-running daemon: poll loop runs forever -->
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <!-- Talk to gateway directly on internal HTTP port (8080), not via
-       Caddy/TLS on 8443. Saves ~40% Caddy CPU on bulk transfers
-       (TLS encrypt for 800 MB tar/PUT was the dominant cost) and
-       removes the extra reverse-proxy hop. LAN-only traffic anyway. -->
+  <!-- GATEWAY on :8443 (Caddy) so go-front (:8080) can leave the data path.
+       The old "~40% Caddy CPU on TLS bulk transfers" rationale for :8080 was
+       DISPROVEN 2026-06-01: measured Caddy at 0.05% CPU during a TLS .ts bulk
+       pull (Pi5 ARM HW-AES makes TLS ~free); it was a tvh-era guess, never
+       measured. Caddy routes /api/internal/* + /recording/* directly to
+       tv-recorder(:9984)/tv-receiver(:9983). The daemon's urlopen calls all
+       pass context=CTX (CERT_NONE) for the self-signed local CA. -->
   <key>EnvironmentVariables</key>
   <dict>
-    <key>GATEWAY</key><string>http://raspberrypi5lan:8080</string>
+    <key>GATEWAY</key><string>https://raspberrypi5lan:8443</string>
     <!-- 3 detect jobs in parallel; each tv-detect uses --workers 8//3 = 2.
          Higher (4+) hits CPU contention, lower throughput per measurement. -->
     <key>DETECT_PARALLEL</key><string>3</string>

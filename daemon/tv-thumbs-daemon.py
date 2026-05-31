@@ -178,7 +178,7 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
             f"{GATEWAY}/api/internal/whisper-reindex?uuid={uuid}",
             data=body, method="POST",
             headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10).read()
+        urllib.request.urlopen(req, timeout=10, context=CTX).read()
     except Exception as e:
         print(f"  detect {uuid[:8]} whisper-reindex push err: {e}",
               flush=True)
@@ -229,7 +229,7 @@ def _maybe_evict_source_cache():
         try:
             req = urllib.request.Request(
                 f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
-            with urllib.request.urlopen(req, timeout=4) as r:
+            with urllib.request.urlopen(req, timeout=4, context=CTX) as r:
                 pi_has = r.status == 200
         except urllib.error.HTTPError as e:
             pi_has = (e.code != 404)
@@ -577,7 +577,7 @@ def _record_detect_failure(uuid, force=False):
             req = urllib.request.Request(
                 f"{GATEWAY}/api/internal/detect-give-up/{uuid}",
                 method="POST")
-            urllib.request.urlopen(req, timeout=10).read()
+            urllib.request.urlopen(req, timeout=10, context=CTX).read()
             retries.pop(uuid, None)
             _save_detect_retries(retries)
         except Exception as e:

@@ -558,9 +558,10 @@ def _save_detect_retries(d):
         pass
 
 
-def _record_detect_failure(uuid):
+def _record_detect_failure(uuid, force=False):
     """Increment the persistent retry count. Returns the new count.
-    When count reaches MAX_DETECT_RETRIES, POSTs to the gateway's
+    When count reaches MAX_DETECT_RETRIES (or force=True for an
+    unrecoverable failure like a corrupt source), POSTs to the gateway's
     detect-give-up endpoint to clear both markers — without that the
     daemon's low-prio queue (= line ~956: only fetched when high-prio
     empty) can stay blocked indefinitely on a single broken recording."""
@@ -568,8 +569,9 @@ def _record_detect_failure(uuid):
     n = retries.get(uuid, 0) + 1
     retries[uuid] = n
     _save_detect_retries(retries)
-    if n >= MAX_DETECT_RETRIES:
-        print(f"  detect {uuid[:8]}: giving up after {n} failures, "
+    if force or n >= MAX_DETECT_RETRIES:
+        print(f"  detect {uuid[:8]}: giving up after {n} failure(s)"
+              f"{' (unrecoverable)' if force else ''}, "
               f"asking gateway to clear marker", flush=True)
         try:
             req = urllib.request.Request(
@@ -1264,10 +1266,18 @@ def process_detect(uuid):
     result = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=TIMEOUT_S, env=SPAWN_ENV)
     if result.returncode != 0:
+        stderr = result.stderr or ""
         print(f"  detect {uuid[:8]} rc={result.returncode}: "
-              f"{(result.stderr or '')[-300:]}", flush=True)
+              f"{stderr[-300:]}", flush=True)
+        # Unrecoverable source (corrupt H.264 → ffprobe can't read duration →
+        # tv-detect "cannot plan chunks"): retrying never helps, and because
+        # the high-prio queue isn't drained until the marker clears, a single
+        # such recording head-of-line-blocks ALL background detects. Give up
+        # on the first failure instead of burning 3×FAIL_COOLDOWN_S (30 min).
+        corrupt = ("cannot plan chunks" in stderr
+                   or "duration=0.000000" in stderr)
         _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
-        _record_detect_failure(uuid)
+        _record_detect_failure(uuid, force=corrupt)
         return False
     # Surface tv-detect's per-phase wall-time line to the daemon log
     # (= even with --quiet the binary emits "pipeline-timing: ..."

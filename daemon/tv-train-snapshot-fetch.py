@@ -19,15 +19,22 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import ssl
 import sys
 import urllib.request
 from pathlib import Path
+
+# The gateway is reachable via Caddy on :8443 (self-signed local CA) since the
+# go-front bypass; accept the cert. LAN-only, behind the LAN firewall.
+_CTX = ssl.create_default_context()
+_CTX.check_hostname = False
+_CTX.verify_mode = ssl.CERT_NONE
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gateway-url",
-                    default="http://raspberrypi5lan:8080",
+                    default="https://raspberrypi5lan:8443",
                     help="Gateway base URL (= where /api/internal/"
                          "training-snapshot lives)")
     ap.add_argument("--out", type=Path,
@@ -39,7 +46,7 @@ def main():
     url = f"{args.gateway_url.rstrip('/')}/api/internal/training-snapshot"
     print(f"fetching {url}", flush=True)
     try:
-        with urllib.request.urlopen(url, timeout=120) as r:
+        with urllib.request.urlopen(url, timeout=120, context=_CTX) as r:
             data = json.loads(r.read())
     except Exception as e:
         print(f"fetch err: {e}", file=sys.stderr)

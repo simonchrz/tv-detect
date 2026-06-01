@@ -10,7 +10,11 @@ VENV_PY="$HOME/ml/tv-classifier/.venv/bin/python"
 SCRIPT="$HOME/src/tv-detect/scripts/train-head.py"
 SNAPSHOT_FETCH="$HOME/bin/tv-train-snapshot-fetch.py"
 SNAPSHOT_DIR="/tmp/tv-train-snapshot"
-GATEWAY="http://raspberrypi5lan:8080"
+# Gateway via Caddy on :8443 since the go-front bypass (self-signed local CA →
+# curl -k). The "~40% Caddy CPU on TLS" rationale for the old :8080 path was
+# disproven (Caddy 0.05% CPU on a TLS bulk pull; Pi5 ARM HW-AES = TLS ~free).
+GATEWAY="https://raspberrypi5lan:8443"
+CURL="curl -fsS -k"
 
 exec >>"$LOG" 2>&1
 echo "=== $(date '+%F %T') ==="
@@ -87,8 +91,8 @@ fi
 # the DELETE on exit (success OR crash) so a hung script doesn't
 # leave the banner stuck on. The mtime tells the banner WHEN
 # training started.
-curl -fsS -X POST "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true
-trap 'curl -fsS -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true' EXIT
+$CURL -X POST "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true
+trap '$CURL -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&1 || true' EXIT
 
 # Pre-train drain check: after a head deploy, Smart-V2 invalidates
 # ~250+ cutlists which the daemon re-detects via low-prio queue.
@@ -101,7 +105,7 @@ trap 'curl -fsS -X DELETE "$GATEWAY/api/internal/training-active" >/dev/null 2>&
 # but no guarantees).
 WAIT_DEADLINE=$(( $(date +%s) + 1800 ))
 while [ "$(date +%s)" -lt "$WAIT_DEADLINE" ]; do
-  N=$(curl -fsS "$GATEWAY/api/internal/detect-pending-low" 2>/dev/null \
+  N=$($CURL "$GATEWAY/api/internal/detect-pending-low" 2>/dev/null \
        | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("pending",[])))' \
        2>/dev/null || echo 999)
   if [ "$N" -lt 30 ]; then
@@ -127,7 +131,7 @@ LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
 # correctly (compare against actual previous test-set, not "first
 # run"). 404 just means none-yet-on-Pi → start fresh, fine.
 for f in head.history.json head.test-set.json head.calibration.json; do
-  curl -fsS -o "$TRAIN_OUT/$f" \
+  $CURL -o "$TRAIN_OUT/$f" \
       "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
 done
 
@@ -158,7 +162,7 @@ if [ "$rc" -eq 0 ]; then
       head.bin head.*.json head.*.txt archive 2>/dev/null )
   size_mb=$(du -m "$BUNDLE" | cut -f1)
   echo "  bundle: ${size_mb} MB"
-  resp=$(curl -fsS -X POST --data-binary "@$BUNDLE" \
+  resp=$($CURL -X POST --data-binary "@$BUNDLE" \
       -H "Content-Type: application/gzip" \
       "$GATEWAY/api/internal/head-bundle")
   echo "  upload response: $resp"
@@ -194,7 +198,7 @@ fi
 # gateway appends server-side, no SMB write.
 TRAIN_DUR=$(( $(date +%s) - TRAIN_START_TS ))
 TRAIN_TS="$(date -u +%Y%m%dT%H%M%SZ)"
-curl -fsS -X POST -H "Content-Type: application/json" \
+$CURL -X POST -H "Content-Type: application/json" \
     -d "{\"ts\":\"$TRAIN_TS\",\"dur_s\":$TRAIN_DUR,\"rc\":$rc}" \
     "$GATEWAY/api/internal/training-duration" >/dev/null 2>&1 || true
 
@@ -207,7 +211,7 @@ curl -fsS -X POST -H "Content-Type: application/json" \
 # element of the local head.history.json in BOTH the deploy and reject paths.
 if [ -f "$TRAIN_OUT/head.history.json" ]; then
   "$VENV_PY" -c "import json,sys; h=json.load(open('$TRAIN_OUT/head.history.json')); sys.stdout.write(json.dumps(h[-1]) if h else '')" 2>/dev/null \
-    | curl -fsS -X POST -H "Content-Type: application/json" --data-binary @- \
+    | $CURL -X POST -H "Content-Type: application/json" --data-binary @- \
         "$GATEWAY/api/internal/training-attempt" >/dev/null 2>&1 || true
 fi
 

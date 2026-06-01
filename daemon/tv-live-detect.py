@@ -44,7 +44,7 @@ TVD             = Path.home() / ".local" / "bin" / "tv-detect"
 # fetch (Pi serves combined JSON: logo_smooth_s + start_lag +
 # sponsor_duration + cached logo URL). Replaces three separate SMB
 # reads with one HTTP round-trip per slug per scan.
-GATEWAY_HTTP    = "http://raspberrypi5lan:8080"
+GATEWAY_HTTP    = "https://raspberrypi5lan:8443"  # Caddy (self-signed → _SSL_CTX)
 _LIVE_CFG_CACHE = {}  # slug -> (cfg_dict, fetched_at)
 _LIVE_CFG_TTL_S = 300
 
@@ -59,7 +59,7 @@ def _live_config(slug):
     try:
         with urllib.request.urlopen(
                 f"{GATEWAY_HTTP}/api/internal/live-config/{slug}",
-                timeout=5) as r:
+                timeout=5, context=_SSL_CTX) as r:
             cfg = json.loads(r.read())
         _LIVE_CFG_CACHE[slug] = (cfg, now)
         return cfg
@@ -190,7 +190,7 @@ def load_live_ads():
     try:
         with urllib.request.urlopen(
                 f"{GATEWAY_HTTP}/api/internal/live-ads",
-                timeout=10) as r:
+                timeout=10, context=_SSL_CTX) as r:
             return json.loads(r.read())
     except Exception as e:
         log(f"load live-ads via HTTP: {e}")
@@ -210,7 +210,8 @@ def save_live_ads(state):
                 f"{GATEWAY_HTTP}/api/internal/live-ads",
                 data=body, method="POST",
                 headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=15) as r:
+            with urllib.request.urlopen(req, timeout=15,
+                                        context=_SSL_CTX) as r:
                 r.read()
         except Exception as e:
             log(f"save live-ads via HTTP: {e}")
@@ -468,7 +469,7 @@ def _refresh_active():
     try:
         with urllib.request.urlopen(
                 f"{GATEWAY_HTTP}/api/internal/active-channels",
-                timeout=5) as r:
+                timeout=5, context=_SSL_CTX) as r:
             _ACTIVE_CACHE["set"] = set(json.loads(r.read()).get("active", []))
             _ACTIVE_CACHE["fetched_at"] = now
     except Exception as ex:
@@ -535,7 +536,7 @@ def cached_logo_path(slug):
     try:
         with urllib.request.urlopen(
                 f"{GATEWAY_HTTP}{cfg['cached_logo_url']}",
-                timeout=15) as r:
+                timeout=15, context=_SSL_CTX) as r:
             tmp = dest.with_suffix(".tmp")
             tmp.write_bytes(r.read())
             tmp.replace(dest)

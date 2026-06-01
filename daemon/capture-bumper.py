@@ -27,7 +27,7 @@ import subprocess
 import sys
 import urllib.request
 
-GATEWAY = "http://raspberrypi5lan:8080"
+GATEWAY = "https://raspberrypi5lan:8443"  # Caddy (self-signed CA → CTX below)
 PI_HOST = "raspberrypi5lan"
 PI_BUMPER_DIR = "/mnt/nvme/tv/hls/.tvd-bumpers"
 

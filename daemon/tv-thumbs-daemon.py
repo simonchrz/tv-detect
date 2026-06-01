@@ -29,7 +29,7 @@ from pathlib import Path
 
 POLL_INTERVAL_S = 5
 TIMEOUT_S = 1800           # HLS-remux of 90-min recording can take ~30s
-GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
+GATEWAY = os.environ.get("GATEWAY", "https://raspberrypi5lan:8443")  # Caddy; CTX below
 
 # Concurrency: how many detect jobs to run in parallel. Default 1 (legacy
 # sequential). Set DETECT_PARALLEL=3 to overlap downloads + decode + NN.

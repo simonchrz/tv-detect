@@ -23,9 +23,12 @@
     <!-- 3 detect jobs in parallel; each tv-detect uses --workers 8//3 = 2.
          Higher (4+) hits CPU contention, lower throughput per measurement. -->
     <key>DETECT_PARALLEL</key><string>3</string>
-    <!-- Cache enough source files locally that bulk-redetects don't
-         re-pull from Pi. ~1-2 GB per recording, 100 recordings ≈ 150 GB. -->
-    <key>SOURCE_CACHE_MAX_GB</key><string>150</string>
+    <!-- T7 source-archive cap (NOT a 150 GB working set). After caching, the
+         daemon drops the Pi-original .ts (dedup), so most cached .ts are the
+         SOLE remaining copy — the LRU eviction's sole-copy guard protects
+         those, leaving the cap to bound only evictable dual-copies. Sized to
+         the T7 (1.8 TiB) with headroom so the archive isn't falsely "over cap". -->
+    <key>SOURCE_CACHE_MAX_GB</key><string>1700</string>
     <!-- Speaker fingerprint orchestration: extract embeddings on
          first detect, build per-show centroid (or single-episode if
          only one usable), compute speaker.csv, pass --speaker-csv +

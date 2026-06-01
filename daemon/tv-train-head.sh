@@ -198,6 +198,19 @@ curl -fsS -X POST -H "Content-Type: application/json" \
     -d "{\"ts\":\"$TRAIN_TS\",\"dur_s\":$TRAIN_DUR,\"rc\":$rc}" \
     "$GATEWAY/api/internal/training-duration" >/dev/null 2>&1 || true
 
+# Push the LAST history entry — deploy OR reject — to the Pi as a standalone
+# attempt record. The head-bundle upload above is gated to deploys only (it
+# must never overwrite the Pi head with a rejected candidate), so a rejected
+# run never reaches the Pi's head.history.json and would be invisible to
+# /api/learning/last-training + HA. .last-attempt.json closes that gap without
+# touching the deployed head. Python writes this run's entry as the last array
+# element of the local head.history.json in BOTH the deploy and reject paths.
+if [ -f "$TRAIN_OUT/head.history.json" ]; then
+  "$VENV_PY" -c "import json,sys; h=json.load(open('$TRAIN_OUT/head.history.json')); sys.stdout.write(json.dumps(h[-1]) if h else '')" 2>/dev/null \
+    | curl -fsS -X POST -H "Content-Type: application/json" --data-binary @- \
+        "$GATEWAY/api/internal/training-attempt" >/dev/null 2>&1 || true
+fi
+
 # Cache hygiene: every recording experiment (different --with-* flags)
 # leaves orphan .npy files in tvd-features/ — bumped cache key, old
 # files unused but still on disk. Each is ~1-3 MB; over months of

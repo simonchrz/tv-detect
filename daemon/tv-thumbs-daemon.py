@@ -23,7 +23,7 @@ Why HTTP instead of SMB:
 Triggered by launchd at boot via
 ~/Library/LaunchAgents/com.user.tv-thumbs-daemon.plist."""
 
-import io, json, os, re, ssl, subprocess, sys, tarfile, tempfile, time
+import io, json, os, re, ssl, subprocess, sys, tarfile, tempfile, threading, time
 import urllib.error, urllib.request
 from pathlib import Path
 
@@ -460,7 +460,14 @@ def get_source(uuid):
         try: cache_path.unlink()  # stub from a half-finished fetch
         except Exception: pass
     src_url = f"{GATEWAY}/recording/{uuid}/source"
-    tmp = cache_path.with_suffix(".tmp")
+    # Unique tmp per fetch. get_source runs from BOTH the prefetch ThreadPool
+    # and the detect/hls executors, which can target the same uuid at once. A
+    # shared "{uuid}.tmp" let them race on open()/rename() — on the T7's
+    # FSKit-exfat driver the loser surfaced as EPERM/ENOENT ("cache-fill err:
+    # Operation not permitted"). Give each fetch its own tmp via pid+thread id.
+    # NB: do NOT use tempfile.mkstemp here — its O_EXCL + 0o600 open raises
+    # EPERM on the FSKit exfat driver; the plain open(tmp,"wb") below works.
+    tmp = cache_path.with_suffix(f".{os.getpid()}-{threading.get_ident()}.tmp")
     t0 = time.time()
     try:
         with urllib.request.urlopen(src_url, timeout=600,
@@ -482,7 +489,16 @@ def get_source(uuid):
                   f"{actual}/{expected} bytes "
                   f"({100*actual/expected:.1f}%), discarded", flush=True)
             return None
-        tmp.rename(cache_path)
+        try:
+            os.replace(tmp, cache_path)  # atomic
+        except OSError:
+            # A concurrent fetch of the same uuid won the race and already
+            # produced a valid cache file — reuse it, drop our tmp.
+            if cache_path.exists() and cache_path.stat().st_size > 100_000_000:
+                try: tmp.unlink()
+                except Exception: pass
+                return cache_path
+            raise
         size_mb = cache_path.stat().st_size / 1e6
         print(f"  cached {uuid[:8]} ({size_mb:.0f} MB in "
               f"{time.time()-t0:.0f}s)", flush=True)

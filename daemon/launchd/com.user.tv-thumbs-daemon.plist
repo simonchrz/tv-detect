@@ -4,7 +4,13 @@
 <dict>
   <key>Label</key><string>com.user.tv-thumbs-daemon</string>
   <key>ProgramArguments</key>
+  <!-- Pin the interpreter: the script's shebang is `#!/usr/bin/env python3`,
+       which under launchd resolves PATH-dependently across THREE pythons
+       (homebrew 3.14 default, homebrew 3.13 versioned, Xcode /usr/bin 3.9).
+       Xcode 3.9 crash-looped the daemon (mkstemp EPERM on the FSKit-exfat T7).
+       Pin homebrew 3.13 (validated) so restarts are deterministic. -->
   <array>
+    <string>/opt/homebrew/bin/python3.13</string>
     <string>/Users/simon/bin/tv-thumbs-daemon.py</string>
   </array>
   <!-- Long-running daemon: poll loop runs forever -->

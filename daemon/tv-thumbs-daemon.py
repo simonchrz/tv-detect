@@ -245,6 +245,15 @@ def _maybe_evict_source_cache():
 
 _last_orphan_gc = 0.0
 ORPHAN_GC_INTERVAL_S = 3600  # once per hour
+# Quarantine grace before deleting a cached .ts that's gone from the Pi's
+# recording-uuids list. For a disk-dedup'd recording the cache is the ONLY
+# copy (Pi .ts pruned), so an immediate delete on a TRANSIENT list-gap — a
+# tv-receiver restart mid-prune, or a wrong prune later corrected by
+# re-import — is unrecoverable. With a grace window the cache survives until
+# the recording is genuinely, durably gone. (Cost: a truly-deleted recording's
+# cache lingers up to GRACE; LRU still reclaims it under cap pressure.)
+ORPHAN_GRACE_S = 36 * 3600
+ORPHAN_PENDING = MODEL_CACHE / "orphan-pending.json"  # uuid -> first-seen-orphaned epoch (local, survives T7 unmount)
 
 # Source-cache prefetch — fills SOURCE_CACHE with .ts files for
 # recordings the user hasn't viewed/redetected recently. Without this,
@@ -294,20 +303,44 @@ def _maybe_gc_orphans():
         print(f"  orphan-gc: pi unreachable: {e}", flush=True); return
     if not valid:
         return  # don't wipe the cache if Pi returned nothing (= safety)
+    # Quarantine ledger: a cache is only deleted once it's been continuously
+    # orphaned for ORPHAN_GRACE_S. A uuid that reappears in `valid` (e.g. was
+    # re-imported) is forgiven and never deleted.
+    try:
+        pending = json.loads(ORPHAN_PENDING.read_text())
+        if not isinstance(pending, dict):
+            pending = {}
+    except Exception:
+        pending = {}
     n_removed = 0
     bytes_removed = 0
+    quarantined = 0
+    next_pending = {}
     for f in SOURCE_CACHE.glob("*.ts"):
         uuid = f.stem
-        if uuid not in valid:
-            try:
-                bytes_removed += f.stat().st_size
-                f.unlink()
-                n_removed += 1
-            except Exception:
-                pass
+        if uuid in valid:
+            continue  # valid → forgiven (drops out of the ledger)
+        first = pending.get(uuid, now)  # first time orphaned → start the clock now
+        if now - first < ORPHAN_GRACE_S:
+            next_pending[uuid] = first  # still in grace → keep, don't delete
+            quarantined += 1
+            continue
+        try:  # orphaned past the grace window → genuinely gone, reclaim
+            bytes_removed += f.stat().st_size
+            f.unlink()
+            n_removed += 1
+        except Exception:
+            next_pending[uuid] = first
+    try:
+        ORPHAN_PENDING.write_text(json.dumps(next_pending))
+    except Exception:
+        pass
     if n_removed:
         print(f"  orphan-gc: removed {n_removed} cached .ts "
               f"({bytes_removed/1e6:.0f} MB)", flush=True)
+    if quarantined:
+        print(f"  orphan-gc: {quarantined} orphaned .ts in grace "
+              f"({ORPHAN_GRACE_S // 3600}h before delete)", flush=True)
     # Whisper-cache: each recording leaves a <uuid>.whisper.json +
     # <uuid>.postprocess.json. Clean both when the recording's gone.
     whisper_dir = Path.home() / ".cache" / "tv-whisper"

@@ -771,24 +771,44 @@ def process_recording(uuid, do_hls, do_thumbs):
                 "-q:v", "6",
                 str(td_p / "t%05d.jpg")]
         t0 = time.time()
-        # Suppress ffmpeg's mpeg2video MV warnings (broadcasters drop
-        # GOPs all the time; ffmpeg recovers fine, the noise just
-        # buries our own log lines). Capture stderr for failure
-        # diagnosis.
-        result = subprocess.run(cmd, timeout=TIMEOUT_S,
-                                  capture_output=True, text=True,
-                                  env=SPAWN_ENV)
-        rc = result.returncode
+        # Stream HLS segments to the Pi WHILE ffmpeg encodes, instead of
+        # batch-uploading after it finishes — so /progress's segment count grows
+        # throughout the remux (the app shows a smooth bar instead of 0% then a
+        # jump) and the upload overlaps the encode. Only segments are streamed;
+        # the playlist is uploaded LAST (after ffmpeg), so the Pi flips to
+        # "ready" only when the VOD is complete. ffmpeg stderr → a temp file so
+        # polling never deadlocks a PIPE. The final batch below re-uploads
+        # anything the stream missed, so this can only help, never lose a seg.
+        seg_url = f"{GATEWAY}/api/internal/hls-segment/{uuid}/{{name}}"
+        uploaded = set()
+        errf = open(td_p / "ffmpeg.stderr", "w+")
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=errf, env=SPAWN_ENV)
+        while True:
+            rc = proc.poll()
+            if do_hls:
+                segs = sorted(td_p.glob("seg_*.ts"))
+                # While running, the highest-numbered segment is still being
+                # written → stream all but the last; after exit all are done.
+                ready = segs if rc is not None else segs[:-1]
+                new = [s for s in ready if s.name not in uploaded]
+                if new:
+                    try:
+                        _upload_files_put(seg_url, new)
+                        uploaded.update(s.name for s in new)
+                    except Exception as e:
+                        print(f"  hls stream err: {e}", flush=True)
+            if rc is not None:
+                break
+            if time.time() - t0 > TIMEOUT_S:
+                proc.kill(); proc.wait(); rc = -9
+                break
+            time.sleep(1.0)
+        errf.seek(0); err_tail = errf.read()[-500:]; errf.close()
         encode_s = time.time() - t0
         if rc != 0:
-            err_tail = (result.stderr or "")[-500:]
             print(f"  ffmpeg {uuid[:8]} rc={rc} — last stderr:\n"
                   f"{err_tail}", flush=True)
-            # Remove markers so the daemon doesn't loop on this uuid
-            # forever. The next prewarm cycle will re-create them
-            # if the recording still needs processing — gives the
-            # underlying issue (corrupt .ts, gateway disconnect)
-            # a chance to clear before we retry.
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
             return False
         ok_hls = ok_thumbs = True
@@ -798,23 +818,22 @@ def process_recording(uuid, do_hls, do_thumbs):
                 print(f"  no playlist for {uuid[:8]}", flush=True)
                 ok_hls = False
             else:
-                # Segments first, playlist last — Pi sees index.m3u8
-                # only when all segments have arrived (player polls
-                # for it as the readiness signal).
-                segments = sorted(td_p.glob("*.ts"))
-                files = segments + [playlist]
-                size_mb = sum(f.stat().st_size for f in files) / 1e6
+                # Upload anything the stream missed (the in-flight last segment)
+                # + the playlist LAST (readiness signal) + hls-done.
+                segs = sorted(td_p.glob("seg_*.ts"))
+                remaining = [s for s in segs if s.name not in uploaded]
+                size_mb = sum(f.stat().st_size for f in segs) / 1e6
                 t1 = time.time()
                 try:
-                    _upload_files_put(
-                        f"{GATEWAY}/api/internal/hls-segment/{uuid}/{{name}}",
-                        files)
+                    if remaining:
+                        _upload_files_put(seg_url, remaining)
+                    _upload_files_put(seg_url, [playlist])
                     http_post_stream(
                         f"{GATEWAY}/api/internal/hls-done/{uuid}",
                         b"")
-                    print(f"  hls {uuid[:8]}: {len(files)} files "
+                    print(f"  hls {uuid[:8]}: {len(segs)+1} files "
                           f"({size_mb:.0f} MB), encode {encode_s:.0f}s "
-                          f"+ upload {time.time()-t1:.0f}s", flush=True)
+                          f"+ tail {time.time()-t1:.0f}s", flush=True)
                 except Exception as e:
                     print(f"  hls upload err: {e}", flush=True); ok_hls = False
         if do_thumbs:

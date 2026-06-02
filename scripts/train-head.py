@@ -1163,6 +1163,17 @@ def main():
                          "the previous successful run, REJECT the new "
                          "head.bin and keep the previous one. "
                          "Set to 1.0 to disable (always deploy).")
+    ap.add_argument("--reset-baseline", action="store_true",
+                    help="one-time: skip the champion-challenger IoU floor and "
+                         "deploy if the head clears --reset-baseline-floor. Use "
+                         "after the test-set POPULATION fundamentally changed "
+                         "(e.g. the corpus-fix that recovered disk-pruned recs) "
+                         "so the historical floor — anchored to the old, "
+                         "non-representative test set — is no longer comparable. "
+                         "Future runs then compare against this new baseline.")
+    ap.add_argument("--reset-baseline-floor", type=float, default=0.5,
+                    help="absolute median-IoU sanity floor for --reset-baseline "
+                         "(default 0.50) so a reset never re-anchors on garbage.")
     ap.add_argument("--rollback-acc-drop", type=float, default=0.03,
                     help="same as --rollback-iou-drop but for per-frame "
                          "test accuracy. Either trigger fires rejection.")
@@ -2977,7 +2988,28 @@ def main():
 
     deploy = True
     reason = "first run" if last_deployed is None else "no regression"
-    if last_deployed and metrics_smooth:
+    if args.reset_baseline and metrics_smooth:
+        # Operator-forced one-time baseline reset: the test-set population
+        # fundamentally changed (e.g. the 2026-06-02 corpus fix recovered ~100
+        # disk-pruned reviewed recordings), so the historical IoU floor —
+        # anchored to the old, smaller, non-representative test set — is not a
+        # valid comparison. Skip the floor; deploy only if the head clears an
+        # ABSOLUTE sanity bar so a reset never re-anchors on garbage. Future
+        # runs compare against THIS baseline.
+        cur_iou_med = metrics_smooth.get(
+            "iou_tv_median",
+            metrics_smooth.get("iou_median", metrics_smooth["iou"]))
+        if cur_iou_med >= args.reset_baseline_floor:
+            deploy = True
+            reason = (f"baseline reset (--reset-baseline): median-IoU "
+                      f"{cur_iou_med:.3f} on {metrics_smooth['n_recs']} test "
+                      f"recs >= {args.reset_baseline_floor:.2f} sanity floor — "
+                      f"re-anchoring after test-set population change")
+        else:
+            deploy = False
+            reason = (f"baseline reset refused: median-IoU {cur_iou_med:.3f} < "
+                      f"{args.reset_baseline_floor:.2f} absolute sanity floor")
+    elif last_deployed and metrics_smooth:
         prev_n = last_deployed.get("n_test_recs", 0)
         cur_n  = metrics_smooth["n_recs"]
         prev_feat = last_deployed.get("n_features", 0)

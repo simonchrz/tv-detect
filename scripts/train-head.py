@@ -951,6 +951,12 @@ def main():
     ap.add_argument("--hls-root", default="/tmp/tv-train-snapshot")
     ap.add_argument("--feature-cache", default=os.path.expanduser(
         "~/.cache/tvd-features"))
+    ap.add_argument("--train-archive", default=os.path.expanduser(
+        "~/.cache/tvd-train-archive"),
+        help="deletion-safe corpus archive: freeze each trustworthy-labelled "
+             "recording's label (+ a pointer to its cached features) so it "
+             "keeps training the head after its .ts is deleted/dedup'd. Empty "
+             "string disables.")
     ap.add_argument("--fps-extract", type=float, default=1.0)
     ap.add_argument("--reextract-logo-nan-pct", type=float, default=10.0,
                     help="re-extract a cached .npy if its logo column has "
@@ -1187,6 +1193,9 @@ def main():
 
     cache_dir = Path(args.feature_cache)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    archive_dir = Path(args.train_archive).expanduser() if args.train_archive else None
+    if archive_dir is not None:
+        archive_dir.mkdir(parents=True, exist_ok=True)
     sess = build_onnx_session(args.backbone)
     print(f"providers: {sess.get_providers()}")
 
@@ -1622,6 +1631,82 @@ def main():
                         confirmed_show, confirmed_ad_skips, rec_age_days,
                         bumpers, frame_mask, which == "pseudo",
                         is_bootstrap, cluster_anchored))
+        # Deletion-safe training archive: freeze a trustworthy-labelled
+        # recording's label (+ a pointer to its cached features) so it stays
+        # in the corpus even after its .ts is deleted/dedup'd. Only reviewed
+        # (user/merged), auto-confirmed, or cluster-anchored labels — never
+        # pseudo/bootstrap (those must stay live + refreshable). Features
+        # aren't duplicated (the never-evicted feature cache keeps the .npy);
+        # we store its path. Overwritten each run so re-reviews refresh;
+        # persists unchanged once the recording is gone.
+        if (archive_dir is not None and frame_mask is None and not is_bootstrap
+                and (which in ("user", "merged", "auto-confirm")
+                     or bool(cluster_anchored))):
+            try:
+                np.savez(archive_dir / f"{uuid}.npz",
+                         labels=labels,
+                         meta=json.dumps({
+                             "uuid": uuid, "title": title,
+                             "slug": uuid_slug.get(uuid, ""),
+                             "start_ts": uuid_start.get(uuid, 0),
+                             "ads": ads, "which": which,
+                             "confirmed_show": confirmed_show,
+                             "confirmed_ad_skips": confirmed_ad_skips,
+                             "cluster_anchored": cluster_anchored,
+                             "feature_npy": str(cache_path),
+                         }))
+            except Exception as e:
+                print(f"  train-archive: write {uuid[:8]} failed: {e}", flush=True)
+
+    # Deletion-safe training archive (read side): admit recordings no longer
+    # live (deleted, or .ts dedup'd → dropped from the walk above) that have a
+    # frozen entry. Features come from the never-evicted feature cache via the
+    # stored path; labels from the archive. Keeps the corpus + sticky test
+    # split stable across deletions/dedup. Shape-mismatch (fps/feature-set
+    # drift) → skip rather than misalign labels.
+    if archive_dir is not None:
+        live_uuids = ({ri[0] for ri, _ in cached}
+                      | {ri[0] for ri, _, _ in todo})
+        injected = 0
+        for npz_path in sorted(archive_dir.glob("*.npz")):
+            u = npz_path.stem
+            if u in live_uuids:
+                continue
+            try:
+                z = np.load(npz_path, allow_pickle=False)
+                a_labels = z["labels"]
+                a_meta = json.loads(str(z["meta"]))
+            except Exception:
+                continue
+            fnpy = Path(a_meta.get("feature_npy", ""))
+            if not fnpy.exists():
+                continue  # features cleared → can't reconstruct; skip
+            try:
+                a_feats = np.load(fnpy)
+            except Exception:
+                continue
+            if a_feats.shape[0] == 0 or a_feats.shape[0] != len(a_labels):
+                continue
+            if args.with_logo and a_feats.shape[1] > 1280:
+                nm = np.isnan(a_feats[:, 1280])
+                if nm.any():
+                    a_feats = a_feats.copy()
+                    a_feats[nm, 1280] = 0.5
+                    logo_nan_mask_by_uuid[u] = nm
+            a_which = a_meta.get("which", "")
+            a_start = a_meta.get("start_ts", 0)
+            a_age = (time.time() - a_start) / 86400.0 if a_start else 0.0
+            per_rec.append((u, a_meta.get("title", ""), a_meta.get("ads", []),
+                            a_feats, a_labels, a_which in ("user", "merged"),
+                            a_meta.get("confirmed_show", []),
+                            a_meta.get("confirmed_ad_skips", []), a_age,
+                            [], None, False, False,
+                            a_meta.get("cluster_anchored", [])))
+            injected += 1
+        if injected:
+            print(f"train-archive: injected {injected} deleted/dedup'd "
+                  f"recording(s) (trained via frozen label + cached features)")
+
     # Right-pad all per_rec feature matrices to the widest column count
     # we have. Cached .npy files from older runs (extracted before
     # the slug→logo lookup landed) can be 1 column narrower than the

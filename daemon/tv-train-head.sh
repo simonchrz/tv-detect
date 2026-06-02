@@ -147,6 +147,7 @@ done
     --with-minute-prior \
     --with-self-training \
     --write-pseudo-labels \
+    --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper
 rc=$?
 

@@ -46,6 +46,16 @@ TVD_WORKERS = max(2, 12 // DETECT_PARALLEL)  # 2026-05-11: 18-core Mac, bumped f
 # Mac M5 Pro VideoToolbox HW-encoder handles 2-3 parallel HLS encodes
 # without thermal/CPU concern; thumbs is cheap (~10s) and rides along.
 HLS_PARALLEL = max(1, int(os.environ.get("HLS_PARALLEL", "2")))
+# Detect priority vs on-demand HLS remux. A VOD remux is latency-critical
+# (a user is staring at a loading bar); detect is best-effort background.
+# Two levers keep a remux from queuing behind detect (separate thread pools,
+# but they contend for CPU + GPU/ANE):
+#   * DETECT_NICE — run tv-detect (+ its ffmpeg/onnx children, which inherit
+#     niceness) at a lower CPU priority so the remux encode wins the cores.
+#   * gate (in main loop) — don't START new detect jobs while HLS remuxes are
+#     pending or in flight, so the latency-critical window has fewer GPU/ANE
+#     competitors. In-flight detects finish; detect resumes once HLS drains.
+DETECT_NICE = max(0, int(os.environ.get("DETECT_NICE", "5")))
 # Watchdog: if a uuid sits in detect_in_flight longer than this AND no
 # subprocess for it exists, the worker thread leaked the slot (= hung
 # HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.
@@ -1327,6 +1337,10 @@ def process_detect(uuid):
               f"(weight={SPEAKER_WEIGHT})", flush=True)
 
     cmd += ["--output", "cutlist", src_url]
+    # Run detect below an on-demand HLS remux in CPU priority (children
+    # inherit the niceness). No-op-safe if /usr/bin/nice is missing.
+    if DETECT_NICE:
+        cmd = ["nice", "-n", str(DETECT_NICE)] + cmd
 
     # tv-detect spawns ffprobe internally — uses the shared SPAWN_ENV
     # which sets PATH for launchd-spawned subprocesses.
@@ -1500,6 +1514,7 @@ def main():
             print(f"  snapshot fire err: {e}", flush=True)
 
     cycle = 0
+    _hls_gate = [False]  # edge-trigger for the "detect paused/resumed" log
     while True:
         cycle += 1
         _maybe_gc_orphans()
@@ -1593,11 +1608,33 @@ def main():
         for u in [u for u, t in _failed_until.items() if t <= now]:
             _failed_until.pop(u, None)
 
+        # HLS-priority gate: don't START new detect jobs while a VOD remux is
+        # pending or in flight. Detect is background; a remux is latency-
+        # critical (user waiting on a loading bar) and the two contend for
+        # CPU + GPU/ANE. In-flight detects finish; new ones wait until HLS
+        # drains (= "VODs first, detect after"). HLS is bursty + fast, so this
+        # only pauses detect briefly; the nightly bulk re-detect runs when HLS
+        # is idle. Logged once per pause-edge to avoid spam.
+        # A remux stuck in failure-cooldown (bad source) keeps its marker, so
+        # it'd block detect forever — exclude cooled jobs so the gate only
+        # honours remuxes that can actually make progress.
+        hls_live = [j for j in hls if j.get("uuid") not in cooled]
+        with hls_lock:
+            n_hls_inflight = len(hls_in_flight)
+            hls_active = bool(hls_live) or n_hls_inflight > 0
+        if hls_active and (detect or detect_low) and not _hls_gate[0]:
+            print(f"  [cycle {cycle}] detect paused — "
+                  f"{len(hls_live)} hls pending / {n_hls_inflight} in flight "
+                  f"have CPU/GPU priority", flush=True)
+            _hls_gate[0] = True
+        elif not hls_active and _hls_gate[0]:
+            print(f"  [cycle {cycle}] detect resumed (hls drained)", flush=True)
+            _hls_gate[0] = False
         # Submit detect jobs to the pool until either the pool is full or
         # the queue is exhausted. Each pool worker runs process_detect in
         # parallel; tv-detect inside scales itself to TVD_WORKERS cores.
         with detect_lock:
-            available = DETECT_PARALLEL - len(detect_in_flight)
+            available = 0 if hls_active else DETECT_PARALLEL - len(detect_in_flight)
             already = set(detect_in_flight)
         for j in detect:
             if available <= 0:

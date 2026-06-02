@@ -174,6 +174,56 @@ def write_mlp_head_v2(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+class _DeployedMLP:
+    """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
+    so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test
+    set — an apples-to-apples head-to-head that is robust to test-set
+    composition changes (no historical IoU floor). Matches sklearn's
+    MLPClassifier(activation='relu') binary forward: relu hidden + sigmoid out."""
+
+    def __init__(self, W1, b1, W2, b2, input_dim):
+        self.W1, self.b1, self.W2, self.b2 = W1, b1, W2, b2
+        self.input_dim = input_dim
+
+    def predict_proba(self, X):
+        h = np.maximum(X.astype(np.float64) @ self.W1 + self.b1, 0.0)  # relu
+        o = (h @ self.W2 + self.b2).ravel()
+        p = 1.0 / (1.0 + np.exp(-o))  # sigmoid (binary head)
+        return np.column_stack([1.0 - p, p])
+
+
+def load_deployed_mlp(path):
+    """Parse a v2 MLP head.bin into a _DeployedMLP, or None if it isn't one
+    (legacy logreg head / missing / corrupt). Used for the head-to-head deploy
+    gate; the caller must check .input_dim matches the candidate's feature dim."""
+    import struct
+    try:
+        raw = Path(path).read_bytes()
+    except Exception:
+        return None
+    if len(raw) < 40:
+        return None
+    hdr = struct.unpack("<10I", raw[:40])
+    if hdr[0] != 0x32504C4D or hdr[1] != 2:  # magic "MLP2", version 2
+        return None
+    input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+    off = 40
+
+    def take(n):
+        nonlocal off
+        a = np.frombuffer(raw, dtype=np.float32, count=n, offset=off).astype(np.float64)
+        off += n * 4
+        return a
+    try:
+        W1 = take(input_dim * hidden_dim).reshape(input_dim, hidden_dim)
+        b1 = take(hidden_dim)
+        W2 = take(hidden_dim * output_dim).reshape(hidden_dim, output_dim)
+        b2 = take(output_dim)
+    except Exception:
+        return None
+    return _DeployedMLP(W1, b1, W2, b2, input_dim)
+
+
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
 
 
@@ -2128,6 +2178,7 @@ def main():
     # Evaluate on held-out recordings — both raw (matches a deploy
     # without --nn-smooth) and 10s-smoothed (matches the new default).
     metrics_smooth = None
+    deployed_test_metrics = None  # deployed head re-scored on this test set (head-to-head gate)
     if test_recs:
         eval_split(clf, test_recs, args.fps_extract, smooth_s=0)
         metrics_smooth = eval_split(clf, test_recs, args.fps_extract,
@@ -2243,6 +2294,34 @@ def main():
         metrics_smooth = metrics_smooth_mlp
         mlp_prod_chan_slugs = prod_chan_slugs
         mlp_prod_in_dim = X_train_ch.shape[1]
+
+        # Head-to-head: re-score the CURRENTLY-DEPLOYED head (args.output still
+        # holds it — the candidate is written only after the gate) on this exact
+        # augmented test set, so the deploy gate can compare both heads on
+        # identical data instead of against a historical IoU floor anchored to a
+        # different test set. Requires a same-dim v2 MLP AND the same channel
+        # one-hot layout — a same-COUNT but reordered channel-map (one channel
+        # gains labels while another loses them) would misalign the columns and
+        # make the deployed re-eval garbage, so verify the slug list matches
+        # (head.channel-map.json sidecar) before trusting it; otherwise skip and
+        # fall back to the floor logic below.
+        if test_recs_ch:
+            _dep = load_deployed_mlp(args.output)
+            _dep_slugs = None
+            _cm = Path(args.output).with_suffix(".channel-map.json")
+            if _cm.exists():
+                try:
+                    _dep_slugs = json.loads(_cm.read_text()).get("slugs")
+                except Exception:
+                    _dep_slugs = None
+            if (_dep is not None and _dep.input_dim == mlp_prod_in_dim
+                    and _dep_slugs == prod_chan_slugs):
+                print("\n=== deployed-head re-eval (head-to-head, smooth=10s) ===")
+                deployed_test_metrics = eval_split(_dep, test_recs_ch,
+                                                   args.fps_extract, smooth_s=10)
+            elif _dep is not None and _dep.input_dim == mlp_prod_in_dim:
+                print("  head-to-head skipped: channel-map differs from the "
+                      "deployed head — falling back to the historical floor")
 
         # Phase D: Platt calibration on MLP logits. MLPClassifier
         # exposes predict_proba (= already sigmoid'd); recover logits
@@ -3051,6 +3130,32 @@ def main():
                 and abs(cur_feat - prev_feat) > CHANNEL_DIM_TOL):
             reason = (f"feature dim changed ({prev_feat}→{cur_feat}) — "
                       f"architecture switch, deploying & resetting baseline")
+        elif deployed_test_metrics is not None:
+            # Head-to-head: candidate AND the currently-deployed head were both
+            # scored on THIS exact test set, so compare them directly — apples-
+            # to-apples, robust to test-set composition changes (no historical
+            # IoU floor that false-rejects when the corpus shifts; replaces the
+            # old --reset-baseline dance). Deploy unless the candidate is a real
+            # regression vs the deployed head on the same data.
+            def _med(m):
+                return m.get("iou_tv_median", m.get("iou_median", m.get("iou", 0.0)))
+            cand = _med(metrics_smooth)
+            dep = _med(deployed_test_metrics)
+            # Tight slack: the comparison is precise (identical test set, the MLP
+            # fit is deterministic), so a drop is real, not test-set noise. 2 pp
+            # lets a fresher-data retrain through on a near-tie without ratcheting
+            # the deployed quality down run-over-run. (rollback_iou_drop=5pp is
+            # for the looser cross-test-set fallback below.)
+            HEAD2HEAD_SLACK = 0.02
+            if cand < dep - HEAD2HEAD_SLACK:
+                deploy = False
+                reason = (f"head-to-head on {cur_n} test recs: candidate "
+                          f"TV-median-IoU {cand:.3f} < deployed {dep:.3f} − "
+                          f"{HEAD2HEAD_SLACK:.2f} — regression, keeping current head")
+            else:
+                reason = (f"head-to-head on {cur_n} test recs: candidate "
+                          f"TV-median-IoU {cand:.3f} ≥ deployed {dep:.3f} "
+                          f"(floor {dep-HEAD2HEAD_SLACK:.3f}) — deploy")
         elif prev_n != cur_n:
             # Test set changed → mean-IoU comparison is apples-to-
             # oranges (a single Moonfall-style outlier shifts mean

@@ -1272,6 +1272,7 @@ def main():
     # uncached. Cached ones we just load synchronously; uncached
     # ones go to the worker pool.
     cached, todo = [], []  # cached: (rec_info, cache_path); todo: (rec_info, src, cache_path)
+    corpus_no_ts = 0       # recovered from feature cache because the .ts was dedup'd
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
         uuid = rec_dir.name[5:]
         user = rec_dir / "ads_user.json"
@@ -1371,9 +1372,13 @@ def main():
             else:
                 continue
 
-        index = rec_dir / "index.m3u8"
-        if not index.exists():
-            continue
+        # NOTE: we used to require a playable HLS-VOD here (index.m3u8 marker,
+        # written by the snapshot fetch only when has_index_m3u8). That dropped
+        # every recording whose VOD was disk-pruned — including ~100 *reviewed*
+        # ones whose ground-truth labels + cached features still exist. Training
+        # needs features + labels, NOT a VOD, so the gate is gone; the feature
+        # gate below (.ts or cached .npy) is the real "can we featurize it?"
+        # check and drops anything genuinely un-featurizable.
         base_txts = [p for p in rec_dir.glob("*.txt") if not any(
             p.name.endswith(s) for s in (".logo.txt", ".cskp.txt",
                                           ".tvd.txt", ".trained.logo.txt"))]
@@ -1383,69 +1388,74 @@ def main():
             continue
         base = base_txts[0].stem.replace(".cskp", "")
         title = base.split(" $")[0]
-        # tv-thumbs-daemon caches every detect-fetched .ts AND runs a
-        # background prefetch loop to fill the gaps under
-        # ~/.cache/tv-detect-daemon/source/<uuid>.ts (UUID-keyed, LRU
-        # at SOURCE_CACHE_MAX_GB, orphan-GC). With cap=300 GB the
-        # entire Pi corpus fits — daemon-cache is the sole source of
-        # truth for .ts files. SMB-fallback was removed 2026-05-02
-        # along with the hls_root → snapshot-mirror migration
-        # (= hls_root.parent now = /tmp, no .ts there). If a recording
-        # is somehow not cached, skip it; daemon's prefetch loop will
-        # pick it up before the next training run.
-        src = None
-        cand = Path(args.daemon_cache) / f"{uuid}.ts"
-        if cand.exists():
-            src = cand
-        if src is None:
-            continue
-
-        src_mt = int(src.stat().st_mtime)
-        # Cache-key suffix: -l1 = logo feature included; -c1 = channel
-        # one-hot included; -a1 = audio rms included. Cached file shape
-        # depends on the suffix combination; flipping any flag forces a
-        # rebuild for the affected entries (old caches stay on disk but
-        # become unused).
+        # Cache-key suffix: -l2 logo (cropdetect y-offset), -c1 channel
+        # one-hot, -a1 audio rms, -y1 yamnet, -u1 uniformity. The suffix is
+        # part of the cache filename, so a flag flip never reuses wrong-shape
+        # features.
         suffix = ""
-        # -l2 bumps -l1: l2 applies a per-recording cropdetect-derived
-        # y-offset to the logo template (letterbox compensation), so
-        # cached logoConf values differ from the unshifted -l1 era.
         if args.with_logo:    suffix += "-l2"
         if args.with_channel: suffix += "-c1"
         if args.with_audio:   suffix += "-a1"
         if args.with_yamnet:  suffix += "-y1"
         if args.with_uniformity: suffix += "-u1"
-        cache_path = cache_dir / f"{uuid}-{src_mt}-fps{int(args.fps_extract*100)}{suffix}.npy"
+        fps_tag = f"-fps{int(args.fps_extract*100)}"
         slug = uuid_slug.get(uuid, "")
-        rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
-                     pseudo_data, is_bootstrap)
-        if cache_path.exists():
-            # Re-extract if the cached features have a high NaN-rate in
-            # the logo column. Stale .npy from the pre-2026-05-23
-            # tv-detect (= interlaced-PTS bug, half the timestamps so
-            # back-half rows came back NaN) live in the cache until the
-            # source .ts file's mtime changes, which never happens on
-            # finalized recordings. Without this check the broken
-            # features would persist forever even after the Go fix
-            # landed. mmap-peek is cheap (~50 ms per file at corpus
-            # size).
-            reextract = False
-            if args.with_logo:
-                try:
-                    arr = np.load(cache_path, mmap_mode="r")
-                    if arr.shape[1] > 1280 and len(arr) > 0:
-                        nan_pct = (100.0 * np.isnan(arr[:, 1280]).sum()
-                                   / len(arr))
-                        if nan_pct >= args.reextract_logo_nan_pct:
-                            reextract = True
-                except Exception:
-                    reextract = True
-            if reextract:
-                todo.append((rec_info, str(src), cache_path))
+        # The source .ts lives in the daemon's T7 cache (UUID-keyed). It's
+        # preferred — it lets us key the feature cache by the .ts mtime and
+        # re-extract on demand. BUT after Pi-dedup the .ts is frequently gone
+        # while the extracted features survive in the (never-evicted) feature
+        # cache. A missing .ts must NOT drop the recording: fall back to the
+        # newest matching cached .npy and keep it in the corpus on its features
+        # alone. Only when BOTH are gone do we skip (the daemon's prefetch loop
+        # may restore the .ts before the next run).
+        cand = Path(args.daemon_cache) / f"{uuid}.ts"
+        if cand.exists():
+            src = cand
+            src_mt = int(src.stat().st_mtime)
+            cache_path = cache_dir / f"{uuid}-{src_mt}{fps_tag}{suffix}.npy"
+            rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
+                         pseudo_data, is_bootstrap)
+            if cache_path.exists():
+                # Re-extract if the cached features have a high NaN-rate in the
+                # logo column. Stale .npy from the pre-2026-05-23 tv-detect
+                # (interlaced-PTS bug, back-half rows NaN) live in the cache
+                # until the .ts mtime changes, which never happens on finalized
+                # recordings. mmap-peek is cheap (~50 ms per file).
+                reextract = False
+                if args.with_logo:
+                    try:
+                        arr = np.load(cache_path, mmap_mode="r")
+                        if arr.shape[1] > 1280 and len(arr) > 0:
+                            nan_pct = (100.0 * np.isnan(arr[:, 1280]).sum()
+                                       / len(arr))
+                            if nan_pct >= args.reextract_logo_nan_pct:
+                                reextract = True
+                    except Exception:
+                        reextract = True
+                if reextract:
+                    todo.append((rec_info, str(src), cache_path))
+                else:
+                    cached.append((rec_info, cache_path))
             else:
-                cached.append((rec_info, cache_path))
+                todo.append((rec_info, str(src), cache_path))
         else:
-            todo.append((rec_info, str(src), cache_path))
+            # No .ts (dedup'd) — recover from the feature cache. Newest .npy
+            # that matches the current fps+suffix (anchored on the literal
+            # tail so a different feature set never loads wrong-shape data).
+            hits = sorted(cache_dir.glob(f"{uuid}-*{fps_tag}{suffix}.npy"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            if not hits:
+                continue
+            cache_path = hits[0]
+            src_mt = int(cache_path.stat().st_mtime)  # proxy for rec_age_days
+            rec_info = (uuid, title, ads, which, slug, str(rec_dir), "",
+                         pseudo_data, is_bootstrap)
+            cached.append((rec_info, cache_path))
+            corpus_no_ts += 1
+
+    if corpus_no_ts:
+        print(f"corpus: recovered {corpus_no_ts} recording(s) from the feature "
+              f"cache whose .ts was dedup'd (kept in corpus, no re-extract)")
 
     # Pass 2 — extract uncached features in parallel. Each worker loads
     # its own ONNX session at init (~100 MB resident); 4 workers × that

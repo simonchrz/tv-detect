@@ -305,11 +305,23 @@ def main():
     print(f"queue: {len(uuids)} uuids "
           f"({q.get('n_missing')} missing, "
           f"{q.get('n_partial_no_dhash')} partial)", flush=True)
-    if args.limit > 0:
-        uuids = uuids[:args.limit]
-    n_ok = n_err = total_spots = 0
+    # Locality-aware budget: --limit caps how many LOCALLY-CACHED recordings we
+    # process, NOT how many queue entries we touch. A recording whose source .ts
+    # isn't cached can't be extracted (we don't re-fetch), so letting non-local
+    # head-of-queue entries consume the budget meant the daemon's small batches
+    # (--limit 5) wasted every run on a non-local queue head and never reached the
+    # cached, drainable recordings — the queue looked permanently stuck. Now we
+    # skip non-local for free and spend the budget on real work.
+    budget = args.limit if args.limit > 0 else len(uuids)
+    n_ok = n_err = total_spots = n_done = n_skip = 0
     t0 = time.time()
-    for i, u in enumerate(uuids, 1):
+    for u in uuids:
+        if n_done >= budget:
+            break
+        if get_local_ts(u) is None:
+            n_skip += 1
+            continue
+        n_done += 1
         t1 = time.time()
         n, ok = process_uuid(u)
         dt = time.time() - t1
@@ -318,15 +330,14 @@ def main():
             n_ok += 1
         else:
             n_err += 1
-        if i % 5 == 0 or i == len(uuids):
-            avg = (time.time() - t0) / i
-            eta_min = (len(uuids) - i) * avg / 60
-            print(f"[{i}/{len(uuids)}] {u[:8]} {n} spots "
-                  f"({dt:.1f}s, avg {avg:.1f}s, ETA {eta_min:.1f}m) "
-                  f"· total: {total_spots} spots, "
-                  f"{n_ok} ok / {n_err} err", flush=True)
-    print(f"done: {n_ok}/{len(uuids)} ok, {total_spots} spots, "
-          f"{(time.time()-t0)/60:.1f} min total")
+        if n_done % 5 == 0 or n_done == budget:
+            avg = (time.time() - t0) / n_done
+            print(f"[{n_done}/{budget} local] {u[:8]} {n} spots "
+                  f"({dt:.1f}s, avg {avg:.1f}s) · total: {total_spots} spots, "
+                  f"{n_ok} ok / {n_err} err, {n_skip} non-local skipped",
+                  flush=True)
+    print(f"done: {n_ok}/{n_done} ok, {total_spots} spots, "
+          f"{n_skip} non-local skipped, {(time.time()-t0)/60:.1f} min total")
 
 
 if __name__ == "__main__":

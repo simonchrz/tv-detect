@@ -70,7 +70,12 @@ def fetch_ads_user(uuid, retries=3):
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=15, context=CTX) as r:
                 d = json.loads(r.read())
-            return d.get("ads") or []
+            # Prefer the user-confirmed blocks: for a reviewed recording `user`
+            # is ground truth, while the merged `ads` (built from the comskip
+            # base) can be empty when the cutlist/media is gone even though the
+            # auto-confirmed blocks are present — that recording would otherwise
+            # never get fingerprinted. Fall back to `ads` for un-reviewed ones.
+            return d.get("user") or d.get("ads") or []
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(2 ** attempt)  # 1s, 2s

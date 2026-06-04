@@ -289,6 +289,11 @@ _last_prefetch = 0.0
 # so the dashboard/HA can flag accumulation before a nightly trains on them.
 INTEGRITY_INTERVAL_S = 1800
 _last_integrity = 0.0
+# Host-stats push for the app's parent-diagnostics panel: cpu/disk every 30s to
+# the Pi's /api/internal/host-stats (merged into GET /api/status/host). One Mac
+# process (this daemon) instead of a separate launchd agent.
+HOST_STATS_INTERVAL_S = 30
+_last_host_stats = 0.0
 # uuids that 404 on /source (= no raw .ts on Pi; HLS-VOD-only orphan).
 # Skipped in prefetch so we stop re-probing them every cycle.
 _known_orphans = set()
@@ -488,6 +493,36 @@ def _maybe_integrity_sweep():
               f"{len(files)} cached ({total/1e9:.0f}GB) → reported", flush=True)
     except Exception as e:
         print(f"  integrity report err: {e}", flush=True)
+
+
+def _maybe_host_stats():
+    """Push Mac CPU/disk to the Pi every 30s for the app's host-stats panel.
+    Load-based cpu_pct (per the gateway spec — no psutil needed); disk = the
+    Mac's root volume. Best-effort; never blocks the work loop."""
+    global _last_host_stats
+    now = time.time()
+    if now - _last_host_stats < HOST_STATS_INTERVAL_S:
+        return
+    _last_host_stats = now
+    try:
+        import shutil
+        load1 = os.getloadavg()[0]
+        cnt = os.cpu_count() or 1
+        du = shutil.disk_usage("/")
+        report = {
+            "cpu_load1": round(load1, 2),
+            "cpu_count": cnt,
+            "cpu_pct": round(min(100.0, load1 / cnt * 100.0), 1),
+            "disk_used_gb": round(du.used / 1e9, 1),
+            "disk_total_gb": round(du.total / 1e9, 1),
+        }
+        req = urllib.request.Request(
+            f"{GATEWAY}/api/internal/host-stats",
+            data=json.dumps(report).encode(), method="POST",
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10, context=CTX).close()
+    except Exception:
+        pass
 
 
 def _drop_pi_source(uuid):
@@ -1665,6 +1700,8 @@ def main():
         _maybe_prefetch_sources(in_flight_n)
         # Layer-3 integrity report to the Pi (own 30-min interval gate).
         _maybe_integrity_sweep()
+        # Host-stats push for the app panel (own 30s interval gate).
+        _maybe_host_stats()
         # V2 low-prio queue: fetch when there is no UNCLAIMED high-
         # prio work AND we still have a parallel slot free.
         # "Unclaimed" = the high-prio entry isn't the uuid we're

@@ -490,15 +490,76 @@ def _drop_sweep(cached):
               flush=True)
 
 
+# train-head's derived caches (same Mac) — must be invalidated together with a
+# stale source, else the nightly re-uses wrong-channel features/labels. See
+# memory recovery_churn_poisons_training.
+TVD_FEATURES = Path.home() / ".cache" / "tvd-features"
+TVD_ARCHIVE  = Path.home() / ".cache" / "tvd-train-archive"
+
+
+def _pi_source_size(uuid):
+    """HEAD the Pi's CURRENT /source and return its Content-Length, or None if
+    the size can't be determined (Pi unreachable / 404 dropped / 425 recording /
+    no header). None means 'unknown' → caller must NOT evict (fail-safe: a Pi
+    hiccup never wipes the cache)."""
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
+        with urllib.request.urlopen(req, timeout=10, context=CTX) as r:
+            cl = r.headers.get("Content-Length")
+            return int(cl) if cl and cl.isdigit() else None
+    except Exception:
+        return None
+
+
+def _invalidate_derived(uuid):
+    """Drop stale feature .npy + archive .npz for a uuid so the nightly
+    re-extracts from the fresh source instead of training on wrong-channel
+    features (the cache key is mtime-based, but the archive pins the old .npy
+    path, so both must go). Returns count removed."""
+    n = 0
+    try:
+        for p in TVD_FEATURES.glob(f"{uuid}-*.npy"):
+            try: p.unlink(); n += 1
+            except Exception: pass
+    except Exception: pass
+    z = TVD_ARCHIVE / f"{uuid}.npz"
+    try:
+        if z.exists(): z.unlink(); n += 1
+    except Exception: pass
+    return n
+
+
 def get_source(uuid):
     """Return local .ts path. Cached: serve from disk. Cold: HTTP-fetch
     + cache for next time. Falls back to None on any error — caller
     should use the HTTP URL directly as a last resort."""
     cache_path = SOURCE_CACHE / f"{uuid}.ts"
     if cache_path.exists() and cache_path.stat().st_size > 100_000_000:
-        try: cache_path.touch()  # update atime for LRU
-        except Exception: pass
-        return cache_path
+        # Source-freshness guard: if the Pi re-filtered/trimmed this recording,
+        # its .ts content (and size) changed but our cache still holds the OLD
+        # video → stale wrong-channel features poison the nightly. Verify the
+        # cached size against the Pi's current source; on a CONFIRMED mismatch
+        # (>8 KB, same slack as the truncation check), evict the cache + the
+        # derived feature/archive caches and fall through to re-fetch. Fail-safe:
+        # a None size (unreachable/404/425) keeps the cache untouched.
+        cur = cache_path.stat().st_size
+        pi_size = _pi_source_size(uuid)
+        if pi_size is not None and abs(pi_size - cur) > 8192:
+            print(f"  source {uuid[:8]}: changed on Pi "
+                  f"({cur}->{pi_size} bytes) — evicting stale cache + features",
+                  flush=True)
+            try: cache_path.unlink()
+            except Exception: pass
+            ninv = _invalidate_derived(uuid)
+            if ninv:
+                print(f"  invalidated {ninv} derived cache file(s) "
+                      f"for {uuid[:8]}", flush=True)
+            # fall through to the cold-fetch path below
+        else:
+            try: cache_path.touch()  # update atime for LRU
+            except Exception: pass
+            return cache_path
     if cache_path.exists():
         try: cache_path.unlink()  # stub from a half-finished fetch
         except Exception: pass

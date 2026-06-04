@@ -283,6 +283,12 @@ PREFETCH_PER_CYCLE  = 5
 PREFETCH_HEADROOM_GB = 10
 DROP_SWEEP_PER_CYCLE = 25   # re-attempt drop-pi-source for N aged cached recs/cycle
 _last_prefetch = 0.0
+# Layer-3 integrity sweep: periodically report the Mac-side health signals
+# (stale source caches, orphan-pending) to the Pi's /api/integrity. The
+# get_source guard FIXES stale caches reactively; this COUNTS them proactively
+# so the dashboard/HA can flag accumulation before a nightly trains on them.
+INTEGRITY_INTERVAL_S = 1800
+_last_integrity = 0.0
 # uuids that 404 on /source (= no raw .ts on Pi; HLS-VOD-only orphan).
 # Skipped in prefetch so we stop re-probing them every cycle.
 _known_orphans = set()
@@ -424,6 +430,64 @@ def _maybe_prefetch_sources(in_flight_n):
     with ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL) as ex:
         list(ex.map(get_source, todo))
     print(f"  prefetch: cycle done in {time.time()-t0:.0f}s", flush=True)
+
+
+def _maybe_integrity_sweep():
+    """Report the Mac-side health half to the Pi (Layer-3 integrity). Counts
+    stale source caches (Pi /source size != cached size = re-filtered, the
+    get_source guard's reactive fix made visible proactively) + orphan-pending
+    + cache stats, POSTed to /api/integrity. Throttled to once per
+    INTEGRITY_INTERVAL_S; best-effort (never blocks the work loop)."""
+    global _last_integrity
+    now = time.time()
+    if now - _last_integrity < INTEGRITY_INTERVAL_S:
+        return
+    _last_integrity = now
+    try:
+        files = list(SOURCE_CACHE.glob("*.ts"))
+    except Exception:
+        return
+    total = 0
+    for f in files:
+        try: total += f.stat().st_size
+        except Exception: pass
+
+    def _is_stale(f):
+        try:
+            cur = f.stat().st_size
+            ps = _pi_source_size(f.stem)
+            return ps is not None and abs(ps - cur) > 8192
+        except Exception:
+            return False
+
+    stale = 0
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            stale = sum(1 for r in ex.map(_is_stale, files) if r)
+    except Exception:
+        pass
+    pend = 0
+    try:
+        pend = len(json.loads(ORPHAN_PENDING.read_text()))
+    except Exception:
+        pass
+    report = {
+        "stale_source_caches": stale,
+        "orphan_pending": pend,
+        "source_cache_count": len(files),
+        "source_cache_gb": round(total / 1e9, 1),
+    }
+    try:
+        req = urllib.request.Request(
+            f"{GATEWAY}/api/internal/integrity-report",
+            data=json.dumps(report).encode(), method="POST",
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=15, context=CTX).close()
+        print(f"  integrity: {stale} stale, {pend} orphan-pending, "
+              f"{len(files)} cached ({total/1e9:.0f}GB) → reported", flush=True)
+    except Exception as e:
+        print(f"  integrity report err: {e}", flush=True)
 
 
 def _drop_pi_source(uuid):
@@ -1599,6 +1663,8 @@ def main():
         # consuming Pi disk IO / link bandwidth (in_flight_n == 0).
         # Internal interval gate caps it at one cycle per 30 min.
         _maybe_prefetch_sources(in_flight_n)
+        # Layer-3 integrity report to the Pi (own 30-min interval gate).
+        _maybe_integrity_sweep()
         # V2 low-prio queue: fetch when there is no UNCLAIMED high-
         # prio work AND we still have a parallel slot free.
         # "Unclaimed" = the high-prio entry isn't the uuid we're

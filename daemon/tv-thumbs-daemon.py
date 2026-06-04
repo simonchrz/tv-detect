@@ -495,10 +495,31 @@ def _maybe_integrity_sweep():
         print(f"  integrity report err: {e}", flush=True)
 
 
+def _cpu_util_pct():
+    """Real CPU utilization (100 − idle%) from a single `top` sample. macOS has
+    no /proc/stat and we avoid psutil, so parse top's "CPU usage:" line:
+      "CPU usage: 54.46% user, 9.53% sys, 36.00% idle"
+    Returns None on any failure → caller falls back to the load proxy. This is
+    UTILIZATION (how busy the cores are), distinct from load average (how much
+    work is queued) — a detect batch spikes load past core-count while a third of
+    the CPU is still idle, so load-as-percent cried "100% am Limit" falsely."""
+    try:
+        out = subprocess.run(["top", "-l", "1", "-n", "0"],
+                             capture_output=True, text=True, timeout=8).stdout
+        for line in out.splitlines():
+            if "CPU usage" in line:
+                idle = float(line.split("% idle")[0].split()[-1])
+                return round(max(0.0, min(100.0, 100.0 - idle)), 1)
+    except Exception:
+        pass
+    return None
+
+
 def _maybe_host_stats():
     """Push Mac CPU/disk to the Pi every 30s for the app's host-stats panel.
-    Load-based cpu_pct (per the gateway spec — no psutil needed); disk = the
-    Mac's root volume. Best-effort; never blocks the work loop."""
+    cpu_pct = real utilization (top), with a load-average fallback; cpu_load1 +
+    cpu_count let the app show queue saturation separately. disk = the Mac's
+    root volume. Best-effort; never blocks the work loop."""
     global _last_host_stats
     now = time.time()
     if now - _last_host_stats < HOST_STATS_INTERVAL_S:
@@ -509,10 +530,13 @@ def _maybe_host_stats():
         load1 = os.getloadavg()[0]
         cnt = os.cpu_count() or 1
         du = shutil.disk_usage("/")
+        util = _cpu_util_pct()
+        if util is None:  # top unavailable — fall back to the (coarse) load proxy
+            util = round(min(100.0, load1 / cnt * 100.0), 1)
         report = {
             "cpu_load1": round(load1, 2),
             "cpu_count": cnt,
-            "cpu_pct": round(min(100.0, load1 / cnt * 100.0), 1),
+            "cpu_pct": util,
             "disk_used_gb": round(du.used / 1e9, 1),
             "disk_total_gb": round(du.total / 1e9, 1),
         }

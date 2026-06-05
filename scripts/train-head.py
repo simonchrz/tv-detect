@@ -635,6 +635,20 @@ def smooth_mean(x, half_w):
     return out
 
 
+# Fold the Unicode dash variants EPG sources mix for the same show onto a plain
+# "-", so a recording filename with an EN DASH ("Charmed – Zauberhafte Hexen")
+# groups into the SAME per-show cohort as the hyphen airings ("Charmed - …")
+# instead of fragmenting (which halved Charmed's per-show stats + split its
+# training cluster). Mirrors tv-recorder's showDashReplacer + epg.go. 2026-06-05.
+_DASH_FOLD = {ord(c): "-" for c in "‐‑‒–—―"}
+
+
+def fold_show_title(t):
+    """Canonical per-show key: dash-folded show title (no lowercasing — display
+    casing stays intact)."""
+    return t.translate(_DASH_FOLD)
+
+
 def to_blocks(preds, fps=1.0, min_block_s=30):
     """Convert per-frame ad/show predictions to a list of contiguous
     [start_s, end_s] blocks. Mimics the deployed state machine's
@@ -1448,7 +1462,7 @@ def main():
         if not base_txts:
             continue
         base = base_txts[0].stem.replace(".cskp", "")
-        title = base.split(" $")[0]
+        title = fold_show_title(base.split(" $")[0])
         # Cache-key suffix: -l2 logo (cropdetect y-offset), -c1 channel
         # one-hot, -a1 audio rms, -y1 yamnet, -u1 uniformity. The suffix is
         # part of the cache filename, so a flag flip never reuses wrong-shape

@@ -148,7 +148,8 @@ done
     --with-self-training \
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
-    --head-arch mlp32-channel-whisper
+    --head-arch mlp32-channel-whisper \
+    ${TVH_TRAIN_EXTRA_ARGS:-}
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

@@ -2337,6 +2337,52 @@ def main():
                 print("  head-to-head skipped: channel-map differs from the "
                       "deployed head — falling back to the historical floor")
 
+        # --- Holdout overfit diagnostic (env HOLDOUT_REPORT_UUIDS) -----------
+        # Read-only: score the deployed champion vs this run's candidate on a
+        # set of recordings the CHAMPION never trained on (e.g. reviews added
+        # after it was anchored). Answers "is the champion genuinely better, or
+        # overfit to its frozen split?" Prints only — changes no deploy decision.
+        _ho = os.environ.get("HOLDOUT_REPORT_UUIDS", "").strip()
+        if _ho and test_recs_ch:
+            ho_uuids = {u.strip() for u in _ho.split(",") if u.strip()}
+            _depH = load_deployed_mlp(args.output)
+            if _depH is not None and _depH.input_dim == mlp_prod_in_dim:
+                test_uuids = {r[0] for r in test_recs}
+                ho_aug = _aug_test([r for r in per_rec if r[0] in ho_uuids])
+                hw = int(10 * args.fps_extract / 2)
+
+                def _iou_of(head, r):
+                    proba = head.predict_proba(r[3])[:, 1]
+                    proba = smooth_mean(proba, hw)
+                    pred = (proba >= 0.5).astype(np.int32)
+                    gt = [(float(a[0]), float(a[1])) for a in r[2]]
+                    return block_iou(to_blocks(pred, fps=args.fps_extract), gt)
+
+                print("\n=== HOLDOUT overfit report (champion never trained "
+                      "on these) ===")
+                print(f"{'uuid':18}{'split':6}{'champ':>6}{'cand':>6}  show")
+                rows = []
+                for r in ho_aug:
+                    cj, kj = _iou_of(_depH, r), _iou_of(mlp_prod_clf, r)
+                    insplit = "test" if r[0] in test_uuids else "train"
+                    rows.append((insplit, cj, kj))
+                    print(f"{r[0][:18]:18}{insplit:6}{cj:6.2f}{kj:6.2f}  "
+                          f"{r[1][:32]}")
+                champ_all = [c for _, c, _ in rows]
+                tt = [(c, k) for s, c, k in rows if s == "test"]
+                if champ_all:
+                    print(f"\nchampion median over ALL {len(champ_all)} holdout "
+                          f"recs: {float(np.median(champ_all)):.3f}  "
+                          f"(vs its frozen-split ~0.858)")
+                if tt:
+                    print(f"holdout∩test ({len(tt)} recs, NEITHER head trained): "
+                          f"champion {float(np.median([c for c, _ in tt])):.3f} "
+                          f"vs candidate "
+                          f"{float(np.median([k for _, k in tt])):.3f}")
+                print("read: champion holds ~0.85 on never-seen → genuine "
+                      "(keep); drops a lot → overfit to frozen split "
+                      "(reset-baseline justified)")
+
         # Phase D: Platt calibration on MLP logits. MLPClassifier
         # exposes predict_proba (= already sigmoid'd); recover logits
         # via the inverse: logit = log(p / (1-p)). Then fit the same

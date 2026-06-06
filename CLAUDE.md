@@ -192,6 +192,27 @@ exist: see project memory `pi5_mac_split_design`.
          in progress, naturally resolves).
        - Default case (same test-set + same feature dim): REJECT if
          IoU drops > 5 pp OR Acc > 3 pp vs last deployed.
+       - **Head-to-head (current primary path):** instead of the historical
+         floor, re-score the *deployed champion* on THIS run's exact test set and
+         deploy unless `candidate_tv_median < deployed_tv_median − 0.02`. Robust
+         to test-set drift.
+       - **CRITICAL — honest gate head (2026-06-06):** the deployed `head.bin` is
+         the `--final-on-all` refit, which trains on train+test, so re-scoring IT
+         on the test set is scoring on training data → inflated ~0.04 (bias-check:
+         all-data 0.844 vs train-only held-out 0.802). That memorisation bias made
+         the gate reject genuinely-as-good candidates for weeks (the "plateau",
+         papered over with `--reset-baseline`). FIX: the train-only head is
+         snapshotted before the all-data rebind and written as **`head.gate.bin`**
+         next to head.bin on deploy; the head-to-head re-scores `head.gate.bin`
+         (never trained on the test set → honest) so candidate-train-only is
+         compared against champion-train-only — both honest. `head.gate.bin` is
+         **local-only** (Mac `/tmp/tv-train-head-out`, like head.bin; not shipped
+         to the Pi — the detector only needs head.bin). Falls back to head.bin
+         until the first deploy writes a gate head; activate via a one-time
+         `--reset-baseline`. Verify in the log: `head-to-head champion source:
+         head.gate.bin`. `--reset-baseline` should now rarely be needed.
+       - `BIAS_CHECK=1` env prints the all-data-refit-on-test vs train-only
+         held-out gap (the diagnostic that proved the inflation).
     7. Writes `head.bin`, `archive/head.<ts>.bin`, `head.history.json`
        (now includes `n_features`), `head.uncertain.txt` (top-N
        split half between high-uncertainty + half between

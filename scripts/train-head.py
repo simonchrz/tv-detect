@@ -834,6 +834,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     suffix = f" (smooth={smooth_s}s)" if smooth_s > 0 else ""
     print(f"\n=== held-out evaluation{suffix} ===")
     by_show = {}  # title -> {frames, correct, tp, fp, fn, ious[], n_recs}
+    per_rec_iou = {}  # uuid -> IoU, for the paired head-to-head gate
     overall_frames = overall_correct = 0
     half_w = int(smooth_s * fps_extract / 2) if smooth_s > 0 else 0
     for uuid, title, ads, X, y, *_ in recs:
@@ -850,6 +851,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         # ads is already in seconds (start, end pairs).
         gt_blocks = [(float(a[0]), float(a[1])) for a in ads]
         iou = block_iou(pred_blocks, gt_blocks)
+        per_rec_iou[uuid] = iou
         b = by_show.setdefault(title, {"frames": 0, "correct": 0,
                                        "tp": 0, "fp": 0, "fn": 0,
                                        "ious": [], "n_recs": 0})
@@ -932,7 +934,8 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
             "iou_tv": iou_tv if iou_tv is not None else overall_iou,
             "iou_tv_median": (iou_tv_median if iou_tv_median is not None
                               else overall_iou_median),
-            "n_recs": len(recs), "n_frames": overall_frames}
+            "n_recs": len(recs), "n_frames": overall_frames,
+            "per_rec_iou": per_rec_iou}
 
 
 def labels_for(seconds, ad_blocks):
@@ -3229,23 +3232,49 @@ def main():
             # regression vs the deployed head on the same data.
             def _med(m):
                 return m.get("iou_tv_median", m.get("iou_median", m.get("iou", 0.0)))
-            cand = _med(metrics_smooth)
-            dep = _med(deployed_test_metrics)
-            # Tight slack: the comparison is precise (identical test set, the MLP
-            # fit is deterministic), so a drop is real, not test-set noise. 2 pp
-            # lets a fresher-data retrain through on a near-tie without ratcheting
-            # the deployed quality down run-over-run. (rollback_iou_drop=5pp is
-            # for the looser cross-test-set fallback below.)
-            HEAD2HEAD_SLACK = 0.02
-            if cand < dep - HEAD2HEAD_SLACK:
-                deploy = False
-                reason = (f"head-to-head on {cur_n} test recs: candidate "
-                          f"TV-median-IoU {cand:.3f} < deployed {dep:.3f} − "
-                          f"{HEAD2HEAD_SLACK:.2f} — regression, keeping current head")
+            # PAIRED comparison: both heads scored the SAME recs, so compare PER
+            # REC (candidate_iou − champion_iou) instead of two independent
+            # medians. Per-rec difficulty cancels in the delta — a hard rec drags
+            # both heads equally — so the ±0.05 test-set noise that made a true
+            # tie look like a 0.05 "regression" (2026-06-05: same head scored
+            # 0.802 then 0.757 on different samples) is gone. A bootstrap CI on
+            # the median delta then decides significance, so a noisy near-tie
+            # can't flip the gate. Keep the champion ONLY on a confident
+            # regression; otherwise deploy the fresher candidate.
+            cand_pr = metrics_smooth.get("per_rec_iou") or {}
+            dep_pr = deployed_test_metrics.get("per_rec_iou") or {}
+            shared = [u for u in cand_pr if u in dep_pr]
+            if len(shared) >= 10:
+                deltas = np.array([cand_pr[u] - dep_pr[u] for u in shared])
+                med_d = float(np.median(deltas))
+                n_better = int((deltas > 0.02).sum())
+                n_worse = int((deltas < -0.02).sum())
+                rng = np.random.default_rng(0)  # deterministic CI
+                boot = np.array([np.median(rng.choice(deltas, len(deltas), replace=True))
+                                 for _ in range(2000)])
+                lo, hi = float(np.percentile(boot, 5)), float(np.percentile(boot, 95))
+                PAIRED_SLACK = 0.005
+                base = (f"head-to-head PAIRED on {len(shared)} recs: median Δ "
+                        f"{med_d:+.3f} (90% CI [{lo:+.3f},{hi:+.3f}]), "
+                        f"{n_better} better / {n_worse} worse")
+                if hi < -PAIRED_SLACK:  # 95%-confident the candidate is worse
+                    deploy = False
+                    reason = base + " — confident regression, keeping current head"
+                else:
+                    reason = base + " — not a confident regression, deploy"
             else:
-                reason = (f"head-to-head on {cur_n} test recs: candidate "
-                          f"TV-median-IoU {cand:.3f} ≥ deployed {dep:.3f} "
-                          f"(floor {dep-HEAD2HEAD_SLACK:.3f}) — deploy")
+                # too few shared recs (or old metrics w/o per_rec_iou) → fall back
+                # to the independent-median comparison.
+                cand, dep = _med(metrics_smooth), _med(deployed_test_metrics)
+                if cand < dep - 0.02:
+                    deploy = False
+                    reason = (f"head-to-head on {cur_n} test recs: candidate "
+                              f"TV-median-IoU {cand:.3f} < deployed {dep:.3f} − 0.02 "
+                              f"— regression, keeping current head (unpaired fallback)")
+                else:
+                    reason = (f"head-to-head on {cur_n} test recs: candidate "
+                              f"TV-median-IoU {cand:.3f} ≥ deployed {dep:.3f} − 0.02 "
+                              f"— deploy (unpaired fallback)")
         elif prev_n != cur_n:
             # Test set changed → mean-IoU comparison is apples-to-
             # oranges (a single Moonfall-style outlier shifts mean

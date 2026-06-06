@@ -2213,6 +2213,7 @@ def main():
     # metrics_smooth so the deploy-decision branch downstream operates
     # on what we'll actually ship, not on the LogReg baseline.
     mlp_prod_clf = None
+    mlp_gate_clf = None  # train-only head snapshot for the honest head-to-head gate
     mlp_prod_chan_slugs = None
     mlp_prod_in_dim = 0
     wants_mlp = args.head_arch in ("mlp32-channel",
@@ -2308,6 +2309,14 @@ def main():
         metrics_smooth = metrics_smooth_mlp
         mlp_prod_chan_slugs = prod_chan_slugs
         mlp_prod_in_dim = X_train_ch.shape[1]
+        # Snapshot the TRAIN-ONLY head now, before --final-on-all rebinds
+        # mlp_prod_clf to the all-data refit. This honest (held-out) head is
+        # written next to head.bin as head.gate.bin and is what the NEXT run's
+        # head-to-head re-scores — so the gate compares train-only-candidate vs
+        # train-only-champion (both honest) instead of train-only-candidate vs
+        # all-data-champion (which trained on the test set → inflated, the
+        # ~0.04 memorisation bias that kept rejecting good candidates).
+        mlp_gate_clf = mlp_prod_clf
 
         # Head-to-head: re-score the CURRENTLY-DEPLOYED head (args.output still
         # holds it — the candidate is written only after the gate) on this exact
@@ -2320,7 +2329,15 @@ def main():
         # (head.channel-map.json sidecar) before trusting it; otherwise skip and
         # fall back to the floor logic below.
         if test_recs_ch:
-            _dep = load_deployed_mlp(args.output)
+            # Re-score the deployed champion's TRAIN-ONLY gate head (head.gate.bin)
+            # when present — it never trained on the test set, so its score is
+            # honest and comparable to the (also train-only) candidate. Fall back
+            # to head.bin (the all-data, test-inflated head) only until the first
+            # deploy under this scheme has written a head.gate.bin.
+            _gate_path = Path(args.output).with_suffix(".gate.bin")
+            _dep_src = _gate_path if _gate_path.exists() else Path(args.output)
+            _dep = load_deployed_mlp(_dep_src)
+            print(f"  head-to-head champion source: {_dep_src.name}")
             _dep_slugs = None
             _cm = Path(args.output).with_suffix(".channel-map.json")
             if _cm.exists():
@@ -3004,6 +3021,19 @@ def main():
         print(f"  full-data fit acc {full_acc*100:.1f}%, "
               f"epochs {mlp_prod_clf.n_iter_}, "
               f"loss {mlp_prod_clf.loss_:.4f}")
+        # BIAS-CHECK (env BIAS_CHECK): this all-data refit IS what becomes
+        # head.bin / the deployed champion — and it just trained on the TEST set
+        # too. Scoring it on the test set is scoring on TRAINING data → inflated.
+        # The deployed-head re-eval in the gate does exactly this every night, so
+        # the champion gets a memorisation advantage over the honest (train-only)
+        # candidate. This prints the magnitude: all-data-on-test vs the train-only
+        # held-out the gate uses for the candidate.
+        if os.environ.get("BIAS_CHECK") and test_recs_ch:
+            _m_all = eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=10)
+            print(f"  [BIAS-CHECK] all-data refit (=head.bin) re-scored on the "
+                  f"TEST set it TRAINED on: tv-median={_m_all.get('iou_tv_median'):.3f}  "
+                  f"|  honest train-only held-out (gate's candidate metric)="
+                  f"{metrics_smooth.get('iou_tv_median'):.3f}")
 
     # Active-learning surface: pick the N frames per recording where
     # the trained head is least confident. These are the frames worth
@@ -3348,12 +3378,13 @@ def main():
     archive_path = archive_dir / f"head.{ts}.bin"
     is_mlp_write = wants_mlp and mlp_prod_clf is not None
 
-    def _write_head(path):
+    def _write_head(path, clf=None):
+        clf = clf if clf is not None else mlp_prod_clf
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs)
         if wants_whisper:
-            write_mlp_head_v2(path, mlp_prod_clf,
+            write_mlp_head_v2(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=32, backbone_dim=1280,
                               n_logo=n_logo_used,
@@ -3361,7 +3392,7 @@ def main():
                               n_channel=n_chan_used,
                               n_whisper=1)
         else:
-            write_mlp_head_v1(path, mlp_prod_clf,
+            write_mlp_head_v1(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=32, backbone_dim=1280,
                               n_logo=n_logo_used,
@@ -3379,6 +3410,14 @@ def main():
     if deploy:
         if is_mlp_write:
             _write_head(args.output)
+            # Honest gate head: the TRAIN-ONLY snapshot, written next to head.bin
+            # so the NEXT run's head-to-head compares train-only-vs-train-only.
+            # Stays local (Mac /tmp) like head.bin — not shipped to the Pi (the
+            # detector uses head.bin; only train-head's gate reads head.gate.bin).
+            if mlp_gate_clf is not None:
+                _write_head(Path(args.output).with_suffix(".gate.bin"), mlp_gate_clf)
+                print(f"  gate head: {Path(args.output).with_suffix('.gate.bin').name} "
+                      f"(train-only, honest)")
         else:
             with open(args.output, "wb") as f:
                 for w in weights:

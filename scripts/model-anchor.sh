@@ -54,10 +54,14 @@ elif ssh -o ConnectTimeout=3 -o BatchMode=yes "$PI_HOST" "test -d $PI_REMOTE_DIR
   MODELS_DIR="$(mktemp -d)"; MODELS_REMOTE=1
   trap 'rm -rf "$MODELS_DIR"' EXIT
   echo "→ SMB not mounted; pulling models from $PI_HOST:$PI_REMOTE_DIR ..." >&2
-  scp -q "$PI_HOST:$PI_REMOTE_DIR/{head.bin,backbone.onnx,head.history.json}" "$MODELS_DIR/" 2>/dev/null || \
-    for f in head.bin backbone.onnx head.history.json; do
-      scp -q "$PI_HOST:$PI_REMOTE_DIR/$f" "$MODELS_DIR/$f" 2>/dev/null || true
-    done
+  # Pull the head, backbone AND the sidecars: a channel-aware head is
+  # un-restorable without head.channel-map.json, and cmd_auto refuses to
+  # anchor when it's missing. Omitting them here (pre-2026-06-08) made a
+  # manual `auto` from the Mac (SMB unmounted) skip with "no channel-map".
+  for f in head.bin backbone.onnx head.history.json \
+           head.calibration.json head.channel-map.json head.test-set.json; do
+    scp -q "$PI_HOST:$PI_REMOTE_DIR/$f" "$MODELS_DIR/$f" 2>/dev/null || true
+  done
 else
   echo "error: no .tvd-models dir found and Pi unreachable; set TVD_MODELS_DIR" >&2
   exit 1

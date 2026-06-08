@@ -25,6 +25,18 @@ echo "=== $(date '+%F %T') ==="
 # (where tv-detect lives if invoked via the Python path).
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
+# launchd jobs can't reach the login keychain, so `gh` (used by the
+# off-site model-anchor at deploy time) can't read its keyring-stored
+# token → auto-anchor silently failed every night since 2026-06-02.
+# Export GH_TOKEN from secrets.env (chmod 600); gh prefers the env var
+# over the keychain. Fail-soft: if the file/key is absent the anchor
+# stays a no-op, exactly as before.
+SECRETS_ENV="$HOME/.config/tv-stack/secrets.env"
+if [ -f "$SECRETS_ENV" ]; then
+  GH_TOKEN="$(grep -E '^GH_TOKEN=' "$SECRETS_ENV" | head -1 | cut -d= -f2-)"
+  [ -n "$GH_TOKEN" ] && export GH_TOKEN
+fi
+
 # Metadata snapshot: fetch all ads_user.json + cutlist + minute-prior
 # from the gateway via HTTP into a local mirror at SNAPSHOT_DIR.
 # train-head.py then runs with --hls-root pointing at the mirror,

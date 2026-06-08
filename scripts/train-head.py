@@ -3054,12 +3054,55 @@ def main():
         # [0, ~0.6], so divergence cases never surface.
         n_unc = max(1, args.surface_uncertain // 2)
         n_div = args.surface_uncertain - n_unc
+        # Cohort-aware budget: the held-out eval tells us which shows the model
+        # is WEAK on (low Block-IoU = confidently-wrong, exactly the failure the
+        # global uncertainty sampler misses — those frames aren't near p≈0.5, so
+        # pure |p-0.5| ranking never surfaces them). Bias more labelling budget
+        # onto recordings whose show (fallback: channel) scored low on the test
+        # set, so human review concentrates where it actually moves the model.
+        # Uniform fallback when no eval IoU is available.
+        from statistics import median as _median
+        try:
+            _pri = metrics_smooth.get("per_rec_iou") or {}
+        except Exception:
+            _pri = {}
+        _uuid_title = {r[0]: r[1] for r in per_rec}
+        _title_iou, _slug_iou = {}, {}
+        for _u, _io in _pri.items():
+            _t = _uuid_title.get(_u, "")
+            if _t:
+                _title_iou.setdefault(_t, []).append(_io)
+            _s = uuid_slug.get(_u, "")
+            if _s:
+                _slug_iou.setdefault(_s, []).append(_io)
+        _title_iou = {k: _median(v) for k, v in _title_iou.items()}
+        _slug_iou = {k: _median(v) for k, v in _slug_iou.items()}
+        _global_iou = _median(list(_pri.values())) if _pri else 1.0
+
+        def _cohort_mult(title, slug):
+            io = _title_iou.get(title)
+            if io is None:
+                io = _slug_iou.get(slug, _global_iou)
+            if io < 0.30:
+                return 3
+            if io < 0.50:
+                return 2
+            return 1
+
+        _mult_hist = {1: 0, 2: 0, 3: 0}
+        _budget = 0
         skipped_logo = 0
         skipped_whisper = 0
         emitted = 0
         with open(out_path, "w") as f:
             f.write("# uuid\ttime_s\tprobability\ttitle\tsource\n")
             for uuid, title, ads, X, y, *_ in per_rec:
+                # Cohort-weighted per-recording budget (weak shows get more).
+                _slug = uuid_slug.get(uuid, "")
+                mult = _cohort_mult(title, _slug)
+                _mult_hist[mult] = _mult_hist.get(mult, 0) + 1
+                k_unc, k_div = n_unc * mult, n_div * mult
+                _budget += k_unc + k_div
                 # Pad bootstrap recordings (no slug → no logo column
                 # at extract time) up to clf's expected dim so
                 # predict_proba doesn't throw. Same defensive pattern
@@ -3101,13 +3144,13 @@ def main():
                 skipped_whisper += int(skip_mask.sum()) - pre_logo
                 unc = 1.0 - 2.0 * np.abs(proba - 0.5)
                 unc_masked = np.where(skip_mask, -1.0, unc)
-                top_unc_idx = np.argsort(-unc_masked)[:n_unc]
+                top_unc_idx = np.argsort(-unc_masked)[:k_unc]
                 top_unc = set(int(i) for i in top_unc_idx
                               if unc_masked[i] >= 0)
                 top_div = set()
-                slug = uuid_slug.get(uuid, "")
+                slug = _slug
                 start = uuid_start.get(uuid, 0)
-                if minute_prior.get(slug) and start and n_div > 0:
+                if minute_prior.get(slug) and start and k_div > 0:
                     prior_arr = np.array(minute_prior[slug])
                     minutes = ((start + np.arange(n) / args.fps_extract)
                                // 60 % 60).astype(int)
@@ -3119,7 +3162,7 @@ def main():
                     confident_mask = np.abs(proba - 0.5) > 0.3
                     div_masked = np.where(confident_mask & ~skip_mask,
                                           div, -1.0)
-                    top_div_idx = np.argsort(-div_masked)[:n_div]
+                    top_div_idx = np.argsort(-div_masked)[:k_div]
                     top_div = set(int(i) for i in top_div_idx
                                   if div_masked[i] >= 0)
                 # dedupe + chronological order; tag source for the UI
@@ -3132,9 +3175,11 @@ def main():
                 for t, p, src in rows:
                     f.write(f"{uuid}\t{t:.1f}\t{p:.3f}\t{title[:35]}\t{src}\n")
                     emitted += 1
-        cap = (n_unc + n_div) * len(per_rec)
-        print(f"\nactive-learning: top-{n_unc} uncertain + top-{n_div} divergent "
-              f"frames per recording → {out_path}")
+        cap = _budget
+        print(f"\nactive-learning: base top-{n_unc} uncertain + top-{n_div} "
+              f"divergent per recording, cohort-weighted → {out_path}")
+        print(f"  cohort budget: {_mult_hist.get(3, 0)} recs ×3 (IoU<0.30), "
+              f"{_mult_hist.get(2, 0)} ×2 (IoU<0.50), {_mult_hist.get(1, 0)} ×1")
         print(f"  emitted {emitted} (cap {cap}, "
               f"−{cap - emitted} from filters)")
         print(f"  corpus filter populations: {skipped_logo} logo-sentinel, "

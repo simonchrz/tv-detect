@@ -257,12 +257,18 @@ cmd_auto() {
            head.test-set.json head.history.json backbone.onnx; do
     [ -f "$MODELS_DIR/$f" ] && { cp "$MODELS_DIR/$f" "$stage/$f"; assets+=("$stage/$f"); }
   done
-  if gh release create "$tag" --title "Auto champion $ts" \
+  # Capture gh's stderr so a failure is debuggable (the old >/dev/null 2>&1 hid
+  # WHY it failed — auth vs network vs tag-exists all looked identical in the
+  # nightly log). GH_TOKEN (from secrets.env, exported by tv-train-head.sh) is
+  # the auth path under launchd, which can't reach the login keychain.
+  local gherr
+  gherr="$(gh release create "$tag" --title "Auto champion $ts" \
        --notes "Nightly auto-anchor of the deployed head. Restore: model-anchor.sh install auto-$ts" \
-       "${assets[@]}" >/dev/null 2>&1; then
+       "${assets[@]}" 2>&1 >/dev/null)"
+  if [ $? -eq 0 ]; then
     echo "✓ auto-anchored $tag"
   else
-    echo "auto-anchor: gh release create failed (auth/keychain?) — skip" >&2
+    echo "auto-anchor: gh release create failed — skip. gh said: ${gherr:-<no stderr>} (GH_TOKEN ${GH_TOKEN:+set}${GH_TOKEN:-UNSET})" >&2
     return 0
   fi
   # Prune to the last N auto-anchors (release + tag).

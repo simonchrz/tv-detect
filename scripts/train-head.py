@@ -3302,9 +3302,23 @@ def main():
                 base = (f"head-to-head PAIRED on {len(shared)} recs: median Δ "
                         f"{med_d:+.3f} (90% CI [{lo:+.3f},{hi:+.3f}]), "
                         f"{n_better} better / {n_worse} worse")
+                # Broad-flat regression guard: the median delta is robust to
+                # tails, so a candidate slightly worse on MANY recs but unchanged
+                # at the MEDIAN rec sails through hi<-SLACK. 2026-06-09: median Δ
+                # -0.002 (passed) yet 19 worse / 8 better quietly dropped the
+                # overall TV-median 0.80→0.70 and tripped the dashboard's -3.35pp
+                # 7-day-drift flag. n_better/n_worse already count only MEANINGFUL
+                # changes (|Δ|>0.02), so a ≥2× worse-lean with a clear margin is a
+                # real broad regression the robust median misses — keep champion.
+                broad_margin = max(5, round(0.15 * len(shared)))
                 if hi < -PAIRED_SLACK:  # 95%-confident the candidate is worse
                     deploy = False
                     reason = base + " — confident regression, keeping current head"
+                elif (n_worse >= 2 * max(n_better, 1)
+                      and n_worse - n_better >= broad_margin):
+                    deploy = False
+                    reason = base + (f" — broad regression ({n_worse}≥2×{n_better}, "
+                                     f"margin≥{broad_margin}), keeping current head")
                 else:
                     reason = base + " — not a confident regression, deploy"
             else:

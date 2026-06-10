@@ -457,10 +457,27 @@ def _maybe_integrity_sweep():
         try: total += f.stat().st_size
         except Exception: pass
 
+    # Bulk size map (one request) instead of one HEAD per cached uuid — the
+    # per-uuid HEADs hit every dedup-dropped recording with a 404 twice an
+    # hour, forever (Caddy-log noise). A uuid absent from the map = Pi has no
+    # source (dropped / in-progress) = not stale, same verdict the old
+    # 404→None path produced.
+    pi_sizes = None
+    try:
+        with urllib.request.urlopen(
+                f"{GATEWAY}/api/internal/source-sizes",
+                timeout=30, context=CTX) as r:
+            pi_sizes = json.loads(r.read()).get("sizes", {})
+    except Exception:
+        pi_sizes = None  # old recorder / unreachable → per-uuid fallback
+
     def _is_stale(f):
         try:
             cur = f.stat().st_size
-            ps = _pi_source_size(f.stem)
+            if pi_sizes is not None:
+                ps = pi_sizes.get(f.stem)
+            else:
+                ps = _pi_source_size(f.stem)
             return ps is not None and abs(ps - cur) > 8192
         except Exception:
             return False

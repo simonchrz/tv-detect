@@ -6,9 +6,19 @@ BUILD_DIR := build
 LDFLAGS := -s -w  # strip debug + symbol tables — smaller binary
 GOFLAGS := -trimpath
 
-.PHONY: all build build-all darwin-arm64 linux-arm64 linux-amd64 test clean install
+.PHONY: all build build-all darwin-arm64 linux-arm64 linux-amd64 test clean install ffmpeg-master rebuild
 
 all: build
+
+# Refresh the Mac's ffmpeg/ffprobe to the current FFmpeg master (Homebrew
+# --HEAD). Rebuilds only when master actually moved. Kept OUT of `build` so a
+# routine `make build` stays fast — run `make rebuild` (or this target) to also
+# bump ffmpeg.
+ffmpeg-master:
+	@./scripts/refresh-ffmpeg-master.sh
+
+# Full detect rebuild: bump ffmpeg to master, then rebuild the binaries.
+rebuild: ffmpeg-master build
 
 build:
 	@for b in $(BINARIES); do \

@@ -993,8 +993,14 @@ def process_recording(uuid, do_hls, do_thumbs):
                 # h264_videotoolbox 2026-04 — 5× less CPU but 3× SLOWER
                 # wallclock. Wallclock wins for snappier "play-now"
                 # availability after recording ends.
+                # Breite auf 16er-Vielfache runden (statt nur gerade): der
+                # iOS-VT-Super-Resolution-Scaler verlangt 16-aligned Breiten
+                # im process (Mac-Probe + A19-Log 2026-06-10/11) — bei z.B.
+                # 1046 px musste die App-Bridge croppen+kopieren; mit 1040
+                # trifft der Decoder-Buffer die VT-Session exakt (Zero-Copy-
+                # Direct-Pass). AR-Fehler durch round ≤ ~0,8 %, unsichtbar.
                 v_opts = ["-vf",
-                          "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1",
+                          "scale=round(iw*sar/16)*16:trunc(ih/2)*2,setsar=1",
                           "-c:v", "libx264", "-preset", "ultrafast",
                           "-profile:v", "main", "-pix_fmt", "yuv420p",
                           "-g", "50"]

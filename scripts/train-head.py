@@ -1004,6 +1004,26 @@ def _worker_extract(args):
     return cache_path, feats
 
 
+def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper):
+    """Rebuild the channel-one-hot(+whisper) augmented feature matrix a v2 MLP
+    teacher was trained on, so it scores identically in the label-hygiene pass.
+
+    Column order MUST mirror main()'s _aug_test EXACTLY: [base, channel-one-hot
+    (by chan_idx), whisper?]. `chan_idx` maps slug→column from the TEACHER's
+    head.channel-map.json — the one-hot order is run-specific, so the teacher
+    must be scored with ITS OWN map, not the new run's. A misaligned column here
+    would feed the teacher garbage and drop correct frames, so the caller also
+    keeps the per-recording drop-rate cap as a backstop."""
+    T = X.shape[0]
+    oh = np.zeros((T, len(chan_idx)), dtype=np.float32)
+    if slug in chan_idx:
+        oh[:, chan_idx[slug]] = 1.0
+    if wants_whisper:
+        wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
+        return np.hstack([X, oh, wp]).astype(np.float32)
+    return np.hstack([X, oh]).astype(np.float32)
+
+
 def main():
     ap = argparse.ArgumentParser()
     # Defaults are the post-SMB-migration locations: backbone +
@@ -1908,34 +1928,62 @@ def main():
     # head. Capped per-recording so a broken teacher can't nuke
     # everything.
     teacher_w = teacher_b = None
+    teacher_mlp = None        # v2 MLP teacher (predict_proba) when available
+    teacher_chan_idx = None   # slug→col from the TEACHER's own channel-map
+    teacher_whisper = False
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
         try:
             raw = Path(args.output).read_bytes()
-            # Auto-detect head format by raw size; require that the
-            # teacher's input dim matches the current feature dim or
-            # we'd matmul-mismatch (e.g. switching --with-logo on for
-            # the first time produces 1281-dim features but the on-disk
-            # teacher is still 1280-weight from the previous training).
-            # Try every supported feature-dim (legacy, +logo, +chan,
-            # +audio, and combinations). Audio is +1 column, logo is
-            # +1, channel is +len(CHANNELS).
-            cand_dims = set()
-            for L in (0, 1):                 # logo
-                for C in (0, len(CHANNELS)): # channel
-                    for A in (0, 1):         # audio
-                        cand_dims.add(1280 + L + C + A)
-            for cand_dim in sorted(cand_dims):
-                if len(raw) == (cand_dim + 1) * 4 and cand_dim == feat_dim:
-                    teacher_w = np.frombuffer(raw[:cand_dim*4],
-                                              dtype=np.float32)
-                    teacher_b = struct.unpack("<f", raw[cand_dim*4:])[0]
-                    break
-            if teacher_w is None:
-                print(f"label-hygiene: teacher {len(raw)}B incompatible "
-                      f"with current feat_dim={feat_dim} — skipping")
+            mlp = load_deployed_mlp(args.output)
+            if mlp is not None:
+                # v2 MLP teacher. It scores on channel-one-hot(+whisper)
+                # augmented features, so we rebuild them with the TEACHER's OWN
+                # channel-map (one-hot order is run-specific) — from the
+                # head.channel-map.json sidecar next to the head. Derive whisper
+                # presence from the dim budget; ANY mismatch (changed logo/audio
+                # flags, channel set, or a missing map) → skip cleanly rather
+                # than feed a misaligned vector.
+                cmap_path = Path(args.output).with_name(
+                    Path(args.output).stem + ".channel-map.json")
+                slugs = (json.loads(cmap_path.read_text()).get("slugs", [])
+                         if cmap_path.exists() else [])
+                n_chan = len(slugs)
+                if mlp.input_dim == feat_dim + n_chan + 1:
+                    teacher_whisper = True
+                elif mlp.input_dim == feat_dim + n_chan:
+                    teacher_whisper = False
+                else:
+                    mlp = None  # dim budget doesn't add up → unalignable
+                if mlp is not None:
+                    teacher_mlp = mlp
+                    teacher_chan_idx = {s: i for i, s in enumerate(slugs)}
+                    print(f"label-hygiene: v2 MLP teacher loaded "
+                          f"(input_dim={mlp.input_dim}, n_chan={n_chan}, "
+                          f"whisper={teacher_whisper})")
+                else:
+                    print(f"label-hygiene: v2 MLP teacher unalignable "
+                          f"(input_dim={load_deployed_mlp(args.output).input_dim}, "
+                          f"feat_dim={feat_dim}, n_chan={n_chan}, "
+                          f"map={'present' if cmap_path.exists() else 'MISSING'}) "
+                          f"— skipping")
+            else:
+                # Legacy linear (logreg) teacher: size-detected flat weights.
+                cand_dims = {1280 + L + C + A
+                             for L in (0, 1)
+                             for C in (0, len(CHANNELS))
+                             for A in (0, 1)}
+                for cand_dim in sorted(cand_dims):
+                    if len(raw) == (cand_dim + 1) * 4 and cand_dim == feat_dim:
+                        teacher_w = np.frombuffer(raw[:cand_dim*4],
+                                                  dtype=np.float32)
+                        teacher_b = struct.unpack("<f", raw[cand_dim*4:])[0]
+                        break
+                if teacher_w is None:
+                    print(f"label-hygiene: teacher {len(raw)}B incompatible "
+                          f"with current feat_dim={feat_dim} — skipping")
         except Exception:
-            teacher_w = None
+            teacher_mlp = teacher_w = None
     keep_masks = []
     drops_total = drops_kept = 0
     for r in train_recs:
@@ -1948,9 +1996,14 @@ def main():
         is_pseudo = len(r) > 11 and r[11]
         if is_pseudo:
             mask = r[10] if r[10] is not None else np.ones(n, dtype=bool)
-        elif teacher_w is not None:
-            logits = r[3] @ teacher_w + teacher_b
-            proba = 1.0 / (1.0 + np.exp(-logits))
+        elif teacher_mlp is not None or teacher_w is not None:
+            if teacher_mlp is not None:
+                Xa = _augment_teacher_feats(r[3], uuid_slug.get(r[0], ""),
+                                            teacher_chan_idx, r[0], teacher_whisper)
+                proba = teacher_mlp.predict_proba(Xa)[:, 1]
+            else:
+                logits = r[3] @ teacher_w + teacher_b
+                proba = 1.0 / (1.0 + np.exp(-logits))
             # disagreement: label=1 but proba<(1-conf), or label=0 but proba>conf
             disagree = (((r[4] == 1) & (proba < 1 - args.hygiene_disagree_conf)) |
                         ((r[4] == 0) & (proba >     args.hygiene_disagree_conf)))
@@ -1965,7 +2018,7 @@ def main():
         else:
             mask = np.ones(n, dtype=bool)
         keep_masks.append(mask)
-    if teacher_w is not None and drops_kept > 0:
+    if (teacher_mlp is not None or teacher_w is not None) and drops_kept > 0:
         print(f"label-hygiene: dropped {drops_total} frames across "
               f"{drops_kept} recordings (teacher disagreed at conf "
               f">{args.hygiene_disagree_conf})")

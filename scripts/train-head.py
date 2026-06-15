@@ -570,21 +570,49 @@ def extract_logo_per_second(src, logo_path, n_seconds, tv_detect, y_offset=0):
     nan_arr = np.full(n_seconds, np.nan, dtype=np.float32)
     if not logo_path or not Path(logo_path).exists():
         return nan_arr
-    cmd = [tv_detect, "--quiet", "--workers", "4",
+    # --workers 2 (not 4): this subprocess runs INSIDE a worker of the
+    # ProcessPoolExecutor that drives extraction (args.workers, default
+    # 4). 4 outer workers × 4 inner decode threads = 16-way oversubscribe
+    # on a machine that's also running 4 concurrent CoreML backbone
+    # extractions — which starved/killed the logo subprocess for long
+    # recordings, surfacing as whole-recording 100% NaN ("corrupt
+    # stream" in the post-load summary) that re-queued and re-failed
+    # every night without healing. 2 inner threads keeps the logo decode
+    # alive under that load; solo it's only ~40 s for a 75-min recording
+    # so the throughput loss is negligible.
+    cmd = [tv_detect, "--quiet", "--workers", "2",
            "--logo", str(logo_path)]
     if y_offset > 0:
         cmd += ["--logo-y-offset", str(y_offset)]
     cmd += ["--emit-logo-csv", str(src)]
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-    except (subprocess.TimeoutExpired, OSError):
-        return nan_arr
+    # On timeout, SALVAGE the partial stdout the subprocess buffered
+    # before the deadline (TimeoutExpired.stdout) instead of discarding
+    # everything — a timed-out long recording then yields measured
+    # seconds for the chunks that did decode, with only the tail NaN,
+    # rather than an all-NaN row that zeroes the whole recording's
+    # training weight. OSError (spawn/resource failure under contention)
+    # has no output; retry once, then give up to all-NaN.
+    stdout_text = ""
+    for attempt in range(2):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=900)
+            stdout_text = out.stdout or ""
+            break
+        except subprocess.TimeoutExpired as e:
+            stdout_text = e.stdout or ""  # partial CSV decoded so far
+            break
+        except OSError:
+            if attempt == 0:
+                time.sleep(5)
+                continue
+            return nan_arr
     # NOTE: do NOT bail on returncode != 0 — partial CSV (= what chunks
     # successfully decoded before the failed one aborted) is still
     # useful. Untouched seconds stay NaN.
     sums = np.zeros(n_seconds, dtype=np.float64)
     counts = np.zeros(n_seconds, dtype=np.int32)
-    for line in out.stdout.splitlines():
+    for line in stdout_text.splitlines():
         if not line or line.startswith("idx"):
             continue
         parts = line.split(",")
@@ -1610,6 +1638,70 @@ def main():
                 print(f"  ⚠ skipped {skipped} recording(s) due to extract errors",
                       flush=True)
         print(f"  parallel extract: {time.time()-t0:.1f}s for {len(todo)} recordings")
+
+    # Pass 2.6 — SERIAL logo-NaN salvage. The parallel Pass 2 runs `args.workers`
+    # outer workers, each driving a CoreML backbone pass AND a logo subprocess;
+    # on LONG recordings the logo subprocess gets starved/killed under that load
+    # and the whole recording comes back 100% NaN (the .ts is fine — solo
+    # re-extraction yields full valid confidences). The cached-NaN guard above
+    # only re-queues such recordings into the SAME contended pool next run, so
+    # they re-fail and never heal (re-confirmed 2026-06-15: 9 long garden/Galileo
+    # recs, all 100% NaN in the cron, all 0% NaN extracted solo). Here we
+    # re-extract the logo column ALONE — no ProcessPoolExecutor, no GPU
+    # contention — and patch it back into the .npy. Solo is ~40 s even for a 2 h
+    # recording, and this only runs for the offenders that Pass 2 left NaN.
+    if args.with_logo:
+        salvage_logo_dir = Path(args.logo_dir)
+        salvage = []
+        seen_cp = set()
+        for rec_info, cache_path in (
+                [(ri, cp) for ri, _, cp in todo] +
+                [(ri, cp) for ri, cp in cached]):
+            cp = str(cache_path)
+            if cp in seen_cp:
+                continue
+            src = rec_info[6]; slug = rec_info[4]
+            if not src or not Path(src).exists() or not slug:
+                continue  # dedup'd (no .ts) or no slug → can't re-extract
+            cand = salvage_logo_dir / f"{slug}.logo.txt"
+            if not (cand.is_file() and cand.stat().st_size > 0):
+                continue
+            try:
+                arr = np.load(cp, mmap_mode="r")
+            except Exception:
+                continue
+            if arr.ndim != 2 or arr.shape[1] <= 1280 or len(arr) == 0:
+                continue
+            nan_pct = 100.0 * np.isnan(arr[:, 1280]).sum() / len(arr)
+            if nan_pct >= args.reextract_logo_nan_pct:
+                salvage.append((rec_info, cp, str(cand), nan_pct))
+                seen_cp.add(cp)
+        if salvage:
+            print(f"logo-salvage: {len(salvage)} recording(s) ≥"
+                  f"{args.reextract_logo_nan_pct:.0f}% logo-NaN after parallel "
+                  f"extract — re-extracting SOLO (no contention)...", flush=True)
+            t0 = time.time(); healed = 0
+            for rec_info, cp, logo_path, before in salvage:
+                src = rec_info[6]
+                try:
+                    feats = np.load(cp)
+                    y_off = detect_letterbox_offset(src)
+                    logo_arr = extract_logo_per_second(
+                        src, logo_path, n_seconds=feats.shape[0],
+                        tv_detect=args.tv_detect, y_offset=y_off)
+                    after = 100.0 * np.isnan(logo_arr).sum() / max(len(logo_arr), 1)
+                    if after < before:
+                        feats[:, 1280] = logo_arr.astype(np.float32)
+                        np.save(cp, feats)
+                        healed += 1
+                    print(f"  {'✓' if after < before else '·'} "
+                          f"{rec_info[0][:8]} {rec_info[1][:35]} "
+                          f"{before:.0f}%→{after:.0f}% NaN", flush=True)
+                except Exception as e:
+                    print(f"  ✗ {rec_info[0][:8]} {rec_info[1][:35]} — "
+                          f"{type(e).__name__}: {str(e)[:80]}", flush=True)
+            print(f"  logo-salvage: healed {healed}/{len(salvage)} in "
+                  f"{time.time()-t0:.1f}s", flush=True)
 
     # Pass 2.5 — generate bumpers.json for any recording missing one,
     # in parallel. Cheap (ffmpeg-only, no ML, ~10 s per recording on

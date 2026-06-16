@@ -1004,9 +1004,34 @@ def process_recording(uuid, do_hls, do_thumbs):
                           "-c:v", "libx264", "-preset", "ultrafast",
                           "-profile:v", "main", "-pix_fmt", "yuv420p",
                           "-g", "50"]
+            # Audio: re-encode to AAC. Stereo (the 99.7% case) → 128k as before.
+            # Multichannel broadcast (AC-3 5.1) → force an explicit 5.1 layout so
+            # the output ASC carries channel_configuration=6. Some sources (and
+            # older ffmpeg encodes) emit channel_configuration=0+PCE / "unknown",
+            # which libavcodec tolerates (guesses 5.1) but Apple AudioToolbox /
+            # AVPlayer reject → first-frame stall. 5.1 is preserved (no downmix);
+            # bump to 256k since 128k is too low for six channels. Only triggers
+            # on channels==6 (DE DVB surround is 5.1; leaves any other count
+            # untouched). Lets the app's ad-editor move off mpv onto AVPlayer.
+            a_opts = ["-c:a", "aac", "-b:a", "128k"]
+            try:
+                ap = subprocess.run(
+                    [FFPROBE, "-v", "error", "-select_streams", "a:0",
+                     "-show_entries", "stream=channels", "-of",
+                     "default=nokey=1:noprint_wrappers=1", src_url],
+                    capture_output=True, text=True, timeout=30, env=SPAWN_ENV)
+                # A multi-program TS lists the stream once per program, so stdout
+                # can be "6\n6" — take the first token (and string-compare, no
+                # int() that would throw on the multi-line form).
+                ch = (ap.stdout or "").split()
+                if ch and ch[0] == "6":
+                    a_opts = ["-af", "aformat=channel_layouts=5.1",
+                              "-c:a", "aac", "-b:a", "256k"]
+            except Exception:
+                pass  # probe fail → safe default (128k stereo path)
             cmd += [
                 "-map", "0:v:0", "-map", "0:a:0?",
-                *v_opts, "-c:a", "aac", "-b:a", "128k",
+                *v_opts, *a_opts,
                 "-f", "hls",
                 "-hls_time", "6",
                 "-hls_list_size", "0",

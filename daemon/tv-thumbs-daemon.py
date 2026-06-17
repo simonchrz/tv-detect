@@ -281,7 +281,7 @@ PREFETCH_INTERVAL_S = 1800
 PREFETCH_PARALLEL   = 3
 PREFETCH_PER_CYCLE  = 5
 PREFETCH_HEADROOM_GB = 10
-DROP_SWEEP_PER_CYCLE = 25   # re-attempt drop-pi-source for N aged cached recs/cycle
+DROP_SWEEP_PER_CYCLE = 60   # re-attempt drop-pi-source for N aged cached recs/cycle
 _last_prefetch = 0.0
 # Layer-3 integrity sweep: periodically report the Mac-side health signals
 # (stale source caches, orphan-pending) to the Pi's /api/integrity. The
@@ -609,10 +609,19 @@ def _drop_sweep(cached):
     at cache time (in get_source), but if the recording was <3 days old
     then the gateway's age-gate returned 409 and nothing ever retried it —
     so the .ts accumulates forever. This sweeps a batch per cycle; the
-    gateway's guards still decide eligibility. Sorted + _dropped_uuids
-    bookkeeping make it advance through the backlog without re-hitting
-    already-handled recordings."""
-    candidates = sorted(cached - _dropped_uuids)
+    gateway's guards still decide eligibility. _dropped_uuids bookkeeping
+    makes it advance through the backlog without re-hitting already-handled
+    recordings.
+
+    Sorted OLDEST-FIRST by the start-epoch in the uuid (dvr-<slug>-<epoch>):
+    aged (>72h) recordings are the eligible ones, so they drain before fresh
+    recs that only return 409. The old alphabetical sort let early-alphabet
+    fresh recs perpetually occupy the batch head and starve the backlog
+    (2026-06-17: ~37 GB of eligible .ts had accumulated unswept)."""
+    def _start_epoch(u):
+        tail = u.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else 0
+    candidates = sorted(cached - _dropped_uuids, key=_start_epoch)
     if not candidates:
         return
     batch = candidates[:DROP_SWEEP_PER_CYCLE]

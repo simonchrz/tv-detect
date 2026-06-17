@@ -288,6 +288,16 @@ _last_prefetch = 0.0
 # get_source guard FIXES stale caches reactively; this COUNTS them proactively
 # so the dashboard/HA can flag accumulation before a nightly trains on them.
 INTEGRITY_INTERVAL_S = 1800
+# Auto-sched reaper: delete active-learning auto-scheduled training recordings
+# once the nightly has frozen them into the deletion-safe train-archive (.npz).
+# After archival the corpus + sticky test-set live in the .npz, so the VOD/.ts
+# are redundant — but nothing auto-removes them, so the 04:30 sampler's recs
+# accumulate forever. Identify them via the auto-schedule-log (NOT the
+# api:create_by_event creator tag — that also covers the user's own
+# record-by-event timers). See memory pi_disk_dedup_with_t7_cache.
+AUTOSCHED_REAP_INTERVAL_S = 6 * 3600
+_last_autosched_reap = 0.0
+_reaped_autosched = set()
 _last_integrity = 0.0
 # Host-stats push for the app's parent-diagnostics panel: cpu/disk every 30s to
 # the Pi's /api/internal/host-stats (merged into GET /api/status/host). One Mac
@@ -435,6 +445,58 @@ def _maybe_prefetch_sources(in_flight_n):
     with ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL) as ex:
         list(ex.map(get_source, todo))
     print(f"  prefetch: cycle done in {time.time()-t0:.0f}s", flush=True)
+
+
+def _maybe_reap_autosched():
+    """Delete active-learning auto-scheduled recordings once they're frozen into
+    the deletion-safe train-archive (~/.cache/tvd-train-archive/<uuid>.npz). The
+    .npz preserves the recording in the corpus + sticky test-set, so deleting the
+    VOD/.ts after archival is eval-safe. Only touches recordings the 04:30
+    auto-scheduler created (auto-schedule-log dvr_uuid), never the user's own
+    timers. Full delete (entry + HLS-VOD + .ts) via the gateway."""
+    global _last_autosched_reap
+    now = time.time()
+    if now - _last_autosched_reap < AUTOSCHED_REAP_INTERVAL_S:
+        return
+    _last_autosched_reap = now
+    try:
+        log = http_get_json(f"{GATEWAY}/api/learning/auto-schedule-log")
+        grid = http_get_json(f"{GATEWAY}/api/dvr/entry/grid_finished?limit=5000")
+    except Exception as e:
+        print(f"  autosched-reap: fetch failed: {e}", flush=True)
+        return
+    # Guard: only delete entries the auto-scheduler actually OWNS now
+    # (creator==api:create_by_event). A logged uuid can collide with a user
+    # autorec recording (same slug+start uuid) — that one's creator is
+    # autorec:* and must never be reaped. User manual record-by-event is also
+    # create_by_event but never appears in the auto-schedule-log, so it's safe.
+    owner = {g.get("uuid"): (g.get("creator"), g.get("sched_status"))
+             for g in grid.get("entries", [])}
+    reaped = 0
+    for e in log.get("entries", []):
+        uuid = e.get("dvr_uuid")
+        if not (e.get("ok") and uuid) or uuid in _reaped_autosched:
+            continue
+        if e.get("stop", 0) > now:
+            continue  # still upcoming / recording — never delete an in-flight one
+        creator, status = owner.get(uuid, (None, None))
+        if creator != "api:create_by_event" or status != "completed":
+            continue  # gone, or owned by autorec/user — not ours to reap
+        if not (TVD_ARCHIVE / f"{uuid}.npz").exists():
+            continue  # not yet frozen into the corpus → keep on disk
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/recording/{uuid}/delete", method="DELETE")
+            urllib.request.urlopen(req, timeout=15, context=CTX).read()
+            _reaped_autosched.add(uuid)
+            reaped += 1
+            print(f"  autosched-reap: deleted archived training rec {uuid} "
+                  f"({e.get('title','')})", flush=True)
+        except Exception as ex:
+            print(f"  autosched-reap: delete {uuid[:12]} failed: {ex}", flush=True)
+    if reaped:
+        print(f"  autosched-reap: removed {reaped} archived auto-sched recording(s)",
+              flush=True)
 
 
 def _maybe_integrity_sweep():
@@ -1759,6 +1821,7 @@ def main():
     while True:
         cycle += 1
         _maybe_gc_orphans()
+        _maybe_reap_autosched()
         _gc_stuck_in_flight()
         thumbs = hls = detect = detect_low = []
         try:

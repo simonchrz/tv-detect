@@ -2,55 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.user.tv-thumbs-daemon</string>
-  <key>ProgramArguments</key>
-  <!-- Pin the interpreter: the script's shebang is `#!/usr/bin/env python3`,
-       which under launchd resolves PATH-dependently across THREE pythons
-       (homebrew 3.14 default, homebrew 3.13 versioned, Xcode /usr/bin 3.9).
-       Xcode 3.9 crash-looped the daemon (mkstemp EPERM on the FSKit-exfat T7).
-       Pin homebrew 3.13 (validated) so restarts are deterministic. -->
-  <array>
-    <string>/opt/homebrew/bin/python3.13</string>
-    <string>/Users/simon/bin/tv-thumbs-daemon.py</string>
-  </array>
-  <!-- Long-running daemon: poll loop runs forever -->
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <!-- GATEWAY on :8443 (Caddy) so go-front (:8080) can leave the data path.
-       The old "~40% Caddy CPU on TLS bulk transfers" rationale for :8080 was
-       DISPROVEN 2026-06-01: measured Caddy at 0.05% CPU during a TLS .ts bulk
-       pull (Pi5 ARM HW-AES makes TLS ~free); it was a tvh-era guess, never
-       measured. Caddy routes /api/internal/* + /recording/* directly to
-       tv-recorder(:9984)/tv-receiver(:9983). The daemon's urlopen calls all
-       pass context=CTX (CERT_NONE) for the self-signed local CA. -->
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>GATEWAY</key><string>https://raspberrypi5lan:8443</string>
-    <!-- 3 detect jobs in parallel; each tv-detect uses --workers 8//3 = 2.
-         Higher (4+) hits CPU contention, lower throughput per measurement. -->
-    <key>DETECT_PARALLEL</key><string>3</string>
-    <!-- T7 source-archive cap (NOT a 150 GB working set). After caching, the
-         daemon drops the Pi-original .ts (dedup), so most cached .ts are the
-         SOLE remaining copy — the LRU eviction's sole-copy guard protects
-         those, leaving the cap to bound only evictable dual-copies. Sized to
-         the T7 (1.8 TiB) with headroom so the archive isn't falsely "over cap". -->
-    <key>SOURCE_CACHE_MAX_GB</key><string>1700</string>
-    <!-- Speaker fingerprint orchestration: extract embeddings on
-         first detect, build per-show centroid (or single-episode if
-         only one usable), compute speaker.csv, pass --speaker-csv +
-         --speaker-weight to tv-detect. Net IoU effect across 95
-         recordings was +0.00 (3 wins / 89 same / 3 losses) but the
-         wins are real for cast-stable shows (Big Bang Theory, taff,
-         Desperate Housewives). Disable via SPEAKER_ENABLE=0 if it
-         ever causes a regression. -->
-    <key>SPEAKER_ENABLE</key><string>1</string>
-    <key>SPEAKER_WEIGHT</key><string>0.3</string>
-  </dict>
-  <!-- Throttle restart so a crash loop doesn't burn CPU -->
-  <key>ThrottleInterval</key><integer>30</integer>
-  <key>StandardOutPath</key>
-  <string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>DETECT_PARALLEL</key>
+		<string>3</string>
+		<key>GATEWAY</key>
+		<string>https://raspberrypi5lan:8443</string>
+		<key>SOURCE_CACHE_MAX_GB</key>
+		<string>1700</string>
+		<key>SPEAKER_ENABLE</key>
+		<string>1</string>
+		<key>SPEAKER_WEIGHT</key>
+		<string>0.3</string>
+		<key>WHISPER_TRANSCRIBE</key>
+		<string>1</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.user.tv-thumbs-daemon</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3.13</string>
+		<string>/Users/simon/bin/tv-thumbs-daemon.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/simon/Library/Logs/tv-thumbs-daemon.log</string>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
 </dict>
 </plist>

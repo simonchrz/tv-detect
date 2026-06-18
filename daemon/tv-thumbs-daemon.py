@@ -133,6 +133,15 @@ SPEAKER_SCRIPTS = Path("/Users/simon/src/tv-detect/scripts")
 # extend on truncated ad-block ends (Charmed +10.6%, The Middle +21.7%).
 # Pass-through-safe: any error preserves the raw cutlist.
 WHISPER_ENABLE = os.environ.get("WHISPER_ENABLE", "0") == "1"
+# Transcript production for /api/recordings/search is DECOUPLED from the
+# whisper cutlist-refiner above. The refiner was superseded by the speaker
+# signal ~2026-06-01 (SPEAKER_ENABLE), and turning WHISPER_ENABLE off
+# silently killed search-transcript coverage (whisper.json is the only data
+# source the FTS5 index has). This flag runs classify + reindex-push for
+# EVERY detected recording, independent of which ad-classifier is active.
+# Defaults ON (fail-safe): search is a shipping feature, so coverage must
+# survive an env reset — the very failure mode that caused the 06-01 stall.
+WHISPER_TRANSCRIBE = os.environ.get("WHISPER_TRANSCRIBE", "1") == "1"
 # Spot-fingerprint extraction (audio Chromaprint + visual dHash).
 # Default ON — Mac is the source of truth for spot extraction
 # (Pi worker disabled, Mac fast). Drains the gateway queue
@@ -145,25 +154,22 @@ WHISPER_PYTHON = os.environ.get(
     "/Users/simon/ml/tv-classifier/.venv/bin/python")
 WHISPER_SCRIPTS = Path("/Users/simon/src/tv-detect/daemon")
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
-if WHISPER_ENABLE:
+if WHISPER_ENABLE or WHISPER_TRANSCRIBE:
     WHISPER_CACHE.mkdir(parents=True, exist_ok=True)
 
 
-def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
-    """Run whisper-classify (idempotent — cached per-uuid) then pipe the
-    raw cutlist through tv-whisper-postprocess. Returns refined cutlist
-    on success, raw cutlist on any error. Adds ~50 s wallclock per
-    detect on the first run; cached runs cost ~3 s (postprocess only)."""
-    if not WHISPER_ENABLE:
-        return raw_cutlist
+def _whisper_ensure_and_push(uuid, src_path):
+    """Ensure ~/.cache/tv-whisper/<uuid>.whisper.json exists (idempotent
+    classify — ~50 s first run, ~0 s when fresh) and push it to the gateway
+    so the /search FTS5 index can pick it up. Returns the whisper.json path
+    on success, None on any error (pass-through-safe). Shared by the
+    decoupled transcript producer and the (optional) cutlist refiner."""
     if not src_path or not Path(src_path).is_file():
-        return raw_cutlist
+        return None
     whisper_path = WHISPER_CACHE / f"{uuid}.whisper.json"
     classify_py = WHISPER_SCRIPTS / "tv-whisper-classify.py"
-    postprocess_py = WHISPER_SCRIPTS / "tv-whisper-postprocess.py"
-    if not classify_py.is_file() or not postprocess_py.is_file():
-        return raw_cutlist
-    # Step 1: ensure whisper.json exists (idempotent, returns 0 if fresh)
+    if not classify_py.is_file():
+        return None
     try:
         r = subprocess.run(
             [WHISPER_PYTHON, str(classify_py),
@@ -176,10 +182,10 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
                   f"    stderr (last 600): {err[-600:]}\n"
                   f"    stdout (last 200): {out[-200:]}",
                   flush=True)
-            return raw_cutlist
+            return None
     except Exception as e:
         print(f"  detect {uuid[:8]} whisper-classify err: {e}", flush=True)
-        return raw_cutlist
+        return None
     # Push the whisper.json to the gateway so /search can index it.
     # Best-effort — failure here doesn't affect cutlist refinement.
     try:
@@ -192,6 +198,33 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
     except Exception as e:
         print(f"  detect {uuid[:8]} whisper-reindex push err: {e}",
               flush=True)
+    return whisper_path
+
+
+def _maybe_whisper_transcribe(uuid, src_path):
+    """Decoupled transcript production for /api/recordings/search. Runs for
+    every recording regardless of WHISPER_ENABLE (the cutlist refiner), so
+    search coverage no longer depends on the active ad-classifier. No-op when
+    WHISPER_TRANSCRIBE is off or no local source is available."""
+    if not WHISPER_TRANSCRIBE:
+        return
+    _whisper_ensure_and_push(uuid, src_path)
+
+
+def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
+    """Pipe the raw cutlist through tv-whisper-postprocess (FP-killer /
+    boundary-extend / missed-adder). Returns refined cutlist on success, raw
+    cutlist on any error. Adds ~50 s wallclock on the first run; cached runs
+    cost ~3 s (postprocess only)."""
+    if not WHISPER_ENABLE:
+        return raw_cutlist
+    postprocess_py = WHISPER_SCRIPTS / "tv-whisper-postprocess.py"
+    if not postprocess_py.is_file():
+        return raw_cutlist
+    # Step 1: ensure whisper.json exists (idempotent) + index for search.
+    whisper_path = _whisper_ensure_and_push(uuid, src_path)
+    if whisper_path is None:
+        return raw_cutlist
     # Step 2: pipe raw cutlist through postprocess
     try:
         diag_path = WHISPER_CACHE / f"{uuid}.postprocess.json"
@@ -1689,10 +1722,16 @@ def process_detect(uuid):
     rec_ts = cfg.get("start_real") or cfg.get("start") or 0
     is_recent = (time.time() - rec_ts) < 14 * 86400 if rec_ts else True
     is_test_uuid = cfg.get("is_test_uuid", False)
-    if WHISPER_ENABLE and (is_recent or is_test_uuid):
+    # Transcript production (for /search) runs for ALL recordings; the cutlist
+    # refiner stays gated + recent/test-only (its IoU gain is marginal on old
+    # recordings vs the ~50 s cost). One get_source() feeds both.
+    need_refine = WHISPER_ENABLE and (is_recent or is_test_uuid)
+    if WHISPER_TRANSCRIBE or need_refine:
         local_ts = get_source(uuid)
         if local_ts:
-            cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
+            _maybe_whisper_transcribe(uuid, str(local_ts))
+            if need_refine:
+                cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
     try:
         http_post_stream(
             f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}",

@@ -480,7 +480,9 @@ def _maybe_reap_autosched():
         if e.get("stop", 0) > now:
             continue  # still upcoming / recording — never delete an in-flight one
         creator, status = owner.get(uuid, (None, None))
-        if creator != "api:create_by_event" or status != "completed":
+        # api:auto-train = the auto-scheduler's new distinct tag; api:create_by_event
+        # = its old tag (+ manual record-by-event, which the in-log check excludes).
+        if creator not in ("api:auto-train", "api:create_by_event") or status != "completed":
             continue  # gone, or owned by autorec/user — not ours to reap
         if not (TVD_ARCHIVE / f"{uuid}.npz").exists():
             continue  # not yet frozen into the corpus → keep on disk

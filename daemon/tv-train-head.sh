@@ -190,12 +190,12 @@ if [ "$rc" -eq 0 ]; then
   # local full-bundle archive + rollback-head.sh is the reliable path; this is
   # the off-site DR bonus. Only on a real deploy (rc==0, head changed).
   if [ "$rc" -eq 0 ]; then
-    # Diagnostic markers: auto-anchor produced NO output at all on the
-    # 06-10/11/12 nightly runs (neither ✓ nor failure) though it works run by
-    # hand and the deploy was rc==0 — the launchd context skips/swallows it for
-    # reasons invisible in the log. These two lines prove whether the block is
-    # reached and whether GH_TOKEN is present there. Remove once root-caused.
-    echo "auto-anchor: invoking (rc=$rc, GH_TOKEN ${GH_TOKEN:+set}${GH_TOKEN:-UNSET})"
+    # Root-caused 2026-06-19: the nightly auto-anchor silently exit-1'd because
+    # model-anchor.sh ran `gh release create` without --repo and launchd's cwd
+    # is / (no git remote) → gh failed → set -e killed it before logging. Fixed
+    # by pinning --repo "$ANCHOR_REPO" in model-anchor.sh. (The earlier
+    # diagnostic echo here leaked GH_TOKEN into the log — removed.)
+    echo "auto-anchor: invoking (rc=$rc)"
     TVD_MODELS_DIR="$TRAIN_OUT" \
       "$HOME/src/tv-detect/scripts/model-anchor.sh" auto 2>&1 | sed 's/^/  /'
     echo "auto-anchor: model-anchor.sh auto done (pipe-status=${PIPESTATUS[0]})"

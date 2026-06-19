@@ -33,6 +33,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANCHOR_PREFIX="model-anchor-"
+# Pin the release repo explicitly. Without this, `gh release …` infers the repo
+# from the cwd's git remote — which silently breaks the nightly auto-anchor:
+# launchd runs the trainer with cwd=/ (no WorkingDirectory set), so gh dies with
+# "not a git repository" and, under `set -e`, takes the whole script with it
+# before any error is logged. Anchoring stalled 2026-06-12 this way.
+ANCHOR_REPO="${TVD_ANCHOR_REPO:-simonchrz/tv-detect}"
 
 PI_HOST="${TVD_PI_HOST:-raspberrypi5lan}"
 PI_REMOTE_DIR="/mnt/nvme/tv/hls/.tvd-models"
@@ -168,7 +174,7 @@ cmd_create() {
   [ -f "$stage/head.calibration.json" ] && assets+=("$stage/head.calibration.json")
   [ -f "$stage/head.channel-map.json" ] && assets+=("$stage/head.channel-map.json")
   [ -f "$stage/head.test-set.json" ]    && assets+=("$stage/head.test-set.json")
-  gh release create "$tag" \
+  gh release create "$tag" --repo "$ANCHOR_REPO" \
     --title "Model anchor: $raw_tag" \
     --notes-file "$body" \
     "${assets[@]}"
@@ -186,7 +192,7 @@ cmd_install() {
   trap "rm -rf '$stage'" EXIT
 
   echo "→ downloading $tag from GitHub..."
-  gh release download "$tag" --dir "$stage"
+  gh release download "$tag" --repo "$ANCHOR_REPO" --dir "$stage"
   [ -f "$stage/head.bin" ] || { echo "error: head.bin missing from release" >&2; exit 1; }
   # backbone.onnx is optional: lightweight auto-anchors omit it (it changes
   # rarely) — install then keeps whatever backbone is already deployed.
@@ -229,7 +235,7 @@ cmd_install() {
 }
 
 cmd_list() {
-  gh release list --limit 50 | grep -F "$ANCHOR_PREFIX" || \
+  gh release list --repo "$ANCHOR_REPO" --limit 50 | grep -F "$ANCHOR_PREFIX" || \
     echo "(no anchors yet — create one with: model-anchor.sh create <tag>)"
 }
 
@@ -261,21 +267,23 @@ cmd_auto() {
   # WHY it failed — auth vs network vs tag-exists all looked identical in the
   # nightly log). GH_TOKEN (from secrets.env, exported by tv-train-head.sh) is
   # the auth path under launchd, which can't reach the login keychain.
+  # Keep the assignment INSIDE the `if` condition: a bare `gherr="$(…)"` under
+  # `set -e` aborts the whole script the instant gh exits non-zero — before the
+  # error branch below can ever run (the old silent-exit-1 nightly failure).
   local gherr
-  gherr="$(gh release create "$tag" --title "Auto champion $ts" \
+  if gherr="$(gh release create "$tag" --repo "$ANCHOR_REPO" --title "Auto champion $ts" \
        --notes "Nightly auto-anchor of the deployed head. Restore: model-anchor.sh install auto-$ts" \
-       "${assets[@]}" 2>&1 >/dev/null)"
-  if [ $? -eq 0 ]; then
+       "${assets[@]}" 2>&1 >/dev/null)"; then
     echo "✓ auto-anchored $tag"
   else
-    echo "auto-anchor: gh release create failed — skip. gh said: ${gherr:-<no stderr>} (GH_TOKEN ${GH_TOKEN:+set}${GH_TOKEN:-UNSET})" >&2
+    echo "auto-anchor: gh release create failed — skip. gh said: ${gherr:-<no stderr>}" >&2
     return 0
   fi
   # Prune to the last N auto-anchors (release + tag).
   local keep="${MODEL_ANCHOR_AUTO_KEEP:-14}"
-  gh release list --limit 100 2>/dev/null \
+  gh release list --repo "$ANCHOR_REPO" --limit 100 2>/dev/null \
     | grep -oE "${ANCHOR_PREFIX}auto-[0-9T]+" | sort -ru | tail -n +$((keep + 1)) \
-    | while read -r old; do gh release delete "$old" --yes --cleanup-tag >/dev/null 2>&1 || true; done
+    | while read -r old; do gh release delete "$old" --repo "$ANCHOR_REPO" --yes --cleanup-tag >/dev/null 2>&1 || true; done
 }
 
 [ $# -ge 1 ] || usage

@@ -157,6 +157,14 @@ WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
 if WHISPER_ENABLE or WHISPER_TRANSCRIBE:
     WHISPER_CACHE.mkdir(parents=True, exist_ok=True)
 
+# Cap concurrent whisper transcriptions. whisper.cpp is GPU(Metal)+CPU-heavy and
+# was stacking on the DETECT_PARALLEL detect pipeline: with 3 detects in flight,
+# 3 whisper runs spawned alongside → load ~50 on the 18-core Mac → detects blew
+# the 30-min timeout → re-queue death-spiral (598 timeouts). Serialise whisper to
+# at most N at once, independent of how many detects run. 2026-06-20.
+WHISPER_MAX_CONCURRENT = max(1, int(os.environ.get("WHISPER_MAX_CONCURRENT", "1")))
+_WHISPER_SEM = threading.Semaphore(WHISPER_MAX_CONCURRENT)
+
 
 def _whisper_ensure_and_push(uuid, src_path):
     """Ensure ~/.cache/tv-whisper/<uuid>.whisper.json exists (idempotent
@@ -171,10 +179,14 @@ def _whisper_ensure_and_push(uuid, src_path):
     if not classify_py.is_file():
         return None
     try:
-        r = subprocess.run(
-            [WHISPER_PYTHON, str(classify_py),
-             "--src", str(src_path), "--output", str(whisper_path)],
-            capture_output=True, timeout=300, env=SPAWN_ENV)
+        # Serialise the heavy classify so it can't oversubscribe the detect
+        # pipeline (the semaphore blocks extra detect threads at their whisper
+        # step, not their detect — detect stays primary).
+        with _WHISPER_SEM:
+            r = subprocess.run(
+                [WHISPER_PYTHON, str(classify_py),
+                 "--src", str(src_path), "--output", str(whisper_path)],
+                capture_output=True, timeout=300, env=SPAWN_ENV)
         if r.returncode != 0 or not whisper_path.is_file():
             err = r.stderr.decode(errors='replace') if r.stderr else ''
             out = r.stdout.decode(errors='replace') if r.stdout else ''
@@ -1829,6 +1841,17 @@ def main():
             process_detect(uuid)
         except Exception as e:
             print(f"  detect {uuid[:8]}: unhandled err: {e}", flush=True)
+            # A crash/timeout that escapes process_detect (e.g.
+            # subprocess.TimeoutExpired when ffmpeg can't decode a corrupt source
+            # within TIMEOUT_S) MUST count toward give-up + get a cooldown — else
+            # the marker stays, the recording re-queues immediately and loops
+            # forever. (2026-06-20: 3 corrupt recs looped 55-65× each, each
+            # permanently occupying a detect slot → all 18 others starved.)
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            try:
+                _record_detect_failure(uuid)
+            except Exception:
+                pass
         finally:
             with detect_lock:
                 detect_in_flight.discard(uuid)

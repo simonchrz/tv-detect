@@ -137,12 +137,24 @@ TRAIN_OUT="/tmp/tv-train-head-out"
 mkdir -p "$TRAIN_OUT"
 LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
 
-# Prefetch head.history.json from Pi so train-head appends to the
-# existing trail rather than writing a single-entry file. Same for
-# head.test-set.json so the test-composition-changed reason fires
-# correctly (compare against actual previous test-set, not "first
-# run"). 404 just means none-yet-on-Pi → start fresh, fine.
-for f in head.history.json head.test-set.json head.calibration.json; do
+# Prefetch the CURRENTLY-DEPLOYED head + sidecars from the gateway so the
+# run compares against / cleans with the REAL champion, not a stale local
+# /tmp copy:
+#   head.bin + head.channel-map.json — the deploy gate's head-to-head
+#     re-scores this exact deployed head on the new test set (apples-to-
+#     apples), and the label-hygiene teacher uses it too. Without seeding,
+#     a wiped/stale $TRAIN_OUT (e.g. after a Mac reboot — /tmp is volatile)
+#     leaves an unloadable head → BOTH silently fall back: the gate drops to
+#     the lenient floor path (deploys "comparison invalidated" without ever
+#     comparing to the champion = effectively a no-op) and the teacher is
+#     skipped. 2026-06-22: this is exactly what bit the post-reboot run.
+#   head.gate.bin — the train-only honest champion the gate prefers (404
+#     until the first post-fix deploy uploads it → falls back to head.bin).
+#   head.history.json / head.test-set.json — append to the existing trail +
+#     fire the test-composition-changed reason against the real prev set.
+# 404 just means none-yet-on-Pi → start fresh, fine.
+for f in head.bin head.gate.bin head.channel-map.json \
+         head.history.json head.test-set.json head.calibration.json; do
   $CURL -o "$TRAIN_OUT/$f" \
       "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
 done
@@ -173,7 +185,7 @@ if [ "$rc" -eq 0 ]; then
   echo "bundling + uploading head to gateway…"
   BUNDLE="/tmp/tv-train-head-bundle.tar.gz"
   ( cd "$TRAIN_OUT" && tar czf "$BUNDLE" \
-      head.bin head.*.json head.*.txt archive 2>/dev/null )
+      head.bin head.gate.bin head.*.json head.*.txt archive 2>/dev/null )
   size_mb=$(du -m "$BUNDLE" | cut -f1)
   echo "  bundle: ${size_mb} MB"
   resp=$($CURL -X POST --data-binary "@$BUNDLE" \

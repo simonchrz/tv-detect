@@ -29,6 +29,13 @@ from pathlib import Path
 
 POLL_INTERVAL_S = 5
 TIMEOUT_S = 1800           # HLS-remux of 90-min recording can take ~30s
+# Detect kill-timeout scales with the recording's length: a 3.4h
+# interlaced special (~300k progressive frames decoding at ~170
+# interlaced fps ≈ 30 min) blows the flat TIMEOUT_S ceiling and fails
+# with no cutlist, while a genuinely stuck detect stays bounded by
+# DETECT_TIMEOUT_MAX_S. See detect_timeout_s().
+DETECT_TIMEOUT_MAX_S = 3600
+DETECT_TIMEOUT_PER_S = 0.25   # budget = this fraction of container seconds
 GATEWAY = os.environ.get("GATEWAY", "https://raspberrypi5lan:8443")  # Caddy; CTX below
 
 # Concurrency: how many detect jobs to run in parallel. Default 1 (legacy
@@ -95,6 +102,26 @@ SNAPSHOT_MARKER = Path.home() / ".cache" / "tv-detect-daemon" / "snapshot-reques
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 SOURCE_CACHE.mkdir(parents=True, exist_ok=True)
 SOURCE_CACHE_MAX_GB = int(os.environ.get("SOURCE_CACHE_MAX_GB", "60"))
+
+
+def detect_timeout_s(uuid):
+    """Length-scaled detect kill-timeout (see DETECT_TIMEOUT_* above).
+    Probes the local source's container duration; falls back to the flat
+    TIMEOUT_S floor when the source isn't cached or can't be probed.
+    (A PTS-wrapped duration reads high, but such recordings are clamped
+    inside tv-detect and finish fast, so the roomier ceiling is harmless.)"""
+    src = SOURCE_CACHE / f"{uuid}.ts"
+    if not src.is_file():
+        return TIMEOUT_S
+    try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+        dur = float(out) if out and out != "N/A" else 0.0
+    except Exception:
+        return TIMEOUT_S
+    return max(TIMEOUT_S, min(DETECT_TIMEOUT_MAX_S, int(dur * DETECT_TIMEOUT_PER_S)))
 
 # Speaker-fingerprint orchestration (default OFF). When SPEAKER_ENABLE=1
 # the daemon runs three Python helpers around each detect:
@@ -1696,7 +1723,7 @@ def process_detect(uuid):
     # which sets PATH for launchd-spawned subprocesses.
     t0 = time.time()
     result = subprocess.run(cmd, capture_output=True, text=True,
-                              timeout=TIMEOUT_S, env=SPAWN_ENV)
+                              timeout=detect_timeout_s(uuid), env=SPAWN_ENV)
     if result.returncode != 0:
         stderr = result.stderr or ""
         print(f"  detect {uuid[:8]} rc={result.returncode}: "

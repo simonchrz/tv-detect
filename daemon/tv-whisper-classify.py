@@ -55,6 +55,50 @@ FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 WHISPER_CLI = shutil.which("whisper-cli") or "/opt/homebrew/bin/whisper-cli"
 
+# Below this size-implied bitrate a container's reported duration is
+# treated as inflated: a wrapped/discontinuous MPEG-TS PTS makes ffprobe
+# report a duration many times the real one, which explodes the window
+# count (60s/30s-stride) into a 300s classify timeout. Mirrors the same
+# guard in the Go probe (internal/decode/probe.go).
+MIN_PLAUSIBLE_VIDEO_KBPS = 500
+
+
+def real_duration_if_inflated(src: Path, dur: float) -> float:
+    """Return the true duration (from an authoritative video packet count)
+    when the container duration looks inflated, else 0.0. Only pays the
+    full-file read when the size-implied bitrate is implausibly low."""
+    try:
+        size = src.stat().st_size
+    except OSError:
+        return 0.0
+    if size <= 0 or dur <= 0 or size * 8 / dur / 1000 >= MIN_PLAUSIBLE_VIDEO_KBPS:
+        return 0.0
+    try:
+        # Corrupt inputs exit non-zero while still printing the count, and
+        # can print it twice, so ignore the exit status and take the first
+        # integer token.
+        pkts = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-count_packets", "-show_entries", "stream=nb_read_packets",
+             "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True, timeout=180).stdout.split()
+        fps_raw = subprocess.run(
+            [FFPROBE, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0",
+             str(src)],
+            capture_output=True, text=True, timeout=30).stdout.split()
+    except subprocess.TimeoutExpired:
+        return 0.0
+    if not pkts or not fps_raw:
+        return 0.0
+    try:
+        n = int(pkts[0])
+        num, den = fps_raw[0].split("/")
+        fps = float(num) / float(den) if float(den) else 0.0
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+    return n / fps if n > 0 and fps > 0 else 0.0
+
 
 def probe_duration_s(src: Path) -> float:
     """Returns float seconds. Tries fast format=duration first; falls
@@ -69,8 +113,13 @@ def probe_duration_s(src: Path) -> float:
          "-of", "csv=p=0", str(src)], text=True, timeout=30,
         stderr=subprocess.DEVNULL).strip()
     if out and out != "N/A":
-        try: return float(out)
-        except ValueError: pass
+        try:
+            dur = float(out)
+        except ValueError:
+            dur = 0.0
+        if dur > 0:
+            real = real_duration_if_inflated(src, dur)
+            return real if real else dur
     # Fallback: stream-level (= per-track) duration; pick max
     out = subprocess.check_output(
         [FFPROBE, "-v", "error", "-show_entries", "stream=duration",

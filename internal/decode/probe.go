@@ -31,8 +31,16 @@ type probeOut struct {
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
+		Size     string `json:"size"`
 	} `json:"format"`
 }
+
+// minPlausibleVideoKbps is the size-implied bitrate below which a
+// container's reported duration is treated as inflated. Real SD/HD
+// broadcast video sustains well above this; a wrapped/discontinuous
+// MPEG-TS PTS makes ffprobe report a duration many times the real one
+// (seen ~16x on rtl/vox), dragging the implied bitrate to ~170 kbit/s.
+const minPlausibleVideoKbps = 500
 
 // Probe runs ffprobe on input and returns metadata for the first video stream.
 func Probe(input string) (Info, error) {
@@ -72,6 +80,21 @@ func Probe(input string) (Info, error) {
 		if nbFrames == 0 && dur > 0 && fps > 0 {
 			nbFrames = int(dur*fps + 0.5)
 		}
+		// Guard against an inflated container duration (MPEG-TS PTS wrap /
+		// discontinuity). A wrapped PTS makes the reported duration many
+		// times the real one, which balloons the chunk plan + decode into
+		// ~1M phantom (CFR-padded) frames and blows the detect timeout. If
+		// the size-implied bitrate is implausibly low for real video,
+		// trust an authoritative packet-count over the duration.
+		if fps > 0 && dur > 0 {
+			if size := parseFloat(p.Format.Size); size > 0 &&
+				size*8/dur/1000 < minPlausibleVideoKbps {
+				if real := countVideoPackets(input); real > 0 {
+					nbFrames = real
+					dur = float64(real) / fps
+				}
+			}
+		}
 		return Info{
 			Width:      s.Width,
 			Height:     s.Height,
@@ -81,6 +104,32 @@ func Probe(input string) (Info, error) {
 		}, nil
 	}
 	return Info{}, fmt.Errorf("no video stream in %s", input)
+}
+
+// countVideoPackets returns the true number of demuxed video packets
+// (≈ coded frames) by reading the whole file. Only called as a fallback
+// when the container duration looks inflated, since it costs a full read.
+// Returns 0 on any error so the caller keeps the duration-derived estimate.
+func countVideoPackets(input string) int {
+	// Corrupt inputs (the exact case this fires on) make ffprobe exit
+	// non-zero while still printing the count to stdout, so parse stdout
+	// regardless of exit status rather than bailing on the error.
+	out, _ := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-count_packets",
+		"-show_entries", "stream=nb_read_packets",
+		"-of", "csv=p=0",
+		input).Output()
+	// ffprobe can print the count more than once (e.g. duplicate stream
+	// entries), so take the first integer token rather than the whole
+	// trimmed string, which strconv can't parse across newlines.
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0
+	}
+	n, _ := strconv.Atoi(fields[0])
+	return n
 }
 
 // parseFPS handles ffprobe's "num/den" rational ("25/1", "30000/1001").

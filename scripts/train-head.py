@@ -2078,6 +2078,7 @@ def main():
             teacher_mlp = teacher_w = None
     keep_masks = []
     drops_total = drops_kept = 0
+    user_veto_total = user_veto_recs = 0
     for r in train_recs:
         n = len(r[4])
         # Pseudo-labelled recordings: their frame_mask (r[10]) marks
@@ -2100,7 +2101,20 @@ def main():
             disagree = (((r[4] == 1) & (proba < 1 - args.hygiene_disagree_conf)) |
                         ((r[4] == 0) & (proba >     args.hygiene_disagree_conf)))
             drop_rate = disagree.mean()
-            if drop_rate > args.hygiene_max_drop_rate:
+            if r[5]:
+                # User-reviewed recordings are exempt: their labels are
+                # ground truth (same trust hierarchy as the 2× user-weight
+                # below). Reviews happen precisely where the deployed head
+                # was confidently wrong, so a champion-teacher veto here
+                # censors exactly the corrections the challenger needs —
+                # the challenger then can't outlearn the champion and the
+                # head-to-head gate deadlocks (2026-07-02..06: 5 straight
+                # rejections after 4 reviews landed).
+                mask = np.ones(n, dtype=bool)
+                if disagree.any():
+                    user_veto_total += int(disagree.sum())
+                    user_veto_recs += 1
+            elif drop_rate > args.hygiene_max_drop_rate:
                 # teacher likely wrong, not labels — keep everything
                 mask = np.ones(n, dtype=bool)
             else:
@@ -2114,6 +2128,9 @@ def main():
         print(f"label-hygiene: dropped {drops_total} frames across "
               f"{drops_kept} recordings (teacher disagreed at conf "
               f">{args.hygiene_disagree_conf})")
+    if user_veto_total > 0:
+        print(f"label-hygiene: kept {user_veto_total} teacher-disputed frames "
+              f"across {user_veto_recs} user-reviewed recordings (user labels win)")
 
     X_train_parts, y_train_parts, sw_train_parts = [], [], []
     confirmed_extra_w = 0

@@ -23,6 +23,7 @@ re-extracted).
 """
 import argparse
 import concurrent.futures as cf
+import gc
 import json
 import os
 import re
@@ -2714,9 +2715,17 @@ def main():
             X_aug, y_aug, sw_aug = _build_train(train_recs, augment)
             test_aug = _augment_test_recs(test_recs, augment)
             X_os, y_os = _oversample(X_aug, y_aug, sw_aug)
+            in_dim, n_train_frames = X_aug.shape[1], len(X_aug)
+            # X_aug is a full copy of the corpus matrix (~10 GB) and dead
+            # once X_os exists — free it BEFORE fit, where sklearn's
+            # early-stopping split adds its own X_os-sized copies. Keeping
+            # it pushed the concurrent-copy peak to ~47 GB RSS (jetsam-
+            # killed daytime runs 2026-07-06).
+            del X_aug, y_aug, sw_aug
+            gc.collect()
             print(f"\n=== Shadow variant: {name} ===")
-            print(f"  feature dim: {X_aug.shape[1]}, "
-                  f"train frames: {len(X_aug)} → {len(X_os)} oversampled, "
+            print(f"  feature dim: {in_dim}, "
+                  f"train frames: {n_train_frames} → {len(X_os)} oversampled, "
                   f"hidden: {hidden}")
             mlp = MLPClassifier(hidden_layer_sizes=hidden, max_iter=80,
                                 random_state=0, early_stopping=True,
@@ -2724,8 +2733,10 @@ def main():
             mlp.fit(X_os, y_os)
             print(f"  fit done in {mlp.n_iter_} epochs, "
                   f"loss={mlp.loss_:.4f}")
+            del X_os, y_os
+            gc.collect()
             metrics = eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
-            return metrics, mlp, X_aug.shape[1]
+            return metrics, mlp, in_dim
 
         print("\n" + "=" * 70)
         print(f"SHADOW EVAL — {n_chan} channel slugs in corpus")
@@ -3131,6 +3142,10 @@ def main():
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
         y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)
+        # The per-rec hstack parts are a second full corpus copy (~10 GB)
+        # that would otherwise stay referenced through the fit below.
+        del X_parts, y_parts
+        gc.collect()
         # Reconstruct per-frame sample weights from per-rec metadata
         # (= same logic as the train-only fit: user_weight × age decay,
         # pseudo_weight for pseudo-labelled, base 1.0 otherwise). Skip
@@ -3172,8 +3187,14 @@ def main():
         sample_idx = np.repeat(np.arange(len(X_all_ch)), w_int)
         X_all_os = X_all_ch[sample_idx]
         y_all_os = y_all_ch[sample_idx]
+        n_base_frames = len(X_all_ch)
+        # Same rationale as _fit_eval: the un-oversampled matrix is dead
+        # once X_all_os exists — free it before sklearn's early-stopping
+        # split doubles X_all_os again.
+        del X_all_ch, y_all_ch, sw_all_ch, sample_idx
+        gc.collect()
         print(f"\nrefitting MLP on all data for production head...")
-        print(f"  base: {len(X_all_ch)} frames "
+        print(f"  base: {n_base_frames} frames "
               f"({len(keep_all)}/{len(per_rec)} recs), "
               f"oversampled: {len(X_all_os)} frames")
         mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),

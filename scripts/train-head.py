@@ -2823,6 +2823,29 @@ def main():
             wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
             return np.hstack([X, oh, wp]).astype(np.float32)
 
+        def _augment_channel_whisper_temporal(X, slug, uuid):
+            # Production features + the temporal L2 deltas — the combo
+            # candidate born 2026-07-07, when the first honest variant
+            # table (true sample_weight) had MLP-32+temporal on top
+            # (+0.035 vs LogReg, ahead of channel+whisper). Deltas are
+            # computed on the raw per-rec X (contiguous, pre-mask), so
+            # hygiene/pseudo row-masks can't fake scene changes. Layout
+            # appends temporal LAST ([X, chan, whisper, dp, dn]) so the
+            # existing v2-header column order stays a prefix — a future
+            # production migration is a header bump, not a re-order.
+            T = X.shape[0]
+            oh = np.zeros((T, n_chan), dtype=np.float32)
+            if slug in chan_idx:
+                oh[:, chan_idx[slug]] = 1.0
+            wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
+            dp = np.zeros((T, 1), dtype=np.float32)
+            dn = np.zeros((T, 1), dtype=np.float32)
+            if T > 1:
+                d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+                dp[1:, 0] = d
+                dn[:-1, 0] = d
+            return np.hstack([X, oh, wp, dp, dn]).astype(np.float32)
+
         def _build_train(recs, augment):
             # recs must be train_recs: rows are taken via the parallel
             # keep_masks / sw_train_parts arrays so the shadow variants
@@ -2901,6 +2924,12 @@ def main():
         m_v5, mlp_v5, _ = _fit_eval(
             f"MLP-64 + channel + whisper-prob (capacity probe)",
             _augment_channel_whisper, hidden=(64,))
+        # Combo candidate: production features + temporal deltas (see
+        # _augment_channel_whisper_temporal). Migration candidate if it
+        # beats v4 by ≥ +0.03 over several nights.
+        m_v6, mlp_v6, _ = _fit_eval(
+            f"MLP-32 + channel + whisper + temporal (+{n_chan + 3} dim)",
+            _augment_channel_whisper_temporal)
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -2932,23 +2961,33 @@ def main():
         except Exception as e:
             print(f"\n  shadow MLP write err: {e}")
 
+        # Variant comparisons use MEDIAN IoU (like the deploy gate) —
+        # the mean is outlier-fragile: 2026-07-07, two same-day runs
+        # swung v4's mean 0.720→0.684 and flipped the MLP-64 verdict
+        # from "overfits" to "capacity helps" on a handful of block-
+        # formation flips in movie-length recs. Mean stays as a second
+        # column for continuity with the pre-07-07 tables.
+        def _vmed(m):
+            return m.get("iou_tv_median", m.get("iou_median", m.get("iou", 0.0)))
         base_iou = metrics_smooth["iou"]
+        base_med = _vmed(metrics_smooth)
         base_acc = metrics_smooth["acc"]
         print("\n" + "=" * 70)
         print("SHADOW COMPARISON (smooth=10s, test set)")
         print("=" * 70)
-        print(f"  {'arch':35s}  {'IoU':>6}  {'Δ vs LR':>9}  {'acc':>6}")
+        print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  {'acc':>6}")
         print(f"  {'baseline LogReg (production)':35s}  "
-              f"{base_iou:>6.3f}  {'(ref)':>9}  {base_acc*100:>5.1f}%")
+              f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  {base_acc*100:>5.1f}%")
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
                         ("MLP-32 + temporal", m_v3),
                         (f"MLP-32 + channel + whisper", m_v4),
-                        ("MLP-64 + channel + whisper", m_v5)]:
-            d = m["iou"] - base_iou
+                        ("MLP-64 + channel + whisper", m_v5),
+                        ("MLP-32 + chan + whisper + temporal", m_v6)]:
+            d = _vmed(m) - base_med
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
-            print(f"  {name:35s}  {m['iou']:>6.3f}  "
-                  f"{d:>+9.3f}  {m['acc']*100:>5.1f}%{mark}")
+            print(f"  {name:35s}  {_vmed(m):>6.3f}  "
+                  f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%{mark}")
         # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel,
         # the current production architecture). The Δ-vs-LogReg
         # column above tells you "is the structural change worth
@@ -2956,7 +2995,7 @@ def main():
         # an MLP input column better than whisper as a post-
         # processor rule set". Migration breaks even somewhere
         # around +0.03 IoU.
-        d_stage4 = m_v4["iou"] - m_v2["iou"]
+        d_stage4 = _vmed(m_v4) - _vmed(m_v2)
         mark4 = ("  ↑ migrate" if d_stage4 > 0.03 else
                  ("  ↓ keep post-processor" if d_stage4 < -0.01 else
                   "  ≈ neutral, keep post-processor"))
@@ -2969,12 +3008,22 @@ def main():
         # for migration eventually (no format cost), but demand a few
         # consistent nights before flipping hidden_dim in the
         # production fit + refit.
-        d_cap = m_v5["iou"] - m_v4["iou"]
+        d_cap = _vmed(m_v5) - _vmed(m_v4)
         mark5 = ("  ↑ capacity helps" if d_cap > 0.03 else
                  ("  ↓ overfits, keep 32" if d_cap < -0.01 else
                   "  ≈ neutral, keep 32"))
         print(f"  Δ MLP-64 vs MLP-32 (same features):  "
               f"{d_cap:+.3f}{mark5}")
+        # Combo verdict: v6 vs the production arch (v4). Same +0.03
+        # break-even; a migration additionally needs the temporal
+        # columns wired into the Go loader (header v3 or n_temporal
+        # field), so demand consistency across several nights first.
+        d_combo = _vmed(m_v6) - _vmed(m_v4)
+        mark6 = ("  ↑ migrate candidate" if d_combo > 0.03 else
+                 ("  ↓ keep production arch" if d_combo < -0.01 else
+                  "  ≈ neutral"))
+        print(f"  Δ +temporal vs production arch:      "
+              f"{d_combo:+.3f}{mark6}")
         print()
 
     # ── Self-Training (Phase A, validation only) ─────────────────
@@ -3649,6 +3698,28 @@ def main():
                                      f"margin≥{broad_margin}), keeping current head")
                 else:
                     reason = base + " — not a confident regression, deploy"
+                # Persist the per-rec pairing — the gate's raw evidence.
+                # Until 2026-07-07 only the aggregate reason survived, so
+                # diagnosing a rejection streak (which recs drag? one
+                # channel? one show?) required re-running training. One
+                # jsonl line per run; lives in the train-archive dir
+                # because args.output is /tmp (volatile across reboots).
+                try:
+                    if args.train_archive:
+                        _prr = Path(args.train_archive) / "per-rec-iou.jsonl"
+                        _prr.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_prr, "a") as f:
+                            f.write(json.dumps({
+                                "ts": time.strftime("%Y%m%dT%H%M%S"),
+                                "n_shared": len(shared),
+                                "median_delta": round(med_d, 4),
+                                "deploy": deploy,
+                                "champion_src": _dep_src.name,
+                                "candidate": {u: round(cand_pr[u], 4) for u in shared},
+                                "champion": {u: round(dep_pr[u], 4) for u in shared},
+                            }) + "\n")
+                except Exception as e:
+                    print(f"  per-rec-iou persist failed: {e}")
             else:
                 # too few shared recs (or old metrics w/o per_rec_iou) → fall back
                 # to the independent-median comparison.

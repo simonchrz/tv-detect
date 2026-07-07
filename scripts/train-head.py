@@ -2891,6 +2891,16 @@ def main():
         m_v4, mlp_v4, _ = _fit_eval(
             f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
             _augment_channel_whisper)
+        # Capacity probe: same features as v4 (= the production arch),
+        # doubled hidden width. (32,) is small for 1295 dims × ~1.5M
+        # weighted frames; only meaningful since 2026-07-07, when the
+        # shadow variants started training under production semantics
+        # (true sample_weight + masks). Migrate if it beats v4 by
+        # ≥ +0.03 IoU over several nights — the head.bin format carries
+        # hidden_dim in its header, so the Go loader needs no change.
+        m_v5, mlp_v5, _ = _fit_eval(
+            f"MLP-64 + channel + whisper-prob (capacity probe)",
+            _augment_channel_whisper, hidden=(64,))
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -2933,7 +2943,8 @@ def main():
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
                         ("MLP-32 + temporal", m_v3),
-                        (f"MLP-32 + channel + whisper", m_v4)]:
+                        (f"MLP-32 + channel + whisper", m_v4),
+                        ("MLP-64 + channel + whisper", m_v5)]:
             d = m["iou"] - base_iou
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
             print(f"  {name:35s}  {m['iou']:>6.3f}  "
@@ -2952,6 +2963,18 @@ def main():
         print()
         print(f"  Δ vs Stage-3 baseline (MLP+channel): "
               f"{d_stage4:+.3f}{mark4}")
+        # Capacity probe verdict: v5 vs v4 = pure hidden-width effect
+        # (identical features/weights). Same +0.03 break-even as the
+        # whisper migration — a smaller persistent gain still argues
+        # for migration eventually (no format cost), but demand a few
+        # consistent nights before flipping hidden_dim in the
+        # production fit + refit.
+        d_cap = m_v5["iou"] - m_v4["iou"]
+        mark5 = ("  ↑ capacity helps" if d_cap > 0.03 else
+                 ("  ↓ overfits, keep 32" if d_cap < -0.01 else
+                  "  ≈ neutral, keep 32"))
+        print(f"  Δ MLP-64 vs MLP-32 (same features):  "
+              f"{d_cap:+.3f}{mark5}")
         print()
 
     # ── Self-Training (Phase A, validation only) ─────────────────

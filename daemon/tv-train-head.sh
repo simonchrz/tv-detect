@@ -173,7 +173,12 @@ done
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper \
+    --shadow-eval \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# --shadow-eval (seit 2026-07-07, ~+8 min/Nacht mit WeightedMLP): sammelt die
+# Varianten-Tabelle über mehrere Nächte — Kapazitäts-Probe MLP-64 (Nacht 1:
+# −0.019, overfits) + der Temporal-Lead (+0.035, bester der Tabelle). Wieder
+# entfernen, sobald die Architektur-Fragen entschieden sind.
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

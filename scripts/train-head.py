@@ -225,6 +225,163 @@ def load_deployed_mlp(path):
     return _DeployedMLP(W1, b1, W2, b2, input_dim)
 
 
+class WeightedMLP:
+    """Single-hidden-layer MLP (relu → sigmoid) with true fractional
+    sample_weight — the drop-in replacement for sklearn's MLPClassifier
+    in all head fits (2026-07-07).
+
+    Why not MLPClassifier: it has no sample_weight, so weights were
+    approximated by integer-rounded row duplication (max(round(sw),1)).
+    That quantization silently erased the whole designed weighting —
+    pseudo 0.3→1 (3× too strong), age-decay 0.5..0.99→1, bumper-boost
+    1.4→1, NaN-logo 0→1 — only the user 2× survived. It also cost two
+    full oversampled matrix copies (~29 GB peak) per fit.
+
+    Semantics kept from MLPClassifier: Glorot-uniform init, Adam
+    (lr 1e-3, β 0.9/0.999), L2 alpha 1e-4, early stopping on a 10%
+    validation split with patience 10 / tol 1e-4, best-epoch weights
+    restored. Deliberate differences: batch 512 (was min(200,n)) for
+    BLAS efficiency, validation criterion = weighted log-loss (was
+    accuracy), rows with weight<=0 are dropped up front. Deterministic
+    per (data, random_state) like before. Exposes coefs_/intercepts_/
+    n_iter_/loss_/predict/predict_proba, so write_mlp_head_v1/v2 and
+    every consumer stay unchanged."""
+
+    def __init__(self, hidden_dim=32, max_iter=80, random_state=0,
+                 alpha=1e-4, batch_size=512, lr=1e-3,
+                 validation_fraction=0.1, n_iter_no_change=10, tol=1e-4):
+        self.hidden_dim = hidden_dim
+        self.max_iter = max_iter
+        self.random_state = random_state
+        self.alpha = alpha
+        self.batch_size = batch_size
+        self.lr = lr
+        self.validation_fraction = validation_fraction
+        self.n_iter_no_change = n_iter_no_change
+        self.tol = tol
+        self.coefs_ = None
+        self.intercepts_ = None
+        self.n_iter_ = 0
+        self.loss_ = float("nan")
+
+    def fit(self, X, y, sample_weight=None):
+        rng = np.random.default_rng(self.random_state)
+        X = np.ascontiguousarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32).ravel()
+        w = (np.ones(len(y), dtype=np.float32) if sample_weight is None
+             else np.asarray(sample_weight, dtype=np.float32).ravel())
+        keep = w > 0
+        if not keep.all():
+            X, y, w = X[keep], y[keep], w[keep]
+        n = len(y)
+        if n == 0:
+            raise ValueError("WeightedMLP.fit: no rows with weight > 0")
+        # One shuffled copy; train/val are then contiguous slices (views),
+        # so peak memory is input + this copy — no oversample, no second
+        # sklearn-internal split copy.
+        perm = rng.permutation(n)
+        X, y, w = X[perm], y[perm], w[perm]
+        n_val = max(1, int(n * self.validation_fraction)) if n >= 10 else 0
+        Xt, yt, wt = X[n_val:], y[n_val:], w[n_val:]
+        Xv, yv, wv = X[:n_val], y[:n_val], w[:n_val]
+
+        d, h = X.shape[1], self.hidden_dim
+        bound1 = np.sqrt(6.0 / (d + h))
+        bound2 = np.sqrt(6.0 / (h + 1))
+        W1 = rng.uniform(-bound1, bound1, (d, h)).astype(np.float32)
+        b1 = np.zeros(h, dtype=np.float32)
+        W2 = rng.uniform(-bound2, bound2, (h, 1)).astype(np.float32)
+        b2 = np.zeros(1, dtype=np.float32)
+        params = [W1, b1, W2, b2]
+        m = [np.zeros_like(p) for p in params]
+        v = [np.zeros_like(p) for p in params]
+        beta1, beta2, eps = 0.9, 0.999, 1e-8
+        t_step = 0
+
+        def _val_loss():
+            if n_val == 0:
+                return float("nan")
+            p = self._forward_params(Xv, W1, b1, W2, b2)
+            p = np.clip(p, 1e-7, 1 - 1e-7)
+            bce = -(yv * np.log(p) + (1 - yv) * np.log(1 - p))
+            return float((bce * wv).sum() / wv.sum())
+
+        best_val = np.inf
+        best_params = None
+        stale = 0
+        nt = len(yt)
+        for epoch in range(1, self.max_iter + 1):
+            order = rng.permutation(nt)
+            epoch_loss = 0.0
+            epoch_wsum = 0.0
+            for lo in range(0, nt, self.batch_size):
+                idx = order[lo:lo + self.batch_size]
+                xb, yb, wb = Xt[idx], yt[idx], wt[idx]
+                nb = len(idx)
+                z1 = xb @ W1 + b1
+                a1 = np.maximum(z1, 0.0)
+                z2 = (a1 @ W2).ravel() + b2[0]
+                p = 1.0 / (1.0 + np.exp(-z2))
+                pc = np.clip(p, 1e-7, 1 - 1e-7)
+                wsum = wb.sum()
+                bce = -(yb * np.log(pc) + (1 - yb) * np.log(1 - pc))
+                epoch_loss += float((bce * wb).sum())
+                epoch_wsum += float(wsum)
+                # weighted BCE gradient + sklearn-style L2 (alpha/batch)
+                dz2 = ((p - yb) * wb / wsum).astype(np.float32)
+                gW2 = a1.T @ dz2[:, None] + (self.alpha / nb) * W2
+                gb2 = np.array([dz2.sum()], dtype=np.float32)
+                da1 = dz2[:, None] @ W2.T
+                dz1 = da1 * (z1 > 0)
+                gW1 = xb.T @ dz1 + (self.alpha / nb) * W1
+                gb1 = dz1.sum(axis=0)
+                t_step += 1
+                for pi, gi in zip(range(4), (gW1, gb1, gW2, gb2)):
+                    m[pi] = beta1 * m[pi] + (1 - beta1) * gi
+                    v[pi] = beta2 * v[pi] + (1 - beta2) * gi * gi
+                    mh = m[pi] / (1 - beta1 ** t_step)
+                    vh = v[pi] / (1 - beta2 ** t_step)
+                    params[pi] -= (self.lr * mh / (np.sqrt(vh) + eps)).astype(np.float32)
+                W1, b1, W2, b2 = params
+            self.n_iter_ = epoch
+            self.loss_ = epoch_loss / max(epoch_wsum, 1e-9)
+            vl = _val_loss()
+            if n_val:
+                if vl < best_val - self.tol:
+                    best_val = vl
+                    best_params = [p.copy() for p in params]
+                    stale = 0
+                else:
+                    stale += 1
+                    if stale >= self.n_iter_no_change:
+                        break
+        if best_params is not None:
+            W1, b1, W2, b2 = best_params
+        self.coefs_ = [W1.astype(np.float64), W2.astype(np.float64)]
+        self.intercepts_ = [b1.astype(np.float64), b2.astype(np.float64)]
+        return self
+
+    @staticmethod
+    def _forward_params(X, W1, b1, W2, b2, chunk=1 << 18):
+        out = np.empty(len(X), dtype=np.float64)
+        for lo in range(0, len(X), chunk):
+            xb = np.asarray(X[lo:lo + chunk], dtype=np.float32)
+            a1 = np.maximum(xb @ W1 + b1, 0.0)
+            z2 = (a1 @ W2).ravel() + b2[0]
+            out[lo:lo + chunk] = 1.0 / (1.0 + np.exp(-z2.astype(np.float64)))
+        return out
+
+    def predict_proba(self, X):
+        p = self._forward_params(X, self.coefs_[0].astype(np.float32),
+                                 self.intercepts_[0].astype(np.float32),
+                                 self.coefs_[1].astype(np.float32),
+                                 self.intercepts_[1].astype(np.float32))
+        return np.column_stack([1.0 - p, p])
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(np.int64)
+
+
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
 
 
@@ -2369,15 +2526,16 @@ def main():
                                output_path=Path(args.output).with_suffix(".confusion.txt"))
 
     # ── Production MLP+channel fit (--head-arch mlp32-channel) ────
-    # Fits the MLPClassifier that will replace the LogReg head.bin if
+    # Fits the WeightedMLP that will replace the LogReg head.bin if
     # --head-arch=mlp32-channel. Reuses the production X_train +
     # y_train + sw_train (= already hygiene-masked + age-decayed +
     # bumper-boosted) and appends a channel one-hot block post-hoc.
-    # Sample weights → integer-rounded oversampling because
-    # MLPClassifier doesn't accept sample_weight. Eval on the
-    # channel-augmented test set; the resulting metrics override
-    # metrics_smooth so the deploy-decision branch downstream operates
-    # on what we'll actually ship, not on the LogReg baseline.
+    # sw_train is applied as TRUE fractional sample_weight (until
+    # 2026-07-07 it was integer-rounded row duplication, which erased
+    # pseudo-0.3/age-decay/bumper-boost — see WeightedMLP docstring).
+    # Eval on the channel-augmented test set; the resulting metrics
+    # override metrics_smooth so the deploy-decision branch downstream
+    # operates on what we'll actually ship, not on the LogReg baseline.
     mlp_prod_clf = None
     mlp_gate_clf = None  # train-only head snapshot for the honest head-to-head gate
     mlp_prod_chan_slugs = None
@@ -2386,7 +2544,6 @@ def main():
                                     "mlp32-channel-whisper")
     wants_whisper = args.head_arch == "mlp32-channel-whisper"
     if wants_mlp and test_recs:
-        from sklearn.neural_network import MLPClassifier
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
         prod_chan_idx = {s: i for i, s in enumerate(prod_chan_slugs)}
@@ -2423,25 +2580,15 @@ def main():
                  whisper_train.reshape(-1, 1)])
         else:
             X_train_ch = np.hstack([X_train, chan_oh_train])
-        # Oversample by integer-rounded sw_train so user-confirmed +
-        # bumper-boosted frames retain their elevated influence in
-        # the MLP fit (MLPClassifier ignores sample_weight).
-        w_int = np.maximum(np.round(sw_train).astype(np.int32), 1)
-        sample_idx = np.repeat(np.arange(len(X_train_ch)), w_int)
-        X_train_os = X_train_ch[sample_idx]
-        y_train_os = y_train[sample_idx]
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
               f"({n_chan} channels"
               f"{', +whisper' if wants_whisper else ''})")
-        print(f"  base train frames: {len(X_train_ch)}")
-        print(f"  oversampled frames: {len(X_train_os)}")
-        mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),
-                                      max_iter=200, random_state=0,
-                                      early_stopping=True,
-                                      validation_fraction=0.1,
-                                      verbose=False)
-        mlp_prod_clf.fit(X_train_os, y_train_os)
+        print(f"  base train frames: {len(X_train_ch)} "
+              f"(true sample_weight, no oversample)")
+        mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
+                                   random_state=0)
+        mlp_prod_clf.fit(X_train_ch, y_train, sw_train)
         print(f"  fit done in {mlp_prod_clf.n_iter_} epochs, "
               f"loss={mlp_prod_clf.loss_:.4f}")
 
@@ -2629,7 +2776,6 @@ def main():
     # apples-to-apples; comparison vs the LogReg baseline carries
     # this caveat (LogReg used the full pipeline).
     if args.shadow_eval and test_recs and metrics_smooth:
-        from sklearn.neural_network import MLPClassifier
 
         # Channel slug → idx (alphabetical for determinism, only slugs
         # actually present in train+test get a column — keeps the
@@ -2678,20 +2824,25 @@ def main():
             return np.hstack([X, oh, wp]).astype(np.float32)
 
         def _build_train(recs, augment):
+            # recs must be train_recs: rows are taken via the parallel
+            # keep_masks / sw_train_parts arrays so the shadow variants
+            # train with the SAME semantics as the production fit —
+            # hygiene masks, pseudo frame_mask + pseudo_weight, age
+            # decay, confirmed/skip/bumper/cluster boosts, NaN-logo=0.
+            # (Until 2026-07-07 this rebuilt simplified weights itself:
+            # pseudo recs entered unmasked at full weight and only
+            # user-2× survived — the variant table compared apples to
+            # slightly rotten apples.)
+            assert recs is train_recs, "_build_train is keyed to train_recs"
             Xs, ys, sws = [], [], []
-            for r in recs:
+            for r, mask, sw in zip(recs, keep_masks, sw_train_parts):
+                if len(sw) == 0:
+                    continue  # age>180d — skipped entirely upstream
                 slug = uuid_slug.get(r[0], "")
-                X_aug = augment(r[3], slug, r[0])
-                y = r[4]
-                base_w = args.user_weight if r[5] else 1.0
-                sw = np.full(len(y), base_w, dtype=np.float32)
-                # NaN-logo skip (= same rationale as the LogReg sw
-                # path): zero out frames whose logo column was
-                # NaN-substituted so they don't poison the MLP fit.
-                nan_mask = logo_nan_mask_by_uuid.get(r[0])
-                if nan_mask is not None and len(nan_mask) == len(y):
-                    sw[nan_mask] = 0.0
-                Xs.append(X_aug); ys.append(y); sws.append(sw)
+                X_aug = augment(r[3], slug, r[0])[mask]
+                Xs.append(X_aug)
+                ys.append(r[4][mask])
+                sws.append(sw)
             return (np.concatenate(Xs), np.concatenate(ys),
                     np.concatenate(sws))
 
@@ -2703,37 +2854,20 @@ def main():
                 out.append((r[0], r[1], r[2], X_aug, r[4]) + tuple(r[5:]))
             return out
 
-        def _oversample(X, y, sw):
-            # MLPClassifier doesn't accept sample_weight; replicate
-            # rows by their integer weight (user_weight=2 → user
-            # frames appear 2×). Cheap + faithful approximation.
-            w = np.maximum(np.round(sw).astype(np.int32), 1)
-            idx = np.repeat(np.arange(len(X)), w)
-            return X[idx], y[idx]
-
         def _fit_eval(name, augment, hidden=(32,)):
             X_aug, y_aug, sw_aug = _build_train(train_recs, augment)
             test_aug = _augment_test_recs(test_recs, augment)
-            X_os, y_os = _oversample(X_aug, y_aug, sw_aug)
             in_dim, n_train_frames = X_aug.shape[1], len(X_aug)
-            # X_aug is a full copy of the corpus matrix (~10 GB) and dead
-            # once X_os exists — free it BEFORE fit, where sklearn's
-            # early-stopping split adds its own X_os-sized copies. Keeping
-            # it pushed the concurrent-copy peak to ~47 GB RSS (jetsam-
-            # killed daytime runs 2026-07-06).
-            del X_aug, y_aug, sw_aug
-            gc.collect()
             print(f"\n=== Shadow variant: {name} ===")
             print(f"  feature dim: {in_dim}, "
-                  f"train frames: {n_train_frames} → {len(X_os)} oversampled, "
+                  f"train frames: {n_train_frames} (weighted, no oversample), "
                   f"hidden: {hidden}")
-            mlp = MLPClassifier(hidden_layer_sizes=hidden, max_iter=80,
-                                random_state=0, early_stopping=True,
-                                validation_fraction=0.1, verbose=False)
-            mlp.fit(X_os, y_os)
+            mlp = WeightedMLP(hidden_dim=hidden[0], max_iter=80,
+                              random_state=0)
+            mlp.fit(X_aug, y_aug, sw_aug)
             print(f"  fit done in {mlp.n_iter_} epochs, "
                   f"loss={mlp.loss_:.4f}")
-            del X_os, y_os
+            del X_aug, y_aug, sw_aug
             gc.collect()
             metrics = eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
             return metrics, mlp, in_dim
@@ -3116,7 +3250,6 @@ def main():
     if (wants_mlp
             and args.final_on_all and test_recs
             and mlp_prod_clf is not None):
-        from sklearn.neural_network import MLPClassifier
         target_dim_all = max(r[3].shape[1] for r in per_rec)
         keep_all = [r for r in per_rec
                     if r[3].shape[1] == target_dim_all
@@ -3183,30 +3316,19 @@ def main():
         X_all_ch = X_all_ch[nz]
         y_all_ch = y_all_ch[nz]
         sw_all_ch = sw_all_ch[nz]
-        w_int = np.maximum(np.round(sw_all_ch).astype(np.int32), 1)
-        sample_idx = np.repeat(np.arange(len(X_all_ch)), w_int)
-        X_all_os = X_all_ch[sample_idx]
-        y_all_os = y_all_ch[sample_idx]
-        n_base_frames = len(X_all_ch)
-        # Same rationale as _fit_eval: the un-oversampled matrix is dead
-        # once X_all_os exists — free it before sklearn's early-stopping
-        # split doubles X_all_os again.
-        del X_all_ch, y_all_ch, sw_all_ch, sample_idx
-        gc.collect()
         print(f"\nrefitting MLP on all data for production head...")
-        print(f"  base: {n_base_frames} frames "
+        print(f"  base: {len(X_all_ch)} frames "
               f"({len(keep_all)}/{len(per_rec)} recs), "
-              f"oversampled: {len(X_all_os)} frames")
-        mlp_prod_clf = MLPClassifier(hidden_layer_sizes=(32,),
-                                      max_iter=200, random_state=0,
-                                      early_stopping=True,
-                                      validation_fraction=0.1,
-                                      verbose=False)
-        mlp_prod_clf.fit(X_all_os, y_all_os)
-        full_acc = (mlp_prod_clf.predict(X_all_os) == y_all_os).mean()
+              f"true sample_weight (no oversample)")
+        mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
+                                   random_state=0)
+        mlp_prod_clf.fit(X_all_ch, y_all_ch, sw_all_ch)
+        full_acc = (mlp_prod_clf.predict(X_all_ch) == y_all_ch).mean()
         print(f"  full-data fit acc {full_acc*100:.1f}%, "
               f"epochs {mlp_prod_clf.n_iter_}, "
               f"loss {mlp_prod_clf.loss_:.4f}")
+        del X_all_ch, y_all_ch, sw_all_ch
+        gc.collect()
         # BIAS-CHECK (env BIAS_CHECK): this all-data refit IS what becomes
         # head.bin / the deployed champion — and it just trained on the TEST set
         # too. Scoring it on the test set is scoring on TRAINING data → inflated.

@@ -3744,6 +3744,46 @@ def main():
                                      f"margin≥{broad_margin}), keeping current head")
                 else:
                     reason = base + " — not a confident regression, deploy"
+                # Rejection diagnostic — auto-surface WHERE a regression
+                # concentrates instead of leaving that to manual per-rec-iou
+                # archaeology (2026-07-09 cohort-trust incident took ~20min
+                # of log/archive spelunking to trace to a single show/channel
+                # cohort). Worst individual recs + aggregated by (title,
+                # channel) + by channel alone, so a systemic show/channel
+                # cluster (like that incident) is visible at a glance instead
+                # of only the median-Δ summary line.
+                if not deploy:
+                    order = np.argsort(deltas)
+                    print("  REJECTION DIAGNOSTIC — worst-regressed recordings:")
+                    for i in order[:10]:
+                        u = shared[i]
+                        title, chan = uuid_cohort.get(u, ("", ""))
+                        label = f"{title} / {chan}" if title else u
+                        print(f"    {deltas[i]:+.3f}  cand={cand_pr[u]:.3f} "
+                              f"champ={dep_pr[u]:.3f}  {label}  ({u})")
+                    by_cohort, by_chan = {}, {}
+                    for i, u in enumerate(shared):
+                        title, chan = uuid_cohort.get(u, ("", ""))
+                        if title:
+                            by_cohort.setdefault((title, chan), []).append(deltas[i])
+                        if chan:
+                            by_chan.setdefault(chan, []).append(deltas[i])
+                    cohort_avg = sorted(
+                        ((k, float(np.mean(v)), len(v)) for k, v in by_cohort.items()
+                         if len(v) >= 2),
+                        key=lambda x: x[1])[:5]
+                    if cohort_avg:
+                        print("  REJECTION DIAGNOSTIC — worst (title,channel) cohorts "
+                              "(avg Δ, n≥2 recs):")
+                        for (title, chan), avg, n in cohort_avg:
+                            print(f"    {avg:+.3f} (n={n})  {title} / {chan}")
+                    chan_avg = sorted(
+                        ((k, float(np.mean(v)), len(v)) for k, v in by_chan.items()),
+                        key=lambda x: x[1])[:5]
+                    if chan_avg:
+                        print("  REJECTION DIAGNOSTIC — worst channels (avg Δ):")
+                        for chan, avg, n in chan_avg:
+                            print(f"    {avg:+.3f} (n={n})  {chan}")
                 # Persist the per-rec pairing — the gate's raw evidence.
                 # Until 2026-07-07 only the aggregate reason survived, so
                 # diagnosing a rejection streak (which recs drag? one

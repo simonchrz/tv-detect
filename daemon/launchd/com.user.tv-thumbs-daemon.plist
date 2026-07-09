@@ -5,7 +5,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>DETECT_PARALLEL</key>
-		<string>3</string>
+		<string>2</string>
 		<key>GATEWAY</key>
 		<string>https://raspberrypi5lan:8443</string>
 		<key>SOURCE_CACHE_MAX_GB</key>

@@ -1548,9 +1548,47 @@ def main():
                 suspect_cohorts.add(cohort)
         except Exception:
             pass
+    # Also recover trust anchors from the deletion-safe archive. DVR
+    # series-retention (5 newest + >14d, dvr_series_retention) prunes old
+    # episodes on a schedule unrelated to training — a user-reviewed episode
+    # that was the SOLE cohort-trust anchor can age out of the _rec_* walk
+    # above on any given night, silently flipping its whole cohort from
+    # trusted to bootstrap and shifting that night's training distribution
+    # (root-caused 2026-07-09: "Bella Italia" RTLZWEI lost its anchor this
+    # way, cohort-trust 45->44, concentrated regression on the shared head).
+    # The frozen archive entry still carries which/ads, so recheck it here
+    # instead of only the live directory.
+    if archive_dir is not None:
+        for npz_path in archive_dir.glob("*.npz"):
+            u = npz_path.stem
+            try:
+                z = np.load(npz_path, allow_pickle=False)
+                a_meta = json.loads(str(z["meta"]))
+            except Exception:
+                continue
+            # Frozen cohort (set at write-time, see the archive-write block)
+            # survives even after the DVR entry itself is deleted by series-
+            # retention. Fall back to a live lookup for older archive entries
+            # written before this field existed.
+            cohort = tuple(a_meta["cohort"]) if a_meta.get("cohort") else uuid_cohort.get(u)
+            if not cohort or not cohort[0] or cohort in suspect_cohorts:
+                continue
+            if a_meta.get("which") in ("user", "merged") and a_meta.get("ads"):
+                suspect_cohorts.add(cohort)
     print(f"cohort-trust: {len(suspect_cohorts)} (title,channel) cohorts "
           f"have ≥1 user-confirmed-with-ads — auto-confirm-empty in those "
           f"cohorts will be treated as bootstrap (not labels)")
+    if archive_dir is not None:
+        try:
+            snap_path = archive_dir / "cohort-trust.jsonl"
+            with open(snap_path, "a") as f:
+                f.write(json.dumps({
+                    "ts": time.strftime("%Y%m%dT%H%M%S"),
+                    "n": len(suspect_cohorts),
+                    "cohorts": sorted(f"{t} / {c}" for t, c in suspect_cohorts),
+                }, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"cohort-trust: snapshot write failed: {e}")
 
     # Pass 1 — discover labelled recordings, separate cached from
     # uncached. Cached ones we just load synchronously; uncached
@@ -2012,6 +2050,14 @@ def main():
                              "confirmed_ad_skips": confirmed_ad_skips,
                              "cluster_anchored": cluster_anchored,
                              "feature_npy": str(cache_path),
+                             # Frozen while the uuid is still live in
+                             # uuid_cohort (= gateway dvr/entry/grid). Series-
+                             # retention (dvr_series_retention) can delete the
+                             # DVR entry itself, not just the .ts — at that
+                             # point the gateway no longer knows the cohort,
+                             # so it must be recovered from here, not re-
+                             # looked-up (root-caused 2026-07-09).
+                             "cohort": list(uuid_cohort.get(uuid, ("", ""))),
                          }))
             except Exception as e:
                 print(f"  train-archive: write {uuid[:8]} failed: {e}", flush=True)

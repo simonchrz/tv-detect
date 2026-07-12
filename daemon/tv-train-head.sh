@@ -172,13 +172,14 @@ done
     --with-self-training \
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
-    --head-arch mlp32-channel-whisper \
-    --shadow-eval \
+    --head-arch mlp32-channel-whisper-temporal \
     ${TVH_TRAIN_EXTRA_ARGS:-}
-# --shadow-eval (seit 2026-07-07, ~+8 min/Nacht mit WeightedMLP): sammelt die
-# Varianten-Tabelle über mehrere Nächte — Kapazitäts-Probe MLP-64 (Nacht 1:
-# −0.019, overfits) + der Temporal-Lead (+0.035, bester der Tabelle). Wieder
-# entfernen, sobald die Architektur-Fragen entschieden sind.
+# --shadow-eval RAUS 2026-07-12: die 7-Nächte-Serie (seit 07-07) entschied
+# beide offenen Fragen — MLP-64 blieb Rauschen (keep 32), +temporal war
+# 6/7 Nächte positiv → migriert nach mlp32-channel-whisper-temporal (MLP3
+# v3). Der Feature-Dim-Sprung löst heute Nacht einmalig den
+# "architecture switch"-Zwangsdeploy + History-Reset aus (siehe --head-arch
+# --help), wie beim whisper-Cutover zuvor.
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

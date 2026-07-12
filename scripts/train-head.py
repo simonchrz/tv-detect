@@ -175,6 +175,70 @@ def write_mlp_head_v2(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+# ── MLP head.bin file format (v3 — adds temporal-delta input) ────
+# Identical to v2 except:
+#   - magic is "MLP3" (= 0x33504C4D LE) — a v2-only Go binary falls
+#     through to legacy LogReg detection on a v3 file (fails clean,
+#     0.5 fallback) instead of mis-parsing v3 weights against the v2
+#     40-byte header.
+#   - header grows from 40 → 44 bytes: appends an 11th uint32 LE
+#     field `n_temporal` (0 or 2 — always both-or-neither, the L2
+#     distance to the previous AND next frame) AFTER `n_whisper`.
+#   - input_dim contract becomes
+#         backbone + n_logo + n_audio + n_channel + n_whisper
+#         + n_temporal == input_dim
+#   - input vector layout at inference becomes
+#         [backbone(1280), logo?, audio?, chan_onehot?, whisper_prob?,
+#          l2_dist_prev?, l2_dist_next?]
+#     (= temporal appended LAST so v1/v2 column order stays a prefix).
+#     The L2 distance is computed over [backbone, logo?, audio?] of
+#     the adjacent frame (NOT the channel-onehot/whisper columns,
+#     which don't vary meaningfully frame-to-frame) — see nn.go
+#     confidenceMLP for the matching Go-side computation.
+# Migrated to production 2026-07-12 after a 7-night --shadow-eval
+# series (6/7 nights positive vs mlp32-channel-whisper).
+def write_mlp_head_v3(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0, n_temporal=0):
+    """Serialise an sklearn-compatible MLP to the v3 MLP head.bin
+    format. Same atomic write + shape validation as v2, plus the
+    2 temporal-delta input slots. Returns bytes written."""
+    import struct
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if (backbone_dim + n_logo + n_audio + n_channel + n_whisper + n_temporal
+            != input_dim):
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel} + "
+            f"whisper {n_whisper} + temporal {n_temporal}")
+    header = struct.pack("<11I",
+                         0x33504C4D,  # "MLP3" little-endian
+                         3, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper, n_temporal)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 class _DeployedMLP:
     """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
     so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test
@@ -194,9 +258,10 @@ class _DeployedMLP:
 
 
 def load_deployed_mlp(path):
-    """Parse a v2 MLP head.bin into a _DeployedMLP, or None if it isn't one
-    (legacy logreg head / missing / corrupt). Used for the head-to-head deploy
-    gate; the caller must check .input_dim matches the candidate's feature dim."""
+    """Parse a v2 ('MLP2') or v3 ('MLP3') head.bin into a _DeployedMLP, or
+    None if it isn't one (legacy logreg head / missing / corrupt). Used for
+    the head-to-head deploy gate; the caller must check .input_dim matches
+    the candidate's feature dim."""
     import struct
     try:
         raw = Path(path).read_bytes()
@@ -204,11 +269,23 @@ def load_deployed_mlp(path):
         return None
     if len(raw) < 40:
         return None
-    hdr = struct.unpack("<10I", raw[:40])
-    if hdr[0] != 0x32504C4D or hdr[1] != 2:  # magic "MLP2", version 2
+    magic = struct.unpack("<I", raw[:4])[0]
+    if magic == 0x33504C4D:  # "MLP3", version 3, 44-byte header
+        if len(raw) < 44:
+            return None
+        hdr = struct.unpack("<11I", raw[:44])
+        if hdr[1] != 3:
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        off = 44
+    elif magic == 0x32504C4D:  # "MLP2", version 2, 40-byte header
+        hdr = struct.unpack("<10I", raw[:40])
+        if hdr[1] != 2:
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        off = 40
+    else:
         return None
-    input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
-    off = 40
 
     def take(n):
         nonlocal off
@@ -1190,24 +1267,36 @@ def _worker_extract(args):
     return cache_path, feats
 
 
-def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper):
-    """Rebuild the channel-one-hot(+whisper) augmented feature matrix a v2 MLP
-    teacher was trained on, so it scores identically in the label-hygiene pass.
+def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
+                           wants_temporal=False):
+    """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
+    matrix a v2/v3 MLP teacher was trained on, so it scores identically in
+    the label-hygiene pass.
 
     Column order MUST mirror main()'s _aug_test EXACTLY: [base, channel-one-hot
-    (by chan_idx), whisper?]. `chan_idx` maps slug→column from the TEACHER's
-    head.channel-map.json — the one-hot order is run-specific, so the teacher
-    must be scored with ITS OWN map, not the new run's. A misaligned column here
-    would feed the teacher garbage and drop correct frames, so the caller also
-    keeps the per-recording drop-rate cap as a backstop."""
+    (by chan_idx), whisper?, temporal?]. `chan_idx` maps slug→column from the
+    TEACHER's head.channel-map.json — the one-hot order is run-specific, so
+    the teacher must be scored with ITS OWN map, not the new run's. A
+    misaligned column here would feed the teacher garbage and drop correct
+    frames, so the caller also keeps the per-recording drop-rate cap as a
+    backstop."""
     T = X.shape[0]
     oh = np.zeros((T, len(chan_idx)), dtype=np.float32)
     if slug in chan_idx:
         oh[:, chan_idx[slug]] = 1.0
+    parts = [X, oh]
     if wants_whisper:
-        wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
-        return np.hstack([X, oh, wp]).astype(np.float32)
-    return np.hstack([X, oh]).astype(np.float32)
+        parts.append(_load_whisper_per_sec(uuid, T).reshape(-1, 1))
+    if wants_temporal:
+        dp = np.zeros((T, 1), dtype=np.float32)
+        dn = np.zeros((T, 1), dtype=np.float32)
+        if T > 1:
+            d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+            dp[1:, 0] = d
+            dn[:-1, 0] = d
+        parts.append(dp)
+        parts.append(dn)
+    return np.hstack(parts).astype(np.float32)
 
 
 def main():
@@ -1379,7 +1468,8 @@ def main():
                          "loader needs new size before deploying.")
     ap.add_argument("--head-arch",
                     choices=["logreg", "mlp32-channel",
-                             "mlp32-channel-whisper"],
+                             "mlp32-channel-whisper",
+                             "mlp32-channel-whisper-temporal"],
                     default="logreg",
                     help="head architecture to deploy. "
                          "'logreg' = legacy linear head (size-detected). "
@@ -1398,7 +1488,17 @@ def main():
                          "change trips the deploy-decision's 'feature "
                          "dim changed → reset baseline' branch; a one-time "
                          "forced deploy happens + history.json baseline "
-                         "restarts.")
+                         "restarts. "
+                         "'mlp32-channel-whisper-temporal' = MLP3 v3 = adds "
+                         "2 more input columns (L2 distance to the previous/"
+                         "next frame's [backbone+logo+audio] vector) APPENDED "
+                         "LAST after whisper. Migration decided 2026-07-12 "
+                         "after a 7-night --shadow-eval series (6/7 nights "
+                         "positive, median Δ ≈ +0.02..+0.07 vs "
+                         "mlp32-channel-whisper). Requires the Go inference "
+                         "side (internal/signals/nn.go) to compute the same "
+                         "deltas at serve time — deployed in tandem, see "
+                         "nn.go's v3 header support.")
     ap.add_argument("--shadow-eval", action="store_true",
                     help="after the production LogReg fit + eval, also "
                          "train + evaluate three architectural variants "
@@ -2224,28 +2324,33 @@ def main():
     # head. Capped per-recording so a broken teacher can't nuke
     # everything.
     teacher_w = teacher_b = None
-    teacher_mlp = None        # v2 MLP teacher (predict_proba) when available
+    teacher_mlp = None        # v2/v3 MLP teacher (predict_proba) when available
     teacher_chan_idx = None   # slug→col from the TEACHER's own channel-map
     teacher_whisper = False
+    teacher_temporal = False
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
         try:
             raw = Path(args.output).read_bytes()
             mlp = load_deployed_mlp(args.output)
             if mlp is not None:
-                # v2 MLP teacher. It scores on channel-one-hot(+whisper)
-                # augmented features, so we rebuild them with the TEACHER's OWN
-                # channel-map (one-hot order is run-specific) — from the
-                # head.channel-map.json sidecar next to the head. Derive whisper
-                # presence from the dim budget; ANY mismatch (changed logo/audio
-                # flags, channel set, or a missing map) → skip cleanly rather
-                # than feed a misaligned vector.
+                # v2/v3 MLP teacher. It scores on channel-one-hot(+whisper)
+                # (+temporal) augmented features, so we rebuild them with the
+                # TEACHER's OWN channel-map (one-hot order is run-specific) —
+                # from the head.channel-map.json sidecar next to the head.
+                # Derive whisper/temporal presence from the dim budget; ANY
+                # mismatch (changed logo/audio flags, channel set, or a
+                # missing map) → skip cleanly rather than feed a misaligned
+                # vector.
                 cmap_path = Path(args.output).with_name(
                     Path(args.output).stem + ".channel-map.json")
                 slugs = (json.loads(cmap_path.read_text()).get("slugs", [])
                          if cmap_path.exists() else [])
                 n_chan = len(slugs)
-                if mlp.input_dim == feat_dim + n_chan + 1:
+                if mlp.input_dim == feat_dim + n_chan + 1 + 2:
+                    teacher_whisper = True
+                    teacher_temporal = True
+                elif mlp.input_dim == feat_dim + n_chan + 1:
                     teacher_whisper = True
                 elif mlp.input_dim == feat_dim + n_chan:
                     teacher_whisper = False
@@ -2254,11 +2359,12 @@ def main():
                 if mlp is not None:
                     teacher_mlp = mlp
                     teacher_chan_idx = {s: i for i, s in enumerate(slugs)}
-                    print(f"label-hygiene: v2 MLP teacher loaded "
+                    print(f"label-hygiene: v2/v3 MLP teacher loaded "
                           f"(input_dim={mlp.input_dim}, n_chan={n_chan}, "
-                          f"whisper={teacher_whisper})")
+                          f"whisper={teacher_whisper}, "
+                          f"temporal={teacher_temporal})")
                 else:
-                    print(f"label-hygiene: v2 MLP teacher unalignable "
+                    print(f"label-hygiene: v2/v3 MLP teacher unalignable "
                           f"(input_dim={load_deployed_mlp(args.output).input_dim}, "
                           f"feat_dim={feat_dim}, n_chan={n_chan}, "
                           f"map={'present' if cmap_path.exists() else 'MISSING'}) "
@@ -2296,7 +2402,8 @@ def main():
         elif teacher_mlp is not None or teacher_w is not None:
             if teacher_mlp is not None:
                 Xa = _augment_teacher_feats(r[3], uuid_slug.get(r[0], ""),
-                                            teacher_chan_idx, r[0], teacher_whisper)
+                                            teacher_chan_idx, r[0], teacher_whisper,
+                                            teacher_temporal)
                 proba = teacher_mlp.predict_proba(Xa)[:, 1]
             else:
                 logits = r[3] @ teacher_w + teacher_b
@@ -2587,8 +2694,11 @@ def main():
     mlp_prod_chan_slugs = None
     mlp_prod_in_dim = 0
     wants_mlp = args.head_arch in ("mlp32-channel",
-                                    "mlp32-channel-whisper")
-    wants_whisper = args.head_arch == "mlp32-channel-whisper"
+                                    "mlp32-channel-whisper",
+                                    "mlp32-channel-whisper-temporal")
+    wants_whisper = args.head_arch in ("mlp32-channel-whisper",
+                                       "mlp32-channel-whisper-temporal")
+    wants_temporal = args.head_arch == "mlp32-channel-whisper-temporal"
     if wants_mlp and test_recs:
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -2608,10 +2718,11 @@ def main():
                               prod_chan_idx[slug]] = 1.0
             offset += n
         # Optional per-frame whisper-prob column (mlp32-channel-whisper
-        # only). Aligned by walking train_recs in the same order as
+        # and up). Aligned by walking train_recs in the same order as
         # rec_lengths_train; per-rec slice of X_train gets a 1-dim
         # column from the recording's whisper.json. Missing whisper
         # → 0.5 fallback per the loader spec.
+        prod_parts = [X_train, chan_oh_train]
         if wants_whisper:
             whisper_train = np.full(len(X_train), 0.5, dtype=np.float32)
             offset = 0
@@ -2621,15 +2732,39 @@ def main():
                 wp = _load_whisper_per_sec(r[0], n)
                 whisper_train[offset:offset + n] = wp
                 offset += n
-            X_train_ch = np.hstack(
-                [X_train, chan_oh_train,
-                 whisper_train.reshape(-1, 1)])
-        else:
-            X_train_ch = np.hstack([X_train, chan_oh_train])
+            prod_parts.append(whisper_train.reshape(-1, 1))
+        # Optional temporal L2-delta columns (mlp32-channel-whisper-
+        # temporal only), appended LAST. Computed on the RAW per-rec X
+        # (contiguous, pre-hygiene-mask) so a dropped frame in the
+        # middle of a mask can't fake a scene-change delta, then the
+        # SAME mask used to build X_train_parts is applied — this
+        # mirrors the --shadow-eval v6 variant exactly (the numbers
+        # that earned the migration). Recs zeroed out entirely by the
+        # age-decay cutoff (rec_lengths_train[i] == 0) are skipped, same
+        # as the whisper loop above.
+        if wants_temporal:
+            temporal_parts = []
+            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
+                if n <= 0:
+                    continue
+                Xr = r[3]
+                Tr = Xr.shape[0]
+                dp = np.zeros(Tr, dtype=np.float32)
+                dn = np.zeros(Tr, dtype=np.float32)
+                if Tr > 1:
+                    d = np.linalg.norm(Xr[1:] - Xr[:-1], axis=1).astype(np.float32)
+                    dp[1:] = d
+                    dn[:-1] = d
+                temporal_parts.append(np.column_stack([dp, dn])[mask])
+            temporal_train = (np.concatenate(temporal_parts)
+                              if temporal_parts else np.empty((0, 2), dtype=np.float32))
+            prod_parts.append(temporal_train)
+        X_train_ch = np.hstack(prod_parts)
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
               f"({n_chan} channels"
-              f"{', +whisper' if wants_whisper else ''})")
+              f"{', +whisper' if wants_whisper else ''}"
+              f"{', +temporal' if wants_temporal else ''})")
         print(f"  base train frames: {len(X_train_ch)} "
               f"(true sample_weight, no oversample)")
         mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
@@ -2639,7 +2774,7 @@ def main():
               f"loss={mlp_prod_clf.loss_:.4f}")
 
         # Augment test_recs with the same channel one-hot (and
-        # whisper if active) for eval.
+        # whisper/temporal if active) for eval.
         def _aug_test(recs):
             out = []
             for r in recs:
@@ -2649,11 +2784,19 @@ def main():
                 oh = np.zeros((T, n_chan), dtype=np.float32)
                 if slug in prod_chan_idx:
                     oh[:, prod_chan_idx[slug]] = 1.0
+                parts = [X, oh]
                 if wants_whisper:
-                    wp = _load_whisper_per_sec(r[0], T).reshape(-1, 1)
-                    X_new = np.hstack([X, oh, wp]).astype(np.float32)
-                else:
-                    X_new = np.hstack([X, oh]).astype(np.float32)
+                    parts.append(_load_whisper_per_sec(r[0], T).reshape(-1, 1))
+                if wants_temporal:
+                    dp = np.zeros((T, 1), dtype=np.float32)
+                    dn = np.zeros((T, 1), dtype=np.float32)
+                    if T > 1:
+                        d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+                        dp[1:, 0] = d
+                        dn[:-1, 0] = d
+                    parts.append(dp)
+                    parts.append(dn)
+                X_new = np.hstack(parts).astype(np.float32)
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
         test_recs_ch = _aug_test(test_recs)
@@ -2960,22 +3103,13 @@ def main():
         m_v4, mlp_v4, _ = _fit_eval(
             f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
             _augment_channel_whisper)
-        # Capacity probe: same features as v4 (= the production arch),
-        # doubled hidden width. (32,) is small for 1295 dims × ~1.5M
-        # weighted frames; only meaningful since 2026-07-07, when the
-        # shadow variants started training under production semantics
-        # (true sample_weight + masks). Migrate if it beats v4 by
-        # ≥ +0.03 IoU over several nights — the head.bin format carries
-        # hidden_dim in its header, so the Go loader needs no change.
-        m_v5, mlp_v5, _ = _fit_eval(
-            f"MLP-64 + channel + whisper-prob (capacity probe)",
-            _augment_channel_whisper, hidden=(64,))
-        # Combo candidate: production features + temporal deltas (see
-        # _augment_channel_whisper_temporal). Migration candidate if it
-        # beats v4 by ≥ +0.03 over several nights.
-        m_v6, mlp_v6, _ = _fit_eval(
-            f"MLP-32 + channel + whisper + temporal (+{n_chan + 3} dim)",
-            _augment_channel_whisper_temporal)
+        # MLP-64 capacity probe (m_v5) and the +temporal combo (m_v6)
+        # were retired 2026-07-12: a 7-night --shadow-eval series
+        # settled both questions (MLP-64 = noise, keep 32; +temporal =
+        # 6/7 nights positive, migrated into production as
+        # mlp32-channel-whisper-temporal / MLP3 v3). See
+        # _augment_channel_whisper_temporal above if a future capacity
+        # or feature probe needs the same pattern again.
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -3022,25 +3156,20 @@ def main():
         print("SHADOW COMPARISON (smooth=10s, test set)")
         print("=" * 70)
         print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  {'acc':>6}")
-        print(f"  {'baseline LogReg (production)':35s}  "
+        print(f"  {'baseline (' + args.head_arch + ')':35s}  "
               f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  {base_acc*100:>5.1f}%")
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
                         ("MLP-32 + temporal", m_v3),
-                        (f"MLP-32 + channel + whisper", m_v4),
-                        ("MLP-64 + channel + whisper", m_v5),
-                        ("MLP-32 + chan + whisper + temporal", m_v6)]:
+                        (f"MLP-32 + channel + whisper", m_v4)]:
             d = _vmed(m) - base_med
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
             print(f"  {name:35s}  {_vmed(m):>6.3f}  "
                   f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%{mark}")
-        # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel,
-        # the current production architecture). The Δ-vs-LogReg
-        # column above tells you "is the structural change worth
-        # the format migration"; this Δ tells you "is whisper as
-        # an MLP input column better than whisper as a post-
-        # processor rule set". Migration breaks even somewhere
-        # around +0.03 IoU.
+        # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel).
+        # Tells you "is whisper as an MLP input column better than
+        # whisper as a post-processor rule set". Migration breaks even
+        # somewhere around +0.03 IoU.
         d_stage4 = _vmed(m_v4) - _vmed(m_v2)
         mark4 = ("  ↑ migrate" if d_stage4 > 0.03 else
                  ("  ↓ keep post-processor" if d_stage4 < -0.01 else
@@ -3048,28 +3177,6 @@ def main():
         print()
         print(f"  Δ vs Stage-3 baseline (MLP+channel): "
               f"{d_stage4:+.3f}{mark4}")
-        # Capacity probe verdict: v5 vs v4 = pure hidden-width effect
-        # (identical features/weights). Same +0.03 break-even as the
-        # whisper migration — a smaller persistent gain still argues
-        # for migration eventually (no format cost), but demand a few
-        # consistent nights before flipping hidden_dim in the
-        # production fit + refit.
-        d_cap = _vmed(m_v5) - _vmed(m_v4)
-        mark5 = ("  ↑ capacity helps" if d_cap > 0.03 else
-                 ("  ↓ overfits, keep 32" if d_cap < -0.01 else
-                  "  ≈ neutral, keep 32"))
-        print(f"  Δ MLP-64 vs MLP-32 (same features):  "
-              f"{d_cap:+.3f}{mark5}")
-        # Combo verdict: v6 vs the production arch (v4). Same +0.03
-        # break-even; a migration additionally needs the temporal
-        # columns wired into the Go loader (header v3 or n_temporal
-        # field), so demand consistency across several nights first.
-        d_combo = _vmed(m_v6) - _vmed(m_v4)
-        mark6 = ("  ↑ migrate candidate" if d_combo > 0.03 else
-                 ("  ↓ keep production arch" if d_combo < -0.01 else
-                  "  ≈ neutral"))
-        print(f"  Δ +temporal vs production arch:      "
-              f"{d_combo:+.3f}{mark6}")
         print()
 
     # ── Self-Training (Phase A, validation only) ─────────────────
@@ -3385,11 +3492,19 @@ def main():
             slug = uuid_slug.get(r[0], "")
             if slug in prod_chan_idx_all and T > 0:
                 oh[:, prod_chan_idx_all[slug]] = 1.0
+            parts = [X, oh]
             if wants_whisper:
-                wp = _load_whisper_per_sec(r[0], T).reshape(-1, 1)
-                X_parts.append(np.hstack([X, oh, wp]).astype(np.float32))
-            else:
-                X_parts.append(np.hstack([X, oh]).astype(np.float32))
+                parts.append(_load_whisper_per_sec(r[0], T).reshape(-1, 1))
+            if wants_temporal:
+                dp = np.zeros((T, 1), dtype=np.float32)
+                dn = np.zeros((T, 1), dtype=np.float32)
+                if T > 1:
+                    d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+                    dp[1:, 0] = d
+                    dn[:-1, 0] = d
+                parts.append(dp)
+                parts.append(dn)
+            X_parts.append(np.hstack(parts).astype(np.float32))
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
         y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)
@@ -3956,7 +4071,15 @@ def main():
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs)
-        if wants_whisper:
+        if wants_temporal:
+            write_mlp_head_v3(path, clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1, n_temporal=2)
+        elif wants_whisper:
             write_mlp_head_v2(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=32, backbone_dim=1280,
@@ -3998,7 +4121,8 @@ def main():
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
         if is_mlp_write:
-            fmt = "MLP2 v2" if wants_whisper else "MLP1 v1"
+            fmt = ("MLP3 v3" if wants_temporal else
+                   "MLP2 v2" if wants_whisper else "MLP1 v1")
         else:
             fmt = "LogReg packed"
         print(f"\nDEPLOYED → {args.output} ({sz} B, {fmt})")

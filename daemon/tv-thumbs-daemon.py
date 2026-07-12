@@ -94,6 +94,16 @@ SPAWN_ENV = {**os.environ, "PATH": (
 MODEL_CACHE = Path.home() / ".cache" / "tv-detect-daemon"
 MODEL_CACHE.mkdir(parents=True, exist_ok=True)
 
+# Decode-resolution downscale (2026-07-12, A/B-validated: ProSieben
+# real-live-template baseline 45.8s -> 32.6s, -29%, IDENTICAL detected
+# ad block; bumper templates are already resolution-agnostic in Go
+# (loadBumperTemplate resamples at load time), only the logo edge-mask
+# needed a matching bbox+mask rescale — see rescale_logo_template().
+# "1" / "1.0" / unset-empty disables (native decode, old behaviour) —
+# instant rollback lever if a channel not covered by the A/B (only
+# ProSieben/RTLZWEI/VOX tested) misbehaves, without a code revert.
+DETECT_DECODE_SCALE = float(os.environ.get("DETECT_DECODE_SCALE", "0.5") or "1.0")
+
 # Local .ts cache. First fetch via HTTP, subsequent uses read from
 # Mac NVMe (~3 GB/s) instead of LAN gigabit (~110 MB/s) — 30× faster
 # for any re-detect (head-bin invalidation, accidental marker, etc).
@@ -1037,6 +1047,87 @@ def http_download(url, dest_path):
         dest_path.write_bytes(r.read())
 
 
+def _parse_logo_header(path):
+    """Reads just the 6 header ints from a comskip .logo.txt (latin-1 —
+    see rescale_logo_template for why). Cheap: stops after the header,
+    never touches the (large) mask body."""
+    lines = path.read_bytes().decode("latin-1").split("\n")
+    hdr = {}
+    i = 0
+    while len(hdr) < 6 and i < len(lines):
+        if "=" in lines[i]:
+            k, v = lines[i].split("=", 1)
+            if k in ("logoMinX", "logoMaxX", "logoMinY", "logoMaxY",
+                      "picWidth", "picHeight"):
+                hdr[k] = int(v)
+        i += 1
+    return hdr
+
+
+def rescale_logo_template(src_path, dst_path, scale):
+    """Downscale a comskip-style .logo.txt (bbox + per-pixel ASCII edge
+    mask, see pkg/logotemplate/template.go) by `scale`, so it matches a
+    decode pass done at scale*native resolution instead of native.
+    Returns (dst_path, new_picWidth, new_picHeight) — the caller needs
+    the new dims to pass matching --decode-width/--decode-height (they
+    MUST agree exactly with what's baked into the rescaled bbox, or
+    tv-detect hard-errors like the naive "just pass -decode-width" first
+    attempt did on 2026-07-12).
+
+    OR-pools the mask (a new cell is an edge if ANY source cell in its
+    block was an edge) rather than nearest-neighbor/averaging — A/B-
+    tested to preserve thin diagonal strokes that a naive resample
+    loses. Regenerates only when src_path's content actually changed
+    (mtime compare) — this runs once per detect job, and the source
+    logo is itself refreshed by http_download() above only on a real
+    gateway-side change, so most calls are a no-op stat() + 6-line
+    header read.
+
+    Bytes I/O throughout (latin-1 round-trip, NOT utf-8) — the file's
+    single "binary marker" byte after the "Combined Logo Mask" line is
+    not valid UTF-8 and would otherwise raise UnicodeDecodeError."""
+    if (dst_path.is_file()
+            and dst_path.stat().st_mtime >= src_path.stat().st_mtime):
+        cached = _parse_logo_header(dst_path)
+        return dst_path, cached["picWidth"], cached["picHeight"]
+    text = src_path.read_bytes().decode("latin-1")
+    lines = text.split("\n")
+    hdr = _parse_logo_header(src_path)
+    minX, maxX = hdr["logoMinX"], hdr["logoMaxX"]
+    minY, maxY = hdr["logoMinY"], hdr["logoMaxY"]
+    picW, picH = hdr["picWidth"], hdr["picHeight"]
+    w, h = maxX - minX, maxY - minY
+    i = 0
+    while not lines[i].startswith("Combined Logo Mask"):
+        i += 1
+    i += 1  # binary marker line
+    mask = [[c != " " for c in row.ljust(w)[:w]] for row in lines[i:i + h]]
+
+    new_minX, new_minY = round(minX * scale), round(minY * scale)
+    new_w, new_h = max(1, round(w * scale)), max(1, round(h * scale))
+    new_maxX, new_maxY = new_minX + new_w, new_minY + new_h
+    new_picW, new_picH = round(picW * scale), round(picH * scale)
+
+    new_mask = []
+    for ny in range(new_h):
+        sy0, sy1 = int(ny / scale), max(int(ny / scale) + 1, int((ny + 1) / scale))
+        row = []
+        for nx in range(new_w):
+            sx0, sx1 = int(nx / scale), max(int(nx / scale) + 1, int((nx + 1) / scale))
+            row.append(any(mask[sy][sx]
+                          for sy in range(sy0, min(sy1, h))
+                          for sx in range(sx0, min(sx1, w))))
+        new_mask.append(row)
+
+    out = [f"logoMinX={new_minX}", f"logoMaxX={new_maxX}",
+           f"logoMinY={new_minY}", f"logoMaxY={new_maxY}",
+           f"picWidth={new_picW}", f"picHeight={new_picH}",
+           "", "Combined Logo Mask", "\x01"]
+    out += ["".join("+" if c else " " for c in row) for row in new_mask]
+    dst_path.write_bytes(("\n".join(out) + "\n").encode("latin-1"))
+    return dst_path, new_picW, new_picH
+
+
 def _upload_tar(url, files, arcname_fn=None):
     """Tar `files` in-memory, POST to `url`. Used for thumbs (small
     bundles, ~600 KB each). HLS bundles use _upload_files_put
@@ -1512,6 +1603,7 @@ def process_detect(uuid):
     # once; pass ?res=hd to the gateway logo endpoint. Gateway falls
     # back to SD logo if no HD-trained file exists yet.
     logo_path = None
+    decode_width = decode_height = None
     if cfg.get("cached_logo_url"):
         src_w = 0
         if local and Path(local).is_file():
@@ -1538,6 +1630,24 @@ def process_detect(uuid):
             print(f"  detect {uuid[:8]}: logo fetch err: {e}",
                   flush=True)
             logo_path = None
+        # Decode-resolution downscale (DETECT_DECODE_SCALE, see top of
+        # file). decode_width/decode_height come from the RESCALED
+        # LOGO's own new picWidth/picHeight — not a fresh ffprobe/scale
+        # computation — so the ffmpeg decode target and the bbox baked
+        # into the rescaled logo can never disagree (that mismatch is
+        # exactly what hard-errored in the first, naive A/B attempt).
+        # Any failure here (malformed template, etc.) falls back to
+        # native decode — never blocks the detect job.
+        if logo_path is not None and DETECT_DECODE_SCALE != 1.0:
+            scaled_path = logo_path.with_name(
+                logo_path.stem + ".scaled" + logo_path.suffix)
+            try:
+                logo_path, decode_width, decode_height = rescale_logo_template(
+                    logo_path, scaled_path, DETECT_DECODE_SCALE)
+            except Exception as e:
+                print(f"  detect {uuid[:8]}: logo rescale err "
+                      f"(falling back to native decode): {e}", flush=True)
+                decode_width = decode_height = None
 
     # Per-channel logo CNN. Gateway sets cached_logo_cnn_url only when:
     # (a) channel-config opts in via "logo_cnn": true, AND
@@ -1659,16 +1769,38 @@ def process_detect(uuid):
         cmd += ["--channel-slug", slug]
     if logo_path and logo_path.exists() and logo_path.stat().st_size > 0:
         cmd += ["--logo", str(logo_path)]
+        if decode_width and decode_height:
+            cmd += ["--decode-width", str(decode_width),
+                    "--decode-height", str(decode_height)]
+        # cropdetect below always runs against the NATIVE source (its
+        # own ffmpeg pass, independent of tv-detect's decode) — the
+        # returned offset is in native pixels and must be scaled into
+        # the rescaled logo's coordinate frame, or it overshoots by
+        # ~1/scale (2026-07-12: caught in review, none of the 3 A/B
+        # test recordings happened to have a detected letterbox, so
+        # this would have shipped silently broken for letterboxed
+        # content otherwise).
         y_off = detect_letterbox_offset(src_url, uuid=uuid)
         if y_off > 0:
+            if decode_width and decode_height:
+                y_off = round(y_off * DETECT_DECODE_SCALE)
             cmd += ["--logo-y-offset", str(y_off)]
             print(f"  detect {uuid[:8]}: letterbox y-offset={y_off}",
                   flush=True)
         if logo_cnn_path and logo_cnn_path.exists() and logo_cnn_path.stat().st_size > 1024:
             # Pass alongside --logo so tv-detect keeps the bbox from
             # the template but uses the CNN for confidence. Falls back
-            # to template internally if ONNX load fails.
+            # to template internally if ONNX load fails. Margin (px)
+            # must scale with decode resolution too — the CNN crops
+            # bbox+margin before resizing to its fixed 64x64 input, so
+            # an un-scaled margin at half-res decode would give the
+            # CNN a much wider relative field of view than it trained
+            # on (A/B-validated 2026-07-12: scaled margin 25 = 50*0.5
+            # reproduced the native-res detection exactly).
             cmd += ["--logo-cnn", str(logo_cnn_path)]
+            if decode_width and decode_height:
+                cmd += ["--logo-cnn-margin",
+                        str(max(1, round(50 * DETECT_DECODE_SCALE)))]
             print(f"  detect {uuid[:8]}: using CNN logo for {slug}",
                   flush=True)
     else:

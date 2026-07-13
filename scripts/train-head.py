@@ -2296,8 +2296,27 @@ def main():
     # Deterministic train/test split by recording uuid. Same uuid →
     # same bucket across runs, so adding new recordings doesn't shuffle
     # the existing split.
+    #
+    # TEST_SET_EXCLUDE — known-bad ground truth, never trust as a test
+    # target (still eligible for train_recs at its normal which=auto
+    # weight; only the SCORING role is revoked). Root-caused 2026-07-13:
+    # "Reisen mit Kreta.de" sat at IoU 0.00 for the whole shadow-eval
+    # week, dragging the movies/niche median down. Its "ads" field
+    # (which=auto, never user-reviewed) has exactly ONE block
+    # (414-582s), but the SAME recording's own cluster_anchored list
+    # independently flags 9 more high-confidence ad spots (family sizes
+    # 3-59, i.e. matched against 3-59 other airings) between 618s and
+    # 1029s that never made it into "ads" — the auto-cutlist truth is
+    # badly incomplete, so the model's low IoU against it was punishing
+    # correct detections, not revealing a real weakness. Flagged in the
+    # 2026-07-07 optimization backlog review; add future confirmed-bad
+    # test recs here rather than re-litigating per rejection.
+    TEST_SET_EXCLUDE = {"dvr-anixe-1781518500"}
+
     import hashlib
     def _is_test(uuid_str):
+        if uuid_str in TEST_SET_EXCLUDE:
+            return False
         h = int(hashlib.md5(uuid_str.encode()).hexdigest(), 16)
         return (h / 2**128) < args.test_frac
     # Bootstrap recordings (no labels yet, only present so Phase B can
@@ -2595,7 +2614,14 @@ def main():
     clf.fit(X_train, y_train, sample_weight=sw_train)
     train_pred = clf.predict(X_train)
     train_acc = (train_pred == y_train).mean()
-    print(f"train acc {train_acc*100:.1f}%  L2={float(np.linalg.norm(clf.coef_)):.2f}  "
+    # NOT the deployed model's accuracy — this is the internal LogReg
+    # baseline, fit unconditionally regardless of --head-arch purely as
+    # a reference point for the shadow table / historical continuity.
+    # It's also train-set (not held-out) accuracy, so it doesn't even
+    # measure the same thing as the metrics that matter. Look for
+    # "PRODUCTION METRIC" near the DEPLOYED/REJECTED line instead.
+    print(f"LogReg baseline (internal reference, NOT deployed) train acc "
+          f"{train_acc*100:.1f}%  L2={float(np.linalg.norm(clf.coef_)):.2f}  "
           f"bias={float(clf.intercept_[0]):+.3f}")
 
     # ── Platt calibration ────────────────────────────────────────
@@ -3194,8 +3220,23 @@ def main():
                   "(skipping validation)")
         else:
             conf_th = args.self_train_conf
+            # Per-channel confidence gate (2026-07-13, optimization
+            # backlog #9): self-training accuracy at the GLOBAL
+            # threshold streaks wildly by channel (sat-1 100%, rtl
+            # ~92%) — a single conf_th either wastes headroom on clean
+            # channels or risks accuracy on noisy ones. Sweep a few
+            # candidates per channel at Phase-A time (cheap: proba/
+            # p_prior are already computed once per rec, only the
+            # mask/threshold comparison repeats) and let each channel
+            # use the LOOSEST candidate that still clears the existing
+            # 95%-SAFE bar — never looser than validated, never
+            # stuck at the global default if a channel can support more.
+            CONF_CANDIDATES = sorted({conf_th, 0.99, 0.97, 0.95, 0.93},
+                                     reverse=True)
             n_total = n_pseudo = n_correct = 0
-            per_chan_stats = {}  # slug -> [n_pseudo, n_correct]
+            per_chan_stats = {}  # slug -> [n_pseudo, n_correct] @ conf_th (reporting only)
+            # slug -> cand_th -> [n_pseudo, n_correct]
+            per_chan_cand = {}
             for r in test_recs:
                 uuid = r[0]
                 slug = uuid_slug.get(uuid, "")
@@ -3210,18 +3251,42 @@ def main():
                 minutes = ((start + np.arange(n) / args.fps_extract)
                            // 60 % 60).astype(int)
                 p_prior = prior_arr[minutes]
-                # Confidence + agreement filter
+                # Confidence + agreement filter (reporting @ global conf_th)
                 conf_ad = (proba >= conf_th) & (p_prior >= 0.5)
                 conf_show = (proba <= 1 - conf_th) & (p_prior < 0.5)
                 pseudo_mask = conf_ad | conf_show
                 pseudo_label = np.where(conf_ad, 1, 0)
-                # Accuracy on the kept-frames
                 correct = (pseudo_label[pseudo_mask] == y_truth[pseudo_mask]).sum()
                 n_pseudo += int(pseudo_mask.sum())
                 n_correct += int(correct)
                 per_chan_stats.setdefault(slug, [0, 0])
                 per_chan_stats[slug][0] += int(pseudo_mask.sum())
                 per_chan_stats[slug][1] += int(correct)
+                # Per-candidate sweep for the per-channel gate.
+                cand_stats = per_chan_cand.setdefault(slug, {})
+                for cth in CONF_CANDIDATES:
+                    c_ad = (proba >= cth) & (p_prior >= 0.5)
+                    c_show = (proba <= 1 - cth) & (p_prior < 0.5)
+                    c_mask = c_ad | c_show
+                    c_label = np.where(c_ad, 1, 0)
+                    c_correct = (c_label[c_mask] == y_truth[c_mask]).sum()
+                    npi, nci = cand_stats.get(cth, (0, 0))
+                    cand_stats[cth] = (npi + int(c_mask.sum()),
+                                       nci + int(c_correct))
+            # Pick the loosest (lowest) candidate per channel that
+            # clears 95% accuracy on ≥200 candidate frames (small-n
+            # channels keep the global default — not enough evidence
+            # to trust a looser threshold). Falls back to conf_th.
+            PER_CHAN_MIN_FRAMES = 200
+            per_chan_conf = {}
+            for slug, cand_stats in per_chan_cand.items():
+                best = conf_th
+                for cth in sorted(CONF_CANDIDATES):  # loosest first
+                    npi, nci = cand_stats.get(cth, (0, 0))
+                    if npi >= PER_CHAN_MIN_FRAMES and nci / npi >= 0.95:
+                        best = cth
+                        break
+                per_chan_conf[slug] = best
             print(f"\n=== Self-Training validation (test set, {n_total} frames) ===")
             print(f"  threshold p>{conf_th} or p<{1-conf_th:.2f} + minute-prior agrees")
             if n_pseudo == 0:
@@ -3236,13 +3301,17 @@ def main():
                             "RISKY" if acc >= 90.0 else "UNSAFE")
                 print(f"  → Phase B viability: {verdict} "
                       f"(≥95% safe, 90-95% risky w/ low weight, <90% don't)")
-                print(f"\n  per-channel breakdown:")
+                print(f"\n  per-channel breakdown (@ global threshold "
+                      f"{conf_th}) + gated threshold used in Phase B:")
                 for slug, (npi, nci) in sorted(per_chan_stats.items()):
+                    gated = per_chan_conf.get(slug, conf_th)
+                    tag = " (loosened)" if gated < conf_th else ""
                     if npi == 0:
-                        print(f"    {slug:14s}  no candidates")
+                        print(f"    {slug:14s}  no candidates  "
+                              f"gate={gated}{tag}")
                     else:
                         print(f"    {slug:14s}  {nci:>5}/{npi:<5}  "
-                              f"acc {100*nci/npi:5.1f}%")
+                              f"acc {100*nci/npi:5.1f}%  gate={gated}{tag}")
 
             # ── Phase B: write pseudo_labels.json for unreviewed
             # recordings. Walks ALL recordings (not just per_rec — those
@@ -3296,8 +3365,12 @@ def main():
                     minutes = ((start + np.arange(n) / args.fps_extract)
                                // 60 % 60).astype(int)
                     p_prior = prior_arr[minutes]
-                    conf_ad = (proba >= conf_th) & (p_prior >= 0.5)
-                    conf_show = (proba <= 1 - conf_th) & (p_prior < 0.5)
+                    # Per-channel gated threshold (see Phase A sweep
+                    # above) — falls back to the global default for
+                    # channels with no/thin test-set representation.
+                    rec_conf_th = per_chan_conf.get(slug, conf_th)
+                    conf_ad = (proba >= rec_conf_th) & (p_prior >= 0.5)
+                    conf_show = (proba <= 1 - rec_conf_th) & (p_prior < 0.5)
                     pseudo_mask = conf_ad | conf_show
                     if not pseudo_mask.any():
                         if pseudo_path.exists():
@@ -3309,7 +3382,7 @@ def main():
                     pseudo_path.write_text(json.dumps({
                         "version": 1,
                         "head_ts": head_ts,
-                        "threshold": conf_th,
+                        "threshold": rec_conf_th,
                         "fps": args.fps_extract,
                         "n_frames": int(pseudo_mask.sum()),
                         "n_total": n,
@@ -4128,6 +4201,23 @@ def main():
         print(f"\nDEPLOYED → {args.output} ({sz} B, {fmt})")
         print(f"  archive: {archive_path.name}")
         print(f"  reason: {reason}")
+        # The headline "train acc NN.N%" printed earlier is the internal
+        # LogReg baseline (fit unconditionally for comparison, never
+        # deployed) — easy to mistake for THE number since it's the
+        # first accuracy figure in the log. This is the one that
+        # actually matters: the just-deployed model's own held-out
+        # test performance. (2026-07-13: user was watching the LogReg
+        # line plateau at 91.4% and reasonably asked why the real
+        # metric wasn't visible — it was, just 100+ lines earlier
+        # under a per-show table, not labelled as "this is production".)
+        if metrics_smooth:
+            _prod_med = metrics_smooth.get(
+                "iou_tv_median", metrics_smooth.get("iou_median",
+                                                     metrics_smooth.get("iou", 0.0)))
+            print(f"  PRODUCTION METRIC (this deployed model, held-out "
+                  f"test, smooth=10s): acc {metrics_smooth.get('acc', 0)*100:.1f}%  "
+                  f"IoU mean {metrics_smooth.get('iou', 0):.2f}  "
+                  f"IoU median {_prod_med:.2f}")
         # Calibration sidecar: read by the gateway's active-learning
         # endpoints and (eventually) by the Go detector. Written
         # next to head.bin so it stays version-locked with the head
@@ -4201,6 +4291,15 @@ def main():
         print(f"\nREJECTED — kept previous {args.output}")
         print(f"  candidate archived as {archive_path.name}")
         print(f"  reason: {reason}")
+        if metrics_smooth:
+            _cand_med = metrics_smooth.get(
+                "iou_tv_median", metrics_smooth.get("iou_median",
+                                                     metrics_smooth.get("iou", 0.0)))
+            print(f"  candidate's own held-out metric (NOT deployed — "
+                  f"production keeps its current numbers): acc "
+                  f"{metrics_smooth.get('acc', 0)*100:.1f}%  "
+                  f"IoU mean {metrics_smooth.get('iou', 0):.2f}  "
+                  f"IoU median {_cand_med:.2f}")
 
     # n_features for the history entry: in MLP1 mode the input dim
     # includes the channel one-hot block (= mlp_prod_in_dim = 1290

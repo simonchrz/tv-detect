@@ -1723,11 +1723,27 @@ def process_detect(uuid):
             print(f"  detect {uuid[:8]}: bumper-list err: {e}",
                   flush=True)
 
+    # nn_gate/nn_weight: per-show or per-channel override from the gateway
+    # (.channel-config.json shows[]/channels[], sentinel -1 = no override).
+    # Root cause 2026-07-13: RTL "Let's Dance" hides its on-air logo during
+    # dance performances for stretches up to ~70s — the default blend
+    # (70% logo, NN only voting when |conf-0.5|>=0.3) falls back to that
+    # broken logo signal on most frames in the disputed windows, producing
+    # both missed real ad blocks and one 35-minute false block. --nn-gate 0
+    # (NN always votes) + --nn-weight 1.0 (pure NN, logo excluded)
+    # eliminated the false blocks and recovered most of the real ones on
+    # the validated recording — gate alone (default weight 0.3) was NOT
+    # tested and likely insufficient (still 70% logo-weighted).
+    nn_weight = cfg.get("nn_weight", -1)
+    nn_weight = nn_weight if nn_weight is not None and nn_weight >= 0 else 0.3
     cmd = [TVD, "--quiet", "--workers", str(TVD_WORKERS),
            "--nn-backbone", str(backbone_path),
            "--nn-head",     str(head_path),
-           "--nn-weight",   "0.3",
+           "--nn-weight",   str(nn_weight),
            "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),]
+    nn_gate = cfg.get("nn_gate", -1)
+    if nn_gate is not None and nn_gate >= 0:
+        cmd += ["--nn-gate", str(nn_gate)]
     # --with-audio when the deployed head was trained with audio
     # (gateway tells us via the cfg flag; based on head.bin size).
     # Adds ~5-10 s ffmpeg pass per recording but unlocks the audio

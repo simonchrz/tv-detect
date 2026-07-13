@@ -57,6 +57,7 @@ func main() {
 		emitLetterbox   = flag.Bool("emit-letterbox", false, "print detected letterbox transitions (onset/offset) to stdout")
 		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
 		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
+		emitNNCSV       = flag.Bool("emit-nn-csv", false, "print per-frame raw NN ad-confidence as CSV (pre-smoothing, pre-bumper-snap — the signal that actually drives block boundaries)")
 		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
 		bumperStartTpls = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
 		withAudio       = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
@@ -301,6 +302,12 @@ func main() {
 	if *emitBumperCSV {
 		fmt.Println("idx,time_s,bumper_score")
 		for i, c := range res.BumperConfs {
+			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
+		}
+	}
+	if *emitNNCSV {
+		fmt.Println("idx,time_s,nn_confidence")
+		for i, c := range res.NNConfs {
 			fmt.Printf("%d,%.3f,%.4f\n", i, float64(i)/res.FPS, c)
 		}
 	}

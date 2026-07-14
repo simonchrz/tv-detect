@@ -2499,7 +2499,8 @@ def main():
                               0.5, dtype=f.dtype)
                 f = np.concatenate([f, pad], axis=1)
                 per_rec[i] = (r[0], r[1], r[2], f, r[4], r[5],
-                              r[6], r[7], r[8], r[9], r[10], r[11], r[12])
+                              r[6], r[7], r[8], r[9], r[10], r[11], r[12],
+                              r[13] if len(r) > 13 else [])
     if dropped_high:
         print(f"hygiene: dropped {len(dropped_high)} recording(s) with "
               f"ad-rate > {args.max_ad_rate*100:.0f}% "
@@ -2586,12 +2587,73 @@ def main():
     # test recs here rather than re-litigating per rejection.
     TEST_SET_EXCLUDE = {"dvr-anixe-1781518500"}
 
+    # ── Sticky, channel-stratified split (2026-07-14) ───────────────
+    # The pure hash<test_frac rule left per-channel test coverage to
+    # chance — Disney Channel ended up with n=2-4 test recs and single-
+    # handedly drove the 07-14 03:30 rejection's cohort table. Naive
+    # re-stratification (rank-within-channel) would MOVE existing
+    # memberships as the pool changes, and any train→test move is a
+    # leak (the rec was already trained on — see memory
+    # test_set_stickiness). Design that keeps both properties:
+    #   * a persistent ledger (split-ledger.json in the train-archive
+    #     dir) freezes every uuid's bucket forever at first sight;
+    #   * uuids ALREADY KNOWN (seeded on the ledger's first run) keep
+    #     exactly the old hash-rule bucket → zero-cutover, the gate's
+    #     paired comparison is unaffected;
+    #   * only NEW arrivals get a channel-adaptive test probability
+    #     p = clamp(frac + (frac − channel_share), 0.05, 0.5) — an
+    #     under-tested channel admits new recs to test more readily,
+    #     an over-tested one less, converging each channel toward
+    #     test_frac without ever reassigning an existing recording.
     import hashlib
+    _ledger_path = (Path(args.train_archive) / "split-ledger.json"
+                    if args.train_archive else None)
+    _ledger = {}
+    if _ledger_path and _ledger_path.is_file():
+        try:
+            _ledger = json.loads(_ledger_path.read_text())
+        except Exception:
+            _ledger = {}
+    # Captured at load: on the very first run EVERY uuid must get the
+    # legacy hash rule (seeding), not just the first one processed —
+    # `not _ledger` would flip to False after the first assignment.
+    _ledger_seeding = not _ledger
+    _ledger_dirty = [False]
+    _uuid_slug_for_split = dict(uuid_slug)  # live grid
+    for r in per_rec:  # archive-injected recs: recover slug from uuid
+        u = r[0]
+        if u not in _uuid_slug_for_split and u.startswith("dvr-"):
+            _uuid_slug_for_split[u] = "-".join(u.split("-")[1:-1])
+
+    def _hash_frac(uuid_str):
+        h = int(hashlib.md5(uuid_str.encode()).hexdigest(), 16)
+        return h / 2**128
+
     def _is_test(uuid_str):
         if uuid_str in TEST_SET_EXCLUDE:
             return False
-        h = int(hashlib.md5(uuid_str.encode()).hexdigest(), 16)
-        return (h / 2**128) < args.test_frac
+        if uuid_str in _ledger:
+            return _ledger[uuid_str] == "test"
+        if _ledger_seeding:
+            # First-ever run (no ledger file yet): seed with the legacy
+            # hash rule so every existing membership is preserved
+            # verbatim — zero cutover.
+            verdict = _hash_frac(uuid_str) < args.test_frac
+        else:
+            slug = _uuid_slug_for_split.get(uuid_str, "")
+            n_test = n_all = 0
+            for u, bucket in _ledger.items():
+                if _uuid_slug_for_split.get(u, "") == slug:
+                    n_all += 1
+                    if bucket == "test":
+                        n_test += 1
+            share = (n_test / n_all) if n_all else args.test_frac
+            p = min(0.5, max(0.05,
+                             args.test_frac + (args.test_frac - share)))
+            verdict = _hash_frac(uuid_str) < p
+        _ledger[uuid_str] = "test" if verdict else "train"
+        _ledger_dirty[0] = True
+        return verdict
     # Bootstrap recordings (no labels yet, only present so Phase B can
     # predict on their features) are excluded from train AND test —
     # they have nothing to validate against.
@@ -2608,6 +2670,30 @@ def main():
     test_recs  = [r for r in per_rec
                   if _is_test(r[0]) and not _is_bootstrap(r)
                                     and not _is_pseudo(r)]
+
+    # Persist the split ledger + report per-channel test coverage so
+    # stratification drift is visible run-to-run.
+    if _ledger_path and _ledger_dirty[0]:
+        try:
+            tmp = _ledger_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(_ledger, indent=0, sort_keys=True))
+            tmp.rename(_ledger_path)
+        except Exception as e:
+            print(f"split-ledger: persist failed: {e}", flush=True)
+    if _ledger:
+        _cov = {}
+        for u, bucket in _ledger.items():
+            s = _uuid_slug_for_split.get(u, "?")
+            d = _cov.setdefault(s, [0, 0])
+            d[1] += 1
+            if bucket == "test":
+                d[0] += 1
+        line = "  ".join(
+            f"{s}:{t}/{n}" for s, (t, n) in sorted(_cov.items())
+            if n >= 5)
+        print(f"split ledger: {len(_ledger)} uuids"
+              f"{' (seeded from legacy hash rule)' if _ledger_seeding else ''}"
+              f" — test share per channel (n≥5): {line}", flush=True)
 
     # One-time pre-pass: build any missing --emit-signals-json decode-signal
     # caches for the test set, so eval_split()'s realistic-eval path (see
@@ -2966,21 +3052,40 @@ def main():
                 "brier_raw": brier_raw,
                 "brier_calibrated": brier_cal,
                 "improvement": brier_raw - brier_cal,
+                # applied: whether consumers should actually USE A/B.
+                # Root-caused 2026-07-14: Platt fits log-loss, not Brier
+                # — on an already-well-calibrated head it consistently
+                # SOFTENS confidences (A≈0.7) and worsens Brier (✗ in
+                # 5/5 recent nightly runs, both the LogReg and the MLP
+                # variant). A calibration that measurably degrades the
+                # probability quality must not be applied; keep the fit
+                # in the sidecar for diagnostics/tracking only.
+                "applied": brier_cal < brier_raw,
             }
             arrow = "✓" if brier_cal < brier_raw else "✗"
             print(f"calibration: Platt A={A:+.3f} B={B:+.3f}  "
-                  f"Brier {brier_raw:.4f} → {brier_cal:.4f} {arrow}")
+                  f"Brier {brier_raw:.4f} → {brier_cal:.4f} {arrow}"
+                  + ("" if brier_cal < brier_raw else
+                     "  (not applied — raw probs are better calibrated)"))
+
+    # Freeze the LOGREG calibration for calibrated_proba NOW — the
+    # `calibration` name gets overwritten later by Phase D with
+    # MLP-fitted constants (late-binding closure bug found 2026-07-14:
+    # calibrated_proba applied MLP A/B to LogReg logits). Only frozen
+    # when it actually improved Brier, else None → raw probabilities.
+    _logreg_cal = (dict(calibration)
+                   if calibration and calibration["applied"] else None)
 
     def calibrated_proba(X):
-        """Apply Platt scaling on top of clf logits when calibration
-        is available; fall back to raw predict_proba otherwise. Used
-        by the active-learning surface step so 'uncertainty' reflects
-        the model's true uncertainty, not the logistic-head's
-        over-confidence."""
-        if calibration is None:
+        """Apply Platt scaling on top of clf (LogReg) logits when the
+        LogReg-fitted calibration is available AND improved Brier;
+        fall back to raw predict_proba otherwise. Used by the
+        active-learning surface step so 'uncertainty' reflects the
+        model's true uncertainty."""
+        if _logreg_cal is None:
             return clf.predict_proba(X)[:, 1]
         z = clf.decision_function(X)
-        return 1.0 / (1.0 + np.exp(-(calibration["A"] * z + calibration["B"])))
+        return 1.0 / (1.0 + np.exp(-(_logreg_cal["A"] * z + _logreg_cal["B"])))
 
     # Evaluate on held-out recordings — both raw (matches a deploy
     # without --nn-smooth) and 10s-smoothed (matches the new default).
@@ -3261,11 +3366,16 @@ def main():
                 "brier_raw": brier_raw_mlp,
                 "brier_calibrated": brier_cal_mlp,
                 "improvement": brier_raw_mlp - brier_cal_mlp,
+                # See the LogReg calibration block for the rationale —
+                # a fit that worsens Brier is diagnostics-only.
+                "applied": brier_cal_mlp < brier_raw_mlp,
             }
             arrow = "✓" if brier_cal_mlp < brier_raw_mlp else "✗"
             print(f"\nMLP calibration: Platt A={A_mlp:+.3f} "
                   f"B={B_mlp:+.3f}  Brier "
-                  f"{brier_raw_mlp:.4f} → {brier_cal_mlp:.4f} {arrow}")
+                  f"{brier_raw_mlp:.4f} → {brier_cal_mlp:.4f} {arrow}"
+                  + ("" if brier_cal_mlp < brier_raw_mlp else
+                     "  (not applied — raw probs are better calibrated)"))
 
     # ── Shadow architecture comparison (--shadow-eval) ────────────
     # Compare 3 alternative head architectures against the production

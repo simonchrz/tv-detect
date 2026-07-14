@@ -27,8 +27,12 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
-GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:8080")
-TVH_BASE = "http://raspberrypi5lan:9981"
+# Post-tvh/post-hls-gateway endpoints (updated 2026-07-14; the old
+# :8080 Flask gateway and :9981 tvh are both retired): channel list +
+# DVR grid come from tv-receiver (:9983), per-recording ads from
+# tv-recorder (:9984).
+GATEWAY = os.environ.get("GATEWAY", "http://raspberrypi5lan:9984")
+RECEIVER_BASE = os.environ.get("RECEIVER", "http://raspberrypi5lan:9983")
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 LOGO_DIR = Path.home() / ".cache" / "tv-detect-daemon" / "logos"
 OUT_ROOT = Path.home() / ".cache" / "logo-cnn-data"
@@ -110,20 +114,23 @@ def sample_timestamps(start, end, n_max):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--channel", help="restrict to one channel slug")
+    args = ap.parse_args()
+
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
-    # uuid → channel slug
-    chans = json.loads(urllib.request.urlopen(
-        f"{GATEWAY}/api/channels", timeout=10).read())
-    name_to_slug = {c["name"]: c["slug"] for c in chans.get("channels", [])
-                    if c.get("name") and c.get("slug")}
+    # uuid → channel slug. The grid carries the slug directly in
+    # "channel" (tv-receiver native shape) — no channelname→slug
+    # mapping dance needed anymore.
     dvr = json.loads(urllib.request.urlopen(
-        f"{TVH_BASE}/api/dvr/entry/grid?limit=2000", timeout=15).read())
+        f"{RECEIVER_BASE}/api/dvr/entry/grid?limit=2000", timeout=15).read())
     uuid_slug = {}
     for e in dvr.get("entries", []):
         u = e.get("uuid")
-        cn = e.get("channelname", "")
-        if u and cn in name_to_slug:
-            uuid_slug[u] = name_to_slug[cn]
+        slug = e.get("channel", "")
+        if u and slug and (not args.channel or slug == args.channel):
+            uuid_slug[u] = slug
 
     # Per-channel bbox lookup (skip channels without a logo template).
     slug_bbox = {}

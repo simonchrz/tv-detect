@@ -2200,11 +2200,28 @@ def main():
             a_which = a_meta.get("which", "")
             a_start = a_meta.get("start_ts", 0)
             a_age = (time.time() - a_start) / 86400.0 if a_start else 0.0
+            # Re-apply the same suspect-cohort downgrade the LIVE walk does
+            # (~line 1781) to frozen archive entries — root-caused 2026-07-13
+            # via SpongeBob Schwammkopf: two archive entries written BEFORE
+            # the 2026-07-09 cohort-trust fix (no "cohort" key at all, uuid
+            # long gone from the live DVR grid so uuid_cohort can't recover
+            # it either) sat frozen as which="auto-confirm" (0% ad rate,
+            # never reviewed) despite their own (title,channel) cohort
+            # having user-confirmed episodes WITH real ads elsewhere — the
+            # exact "Nick SpongeBob 91/118 auto-confirmed-empty, 11 reviewed
+            # have ads" pattern this mechanism exists to catch. Without this,
+            # a stale pre-fix archive entry stays untouchably "trusted" as
+            # TEST ground truth forever, since injection only happens once
+            # per uuid and the live downgrade logic never re-runs on it.
+            a_cohort = (tuple(a_meta["cohort"]) if a_meta.get("cohort")
+                       else uuid_cohort.get(u))
+            a_cohort_suspect = a_cohort in suspect_cohorts if a_cohort else False
+            a_is_bootstrap = a_which == "auto-confirm" and a_cohort_suspect
             per_rec.append((u, a_meta.get("title", ""), a_meta.get("ads", []),
                             a_feats, a_labels, a_which in ("user", "merged"),
                             a_meta.get("confirmed_show", []),
                             a_meta.get("confirmed_ad_skips", []), a_age,
-                            [], None, False, False,
+                            [], None, False, a_is_bootstrap,
                             a_meta.get("cluster_anchored", [])))
             injected += 1
         if injected:

@@ -129,7 +129,8 @@ def replay(cache_path, nn_csv, params):
            "--nn-gate", str(params["nn_gate"]),
            "--scene-cut-snap", str(params["scene_cut_snap"]),
            "--min-absent-open", str(params["min_absent_open"]),
-           "--max-ad-gap", str(params["max_ad_gap"])]
+           "--max-ad-gap", str(params["max_ad_gap"]),
+           "--nn-smooth", str(params.get("nn_smooth", 10))]
     if params.get("max_block_s"):
         cmd += ["--max-block-sec", str(params["max_block_s"])]
     if params.get("start_extend_s"):
@@ -182,6 +183,11 @@ GRID = {
     "nn_weight": [0.3, 0.5, 1.0],
     "min_absent_open": [5, 3],
     "max_ad_gap": [30, 60],
+    # NNSmoothS was globally 10s since the smoothing landed, never
+    # evaluated per channel: fast formats (short ad islands, kids'
+    # channels) may lose boundary precision to 10s smearing, calm
+    # formats may benefit from more.
+    "nn_smooth": [5, 10, 20],
 }
 
 

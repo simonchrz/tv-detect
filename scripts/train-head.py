@@ -949,7 +949,11 @@ MODEL_CACHE = Path.home() / ".cache" / "tv-detect-daemon"
 SOURCE_CACHE = MODEL_CACHE / "source"
 SIGNALS_CACHE = Path.home() / ".cache" / "tvd-eval-signals"
 SIGNALS_CACHE.mkdir(parents=True, exist_ok=True)
-MAX_NEW_SIGNALS_PER_RUN = 30  # cap first-time decode cost per training run
+MAX_NEW_SIGNALS_PER_RUN = 60  # cap first-time decode cost per training run
+# (30→60 on 2026-07-14: at ~20s per build the worst case is ~20 min,
+# and full test-set coverage in 1-2 nights unlocks both the realistic
+# eval on all ~102 test recs and re-running the Form() param sweep on
+# a broad basis before applying its per-channel suggestions.)
 
 
 def _bumper_templates(slug):

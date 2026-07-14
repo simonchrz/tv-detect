@@ -937,12 +937,13 @@ def fold_show_title(t):
 # ~60-1700 GB, dual-copy rule keeps the VOD but not necessarily the raw
 # .ts) and (b) a cached logo template for its channel. Recordings without
 # a cache fall back to the old to_blocks() threshold grouper — see the
-# "realistic eval" coverage line eval_split() prints. NOT yet wired to
-# per-show/per-channel Form() overrides (e.g. RTL "Let's Dance"
-# nn_gate=0/nn_weight=1.0, see memory tv_detect_letsdance_logo_hiding_fix)
-# — those live in the Pi's .channel-config.json, not fetched here; this
-# uses tv-detect's production CLI defaults uniformly, still a large
-# realism gain over no Form() at all.
+# "realistic eval" coverage line eval_split() prints. Per-show/per-channel
+# Form() overrides (e.g. RTL "Let's Dance" nn_gate=0/nn_weight=1.0, see
+# memory tv_detect_letsdance_logo_hiding_fix) ARE applied — _replay_blocks
+# fetches GET /api/internal/detect-config/<uuid> (memoized per uuid) and
+# builds the CLI flags the same way tv-thumbs-daemon.py's process_detect
+# does, not tv-detect's bare CLI defaults (which differ from production
+# even with no override: logo-smooth 0 vs 5, bumper-snap 90 vs 10).
 TVD_BIN = Path(__file__).resolve().parent.parent / "build" / "tv-detect"
 MODEL_CACHE = Path.home() / ".cache" / "tv-detect-daemon"
 SOURCE_CACHE = MODEL_CACHE / "source"
@@ -1022,15 +1023,61 @@ def _signals_cache_path(uuid):
     return p if p.is_file() else None
 
 
-def _replay_blocks(cache_path, proba, fps_extract, min_block_s=60):
+_detect_config_cache = {}  # uuid -> gateway /api/internal/detect-config response (or None), memoized
+
+
+def _fetch_detect_config(uuid):
+    """GET /api/internal/detect-config/<uuid> — the exact per-show/per-channel
+    Form() overrides (nn_gate/nn_weight/bumper_threshold/logo_smooth_s/
+    start_extend_s/end_extend_s/min_block_s/max_block_s) production's Mac
+    daemon (tv-thumbs-daemon.py) applies for this recording — e.g. RTL
+    "Let's Dance" nn_gate=0/nn_weight=1.0, see memory
+    tv_detect_letsdance_logo_hiding_fix. Memoized per uuid (fixed for a
+    given recording's lifetime, called once per candidate eval otherwise)."""
+    if uuid in _detect_config_cache:
+        return _detect_config_cache[uuid]
+    cfg = None
+    try:
+        # /api/internal/* is Caddy/:8443-only (not plain :9983, unlike
+        # /api/dvr/* above) — the same host:port tv-thumbs-daemon.py's
+        # GATEWAY constant uses for this exact endpoint.
+        import urllib.request, ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(
+                f"https://raspberrypi5lan:8443/api/internal/detect-config/{uuid}",
+                timeout=10, context=ctx) as r:
+            cfg = json.loads(r.read())
+    except Exception:
+        cfg = None
+    _detect_config_cache[uuid] = cfg
+    return cfg
+
+
+def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60):
     """Feeds one candidate's per-frame (fps_extract-rate) ad-probability
     through the real blocks.Form() pipeline via `tv-detect --replay-signals`
-    against the cached decode signals. Returns a [(start_s,end_s), ...]
+    against the cached decode signals. Builds the CLI flags the exact same
+    way tv-thumbs-daemon.py's process_detect does (same always-pass-
+    nn-weight/logo-smooth, only-pass-if-set nn-gate/start-extend/
+    end-extend, hardcoded bumper-snap=90 semantics) — so a per-show/
+    per-channel override actually changes what eval measures, instead of
+    silently falling back to tv-detect's bare CLI defaults (which differ
+    from production's: logo-smooth defaults to 0 in production vs 5 in
+    the CLI, bumper-snap to 90 vs 10). Returns a [(start_s,end_s), ...]
     list, or None on any failure (caller falls back to to_blocks())."""
     try:
         fps, frame_count = _signals_header(cache_path)
     except Exception:
         return None
+    cfg = _fetch_detect_config(uuid) or {}
+    nn_weight = cfg.get("nn_weight", -1)
+    nn_weight = nn_weight if nn_weight is not None and nn_weight >= 0 else 0.3
+    logo_smooth = cfg.get("logo_smooth_s") or 0
+    nn_gate = cfg.get("nn_gate", -1)
+    min_block_s, max_block_s = default_min_block_s, None
+    if cfg.get("min_block_s") and cfg.get("max_block_s"):
+        min_block_s, max_block_s = cfg["min_block_s"], cfg["max_block_s"]
     nn_csv = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -1042,7 +1089,24 @@ def _replay_blocks(cache_path, proba, fps_extract, min_block_s=60):
                 f.write(f"{i},{i / fps:.3f},{proba[src_i]:.4f}\n")
         cmd = [str(TVD_BIN), "--quiet", "--replay-signals", str(cache_path),
                "--replay-nn-csv", nn_csv, "--output", "summary",
-               "--min-block-sec", str(min_block_s), "dummy"]
+               "--min-block-sec", str(min_block_s),
+               "--nn-weight", str(nn_weight),
+               "--logo-smooth", str(logo_smooth),
+               # Hardcoded to match process_detect's own bumper-snap window
+               # (wider than tv-detect's own --bumper-snap default of 10) —
+               # harmless no-op when the cached signals carry no bumper conf
+               # (empty templates at emit-signals-json time).
+               "--bumper-snap", "90",
+               "--bumper-threshold", str(cfg.get("bumper_threshold", 0.75))]
+        if max_block_s:
+            cmd += ["--max-block-sec", str(max_block_s)]
+        if nn_gate is not None and nn_gate >= 0:
+            cmd += ["--nn-gate", str(nn_gate)]
+        if cfg.get("start_extend_s", 0):
+            cmd += ["--start-extend", str(cfg["start_extend_s"])]
+        if cfg.get("end_extend_s", 0):
+            cmd += ["--end-extend", str(cfg["end_extend_s"])]
+        cmd.append("dummy")
         r = subprocess.run(cmd, check=True, capture_output=True,
                            text=True, timeout=60)
         out = json.loads(r.stdout)
@@ -1266,7 +1330,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         pred_blocks = None
         if cache_path is not None:
             pred_blocks = _replay_blocks(cache_path, clf.predict_proba(X)[:, 1],
-                                          fps_extract)
+                                          fps_extract, uuid)
         if pred_blocks is not None:
             n_realistic += 1
         else:
@@ -2383,12 +2447,38 @@ def main():
                        else uuid_cohort.get(u))
             a_cohort_suspect = a_cohort in suspect_cohorts if a_cohort else False
             a_is_bootstrap = a_which == "auto-confirm" and a_cohort_suspect
+            # Frozen cluster_anchored is NEVER re-injected for archive-only
+            # (non-live) recordings — root-caused 2026-07-14: the spot-
+            # fingerprint family DB is re-clustered (rebuildFamilies, full
+            # renumber) as new recordings get fingerprinted every night, so
+            # a family_id/window_start_s snapshot frozen once at archive-
+            # write time silently rots. Found via a training-rejection
+            # investigation: 419 recordings, grouped into 5 batches each
+            # written within a single archiving run (weeks apart, mostly
+            # ~1 night wide), carried BYTE-IDENTICAL cluster_anchored
+            # payloads despite being completely unrelated shows/channels
+            # — direct sqlite inspection on the Pi
+            # confirmed those same fingerprint rows, where they still exist
+            # at all, no longer share any family in the CURRENT live table
+            # (each now sits alone, family_size=1). Since cluster_anchored
+            # exists specifically to catch cases a live re-scan could
+            # otherwise verify (comment above fingerprintRescue/the "only
+            # high-confidence signal for unreviewed recordings" rationale
+            # in the live-walk cluster_anchored read above), and an
+            # archive-only uuid can by definition never be re-verified
+            # (it dropped out of the live grid, same "gap" as the
+            # 2026-07-09/07-13 cohort-trust fix — see
+            # tv_detect_cohort_trust_archive_gap), the frozen value is
+            # unlike `cohort`/`ads`/labels (durable facts, correctly kept)
+            # — it is a live-DB-state cache that has no business outliving
+            # the DB state it was read from. Drop it rather than
+            # re-injecting a month-old (possibly wrong) label=1 anchor
+            # into every training run indefinitely.
             per_rec.append((u, a_meta.get("title", ""), a_meta.get("ads", []),
                             a_feats, a_labels, a_which in ("user", "merged"),
                             a_meta.get("confirmed_show", []),
                             a_meta.get("confirmed_ad_skips", []), a_age,
-                            [], None, False, a_is_bootstrap,
-                            a_meta.get("cluster_anchored", [])))
+                            [], None, False, a_is_bootstrap, []))
             injected += 1
         if injected:
             print(f"train-archive: injected {injected} deleted/dedup'd "

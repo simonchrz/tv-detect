@@ -81,8 +81,48 @@ func main() {
 		logoCNNMargin   = flag.Int("logo-cnn-margin", 50, "padding (px) around the template bbox for CNN crop input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX used for training. Only relevant when --logo-cnn is set.")
 		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
+
+		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
+		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
+		replayNNCSV     = flag.String("replay-nn-csv", "", "with --replay-signals: replace the embedded nn_confs with fresh per-frame confidences from this CSV (idx,time_s,nn_confidence — the same format --emit-nn-csv writes). Lets an external/candidate classifier be block-formed against the cached decode-signals without re-running ffmpeg.")
 	)
 	flag.Parse()
+
+	// buildOpts assembles blocks.Opts from the CLI flags — shared by the
+	// normal decode path and --replay-signals so both apply identical
+	// formation thresholds.
+	buildOpts := func(fps float64) blocks.Opts {
+		return blocks.Opts{
+			FPS:              fps,
+			MinBlockS:        *minBlockSec,
+			MaxBlockS:        *maxBlockSec,
+			MaxBlockFraction: *maxBlockFrac,
+			MinShowSegmentS:  *minShowSegSec,
+			MinAbsentToOpenS: *minAbsentS,
+			LogoThreshold:    *logoThreshold,
+			RefineWindowS:    *refineWindowS,
+			NNWeight:         *nnWeight,
+			NNGate:           *nnGate,
+			NNSmoothS:        *nnSmoothS,
+			LogoSmoothS:      *logoSmoothS,
+			MaxAdGapS:        *maxAdGapSec,
+			StartExtendS:     *startExtendS,
+			EndExtendS:       *endExtendS,
+			IFrameSnapS:      *iframeSnapS,
+			LogoCrossRefineS: *logoCrossS,
+			SceneCutSnapS:    *sceneCutSnapS,
+			BumperSnapS:      *bumperSnapS,
+			BumperThreshold:  *bumperThresh,
+			LetterboxSnapS:   *letterboxSnapS,
+			SpeakerWeight:    *speakerWeight,
+		}
+	}
+
+	if *replaySignals != "" {
+		runReplay(*replaySignals, *replayNNCSV, *speakerCSV, *output, buildOpts)
+		return
+	}
+
 	if flag.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: tv-detect [flags] <input.ts | input.m3u8>")
 		flag.PrintDefaults()
@@ -331,32 +371,21 @@ func main() {
 		}
 	}
 
+	// Optional raw-signals dump — everything Form() below consumes, before
+	// formation runs, so a later --replay-signals run can reproduce this
+	// exact call with a different NNWeight/NNGate/*-snap or a swapped-in
+	// nn_confs from another classifier, without re-decoding.
+	if *emitSignalsJSON != "" {
+		if err := writeSignalsJSON(*emitSignalsJSON, res, sil.events); err != nil {
+			fmt.Fprintln(os.Stderr, "emit-signals-json:", err)
+			os.Exit(1)
+		}
+	}
+
 	// Block formation + final output. Without logo confidences the
 	// classifier has no primary signal and returns an empty list.
-	blockList := blocks.Form(blocks.Opts{
-		FPS:              res.FPS,
-		MinBlockS:        *minBlockSec,
-		MaxBlockS:        *maxBlockSec,
-		MaxBlockFraction: *maxBlockFrac,
-		MinShowSegmentS:  *minShowSegSec,
-		MinAbsentToOpenS: *minAbsentS,
-		LogoThreshold:    *logoThreshold,
-		RefineWindowS:    *refineWindowS,
-		NNWeight:         *nnWeight,
-		NNGate:           *nnGate,
-		NNSmoothS:        *nnSmoothS,
-		LogoSmoothS:      *logoSmoothS,
-		MaxAdGapS:        *maxAdGapSec,
-		StartExtendS:     *startExtendS,
-		EndExtendS:       *endExtendS,
-		IFrameSnapS:      *iframeSnapS,
-		LogoCrossRefineS: *logoCrossS,
-		SceneCutSnapS:    *sceneCutSnapS,
-		BumperSnapS:      *bumperSnapS,
-		BumperThreshold:  *bumperThresh,
-		LetterboxSnapS:   *letterboxSnapS,
-		SpeakerWeight:    *speakerWeight,
-	}, res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
+	blockList := blocks.Form(buildOpts(res.FPS),
+		res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
 		res.Blackframes, sil.events,
 		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
 

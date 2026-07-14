@@ -30,6 +30,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -912,6 +913,150 @@ def fold_show_title(t):
     return t.translate(_DASH_FOLD)
 
 
+# --- realistic eval: replay through the REAL blocks.Form() pipeline ------
+#
+# eval_split() used to threshold clf.predict_proba() at 0.5 and group
+# contiguous runs (to_blocks below) — never exercising the production
+# refinement blocks.Form() applies (logo blend, nn-gate, bumper/letterbox/
+# I-frame/scene-cut snap, start/end-extend). Root-caused 2026-07-14 while
+# investigating a training rejection: this meant BOTH the printed IoU
+# numbers AND the head-to-head deploy gate were scoring a materially
+# simpler pipeline than what actually ships, so absolute IoU was
+# understated and (worse) the gate's deploy/reject calls weren't judging
+# what production would actually do with a candidate head.
+#
+# Fix: tv-detect gained --emit-signals-json (dump every raw per-frame/event
+# signal Form() consumes, once, right after a normal detect run) and
+# --replay-signals (+--replay-nn-csv) to re-run ONLY block formation
+# against a cached dump with a fresh NN confidence stream — fast (no
+# ffmpeg), so a training run can call the real Form() once per candidate
+# per test recording. See tv-detect/cmd/tv-detect/replay.go.
+#
+# Coverage is opportunistic, not guaranteed: replay needs (a) the
+# recording's source .ts still in the local cache (LRU-evicted after
+# ~60-1700 GB, dual-copy rule keeps the VOD but not necessarily the raw
+# .ts) and (b) a cached logo template for its channel. Recordings without
+# a cache fall back to the old to_blocks() threshold grouper — see the
+# "realistic eval" coverage line eval_split() prints. NOT yet wired to
+# per-show/per-channel Form() overrides (e.g. RTL "Let's Dance"
+# nn_gate=0/nn_weight=1.0, see memory tv_detect_letsdance_logo_hiding_fix)
+# — those live in the Pi's .channel-config.json, not fetched here; this
+# uses tv-detect's production CLI defaults uniformly, still a large
+# realism gain over no Form() at all.
+TVD_BIN = Path(__file__).resolve().parent.parent / "build" / "tv-detect"
+MODEL_CACHE = Path.home() / ".cache" / "tv-detect-daemon"
+SOURCE_CACHE = MODEL_CACHE / "source"
+SIGNALS_CACHE = Path.home() / ".cache" / "tvd-eval-signals"
+SIGNALS_CACHE.mkdir(parents=True, exist_ok=True)
+MAX_NEW_SIGNALS_PER_RUN = 30  # cap first-time decode cost per training run
+
+
+def _bumper_templates(slug):
+    bdir = MODEL_CACHE / "bumpers" / slug
+    if not bdir.is_dir():
+        return [], []
+    end = sorted(str(p) for p in bdir.glob("*.png"))
+    if (bdir / "end").is_dir():
+        end += sorted(str(p) for p in (bdir / "end").glob("*.png"))
+    start = []
+    if (bdir / "start").is_dir():
+        start = sorted(str(p) for p in (bdir / "start").glob("*.png"))
+    return end, start
+
+
+def _ensure_signals_cache(uuid, slug, budget):
+    """Build (once) or reuse the --emit-signals-json cache for uuid.
+    Returns the cache path, or None (caller falls back to to_blocks()).
+    budget is a [int] 1-elem list of remaining new builds this run —
+    decremented on an actual decode, shared across all callers so the
+    MAX_NEW_SIGNALS_PER_RUN cap applies process-wide."""
+    cache_path = SIGNALS_CACHE / f"{uuid}.json"
+    if cache_path.is_file():
+        return cache_path
+    if budget[0] <= 0 or not TVD_BIN.is_file():
+        return None
+    src = SOURCE_CACHE / f"{uuid}.ts"
+    if not src.is_file():
+        return None
+    logo_path = MODEL_CACHE / "logos" / f"{slug}.logo.txt"
+    if not logo_path.is_file():
+        return None
+    end_bumpers, start_bumpers = _bumper_templates(slug)
+    # Go's flag package stops parsing at the first non-flag token — the
+    # positional <input> must come LAST, after every --flag.
+    cmd = [str(TVD_BIN), "--quiet", "--logo", str(logo_path),
+           "--emit-signals-json", str(cache_path), "--output", "summary"]
+    if end_bumpers:
+        cmd += ["--bumper-templates", ",".join(end_bumpers)]
+    if start_bumpers:
+        cmd += ["--bumper-templates-start", ",".join(start_bumpers)]
+    cmd.append(str(src))
+    budget[0] -= 1
+    try:
+        subprocess.run(cmd, check=True, capture_output=True,
+                        text=True, timeout=1800)
+    except Exception as e:
+        print(f"  signals-cache: {uuid[:8]} build failed: {e}", flush=True)
+        return None
+    return cache_path if cache_path.is_file() else None
+
+
+_signals_header_cache = {}  # cache_path -> (fps, frame_count), avoids re-parsing the JSON per candidate eval
+
+
+def _signals_header(cache_path):
+    key = str(cache_path)
+    if key not in _signals_header_cache:
+        with open(cache_path) as f:
+            d = json.load(f)
+        _signals_header_cache[key] = (d["fps"], d["frame_count"])
+    return _signals_header_cache[key]
+
+
+def _signals_cache_path(uuid):
+    """Read-only lookup for eval_split() — never builds (that only happens
+    in the one-time pre-pass in main(), which has the uuid->slug map;
+    building requires a real decode and has no business running inside a
+    metric function called many times per training run)."""
+    p = SIGNALS_CACHE / f"{uuid}.json"
+    return p if p.is_file() else None
+
+
+def _replay_blocks(cache_path, proba, fps_extract, min_block_s=60):
+    """Feeds one candidate's per-frame (fps_extract-rate) ad-probability
+    through the real blocks.Form() pipeline via `tv-detect --replay-signals`
+    against the cached decode signals. Returns a [(start_s,end_s), ...]
+    list, or None on any failure (caller falls back to to_blocks())."""
+    try:
+        fps, frame_count = _signals_header(cache_path)
+    except Exception:
+        return None
+    nn_csv = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".csv", delete=False) as f:
+            nn_csv = f.name
+            f.write("idx,time_s,nn_confidence\n")
+            for i in range(frame_count):
+                src_i = min(len(proba) - 1, int(i / fps * fps_extract))
+                f.write(f"{i},{i / fps:.3f},{proba[src_i]:.4f}\n")
+        cmd = [str(TVD_BIN), "--quiet", "--replay-signals", str(cache_path),
+               "--replay-nn-csv", nn_csv, "--output", "summary",
+               "--min-block-sec", str(min_block_s), "dummy"]
+        r = subprocess.run(cmd, check=True, capture_output=True,
+                           text=True, timeout=60)
+        out = json.loads(r.stdout)
+        return [(float(b[0]), float(b[1])) for b in out.get("blocks", [])]
+    except Exception:
+        return None
+    finally:
+        if nn_csv:
+            try:
+                os.unlink(nn_csv)
+            except OSError:
+                pass
+
+
 def to_blocks(preds, fps=1.0, min_block_s=30):
     """Convert per-frame ad/show predictions to a list of contiguous
     [start_s, end_s] blocks. Mimics the deployed state machine's
@@ -1100,6 +1245,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     per_rec_iou = {}  # uuid -> IoU, for the paired head-to-head gate
     overall_frames = overall_correct = 0
     half_w = int(smooth_s * fps_extract / 2) if smooth_s > 0 else 0
+    n_realistic = n_fallback = 0
     for uuid, title, ads, X, y, *_ in recs:
         proba = clf.predict_proba(X)[:, 1]
         if half_w > 0:
@@ -1110,7 +1256,22 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         tp = int(((pred == 1) & (y == 1)).sum())
         fp = int(((pred == 1) & (y == 0)).sum())
         fn = int(((pred == 0) & (y == 1)).sum())
-        pred_blocks = to_blocks(pred, fps=fps_extract)
+        # Realistic path: replay the RAW (unsmoothed/unthresholded) proba
+        # through the real blocks.Form() pipeline (logo blend, nn-gate,
+        # bumper/letterbox/I-frame snap) when a decode-signals cache exists
+        # for this recording — Form applies its own NNSmoothS, so feeding
+        # smoothed proba here would double-smooth. Falls back to the naive
+        # threshold+contiguous-run grouper otherwise.
+        cache_path = _signals_cache_path(uuid)
+        pred_blocks = None
+        if cache_path is not None:
+            pred_blocks = _replay_blocks(cache_path, clf.predict_proba(X)[:, 1],
+                                          fps_extract)
+        if pred_blocks is not None:
+            n_realistic += 1
+        else:
+            n_fallback += 1
+            pred_blocks = to_blocks(pred, fps=fps_extract)
         # ads is already in seconds (start, end pairs).
         gt_blocks = [(float(a[0]), float(a[1])) for a in ads]
         iou = block_iou(pred_blocks, gt_blocks)
@@ -1125,6 +1286,11 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         b["n_recs"] += 1
         overall_frames += n
         overall_correct += correct
+    if n_realistic or n_fallback:
+        print(f"  realistic eval: {n_realistic}/{n_realistic + n_fallback} "
+              f"test recs via full production pipeline (blocks.Form()), "
+              f"{n_fallback} via naive threshold fallback (no cached "
+              f"decode signals for that recording)")
     # Per-show table.
     print(f"{'show':40s} {'recs':>4} {'frames':>7} {'acc':>6} "
           f"{'F1':>5} {'IoU':>5}")
@@ -2352,6 +2518,24 @@ def main():
     test_recs  = [r for r in per_rec
                   if _is_test(r[0]) and not _is_bootstrap(r)
                                     and not _is_pseudo(r)]
+
+    # One-time pre-pass: build any missing --emit-signals-json decode-signal
+    # caches for the test set, so eval_split()'s realistic-eval path (see
+    # comment above _replay_blocks) has something to replay against. Runs
+    # here, not lazily inside eval_split (called many times per training
+    # run) — capped per run since a cache miss means a real decode.
+    _signals_budget = [MAX_NEW_SIGNALS_PER_RUN]
+    _signals_built = 0
+    for r in test_recs:
+        before = _signals_budget[0]
+        if _ensure_signals_cache(r[0], uuid_slug.get(r[0], ""), _signals_budget) is not None \
+                and _signals_budget[0] < before:
+            _signals_built += 1
+    if _signals_built or _signals_budget[0] < MAX_NEW_SIGNALS_PER_RUN:
+        print(f"signals-cache: built {_signals_built} new decode-signal "
+              f"cache(s) this run (budget {MAX_NEW_SIGNALS_PER_RUN}/run); "
+              f"{sum(1 for r in test_recs if _signals_cache_path(r[0]))}/"
+              f"{len(test_recs)} test recs now have one", flush=True)
 
     # Label-hygiene pass (Stufe 2): use the existing head.bin as a
     # teacher to drop frames where labels and teacher strongly

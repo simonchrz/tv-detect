@@ -973,16 +973,44 @@ def _save_detect_retries(d):
         pass
 
 
+def _detect_src_size(uuid):
+    """Size of the locally-cached source .ts, or None if not cached."""
+    try:
+        return (SOURCE_CACHE / f"{uuid}.ts").stat().st_size
+    except OSError:
+        return None
+
+
 def _record_detect_failure(uuid, force=False):
     """Increment the persistent retry count. Returns the new count.
     When count reaches MAX_DETECT_RETRIES (or force=True for an
     unrecoverable failure like a corrupt source), POSTs to the gateway's
     detect-give-up endpoint to clear both markers — without that the
     daemon's low-prio queue (= line ~956: only fetched when high-prio
-    empty) can stay blocked indefinitely on a single broken recording."""
+    empty) can stay blocked indefinitely on a single broken recording.
+
+    The counter is keyed to the SOURCE FILE SIZE (dataflow.md §3b
+    "detect won't retry a Pi-fixed source", closed 2026-07-15): failures
+    against a corrupt/truncated source say nothing about a repaired or
+    re-imported one, so a size change resets the budget to a full
+    MAX_DETECT_RETRIES instead of inheriting stale strikes. Entries are
+    {"n": count, "size": bytes}; legacy plain-int entries (pre-format)
+    are read as size-unknown and keep their count."""
     retries = _load_detect_retries()
-    n = retries.get(uuid, 0) + 1
-    retries[uuid] = n
+    entry = retries.get(uuid, 0)
+    if isinstance(entry, dict):
+        prev_n, prev_size = int(entry.get("n", 0)), entry.get("size")
+    else:
+        prev_n, prev_size = int(entry), None
+    size = _detect_src_size(uuid)
+    if (prev_n and prev_size is not None and size is not None
+            and size != prev_size):
+        print(f"  detect {uuid[:8]}: source size changed "
+              f"({prev_size} → {size}) — resetting retry budget",
+              flush=True)
+        prev_n = 0
+    n = prev_n + 1
+    retries[uuid] = {"n": n, "size": size}
     _save_detect_retries(retries)
     if force or n >= MAX_DETECT_RETRIES:
         print(f"  detect {uuid[:8]}: giving up after {n} failure(s)"

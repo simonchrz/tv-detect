@@ -207,6 +207,11 @@ def main():
                          "speaker CSV — answers 'does the live "
                          "SPEAKER_WEIGHT=0.3 help, and would another "
                          "weight be better?' per show/channel")
+    ap.add_argument("--uuids", default="",
+                    help="comma-separated uuid list — sweep only these "
+                         "(e.g. all cached recordings of ONE SHOW, for "
+                         "a per-show override decision like the Let's "
+                         "Dance nn_gate case)")
     args = ap.parse_args()
 
     global GRID
@@ -231,10 +236,14 @@ def main():
           f"{len(chan_idx)} channels")
 
     # Collect sweepable recordings.
+    only_uuids = ({u.strip() for u in args.uuids.split(",") if u.strip()}
+                  if args.uuids else None)
     recs = []
     for p in sorted(SIGNALS_CACHE.glob("*.json")):
         uuid = p.stem
         slug = slug_of(uuid)
+        if only_uuids is not None and uuid not in only_uuids:
+            continue
         if args.channel and slug != args.channel:
             continue
         fnpy = features_for(uuid)

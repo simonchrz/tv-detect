@@ -2292,6 +2292,21 @@ def main():
     # (kept separate so we can split train/test BY RECORDING, not by
     # frame — a random per-frame split leaks show identity since
     # adjacent frames are highly correlated).
+    # _touch_atime: mark a feature .npy as in-use for the wrapper's
+    # 60-day cache prune. APFS does NOT reliably update atime on reads
+    # (verified 2026-07-15: files np.load'ed the same morning still
+    # showed weeks-old atimes), so without an explicit bump the prune
+    # would eventually delete features the deletion-safe archive still
+    # references — mass-orphaning frozen corpus entries. mtime is
+    # deliberately preserved (it serves as the rec-age proxy for the
+    # age-decay weighting of cache-recovered recordings).
+    def _touch_atime(p):
+        try:
+            st = os.stat(p)
+            os.utime(p, (time.time(), st.st_mtime))
+        except OSError:
+            pass
+
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
     dropped_high = []
     logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
@@ -2300,6 +2315,7 @@ def main():
         if not Path(cache_path).exists():
             continue
         feats = np.load(cache_path)
+        _touch_atime(cache_path)
         if feats.shape[0] == 0:
             continue
         # NaN sentinel handling: extract_logo_per_second writes NaN
@@ -2461,6 +2477,7 @@ def main():
                 continue  # features cleared → can't reconstruct; skip
             try:
                 a_feats = np.load(fnpy)
+                _touch_atime(fnpy)
             except Exception:
                 continue
             if a_feats.shape[0] == 0 or a_feats.shape[0] != len(a_labels):

@@ -2402,6 +2402,20 @@ def main():
     # stored path; labels from the archive. Keeps the corpus + sticky test
     # split stable across deletions/dedup. Shape-mismatch (fps/feature-set
     # drift) → skip rather than misalign labels.
+    # Dead recordings with pure-machine labels (which=auto/auto-confirm,
+    # never human-touched) are collected here during archive injection so
+    # the split step can RETIRE them from the TEST set (ledger flip
+    # test→train — leak-safe in that direction, the reverse is forbidden).
+    # Rationale (2026-07-15): 65 of 103 test recs were dead+frozen, 27 of
+    # them labelled only by old detection heads — the gate was scoring
+    # candidates against stale machine output that can never be
+    # re-verified (sources gone from Pi, VOD, and Mac cache alike) and
+    # that evaluates the whisper feature at neutral 0.5 (transcripts
+    # predate WHISPER_TRANSCRIBE). Human-touched dead recs (user/merged)
+    # stay: imperfect but anchored ground truth. Standing rule, not a
+    # one-shot migration — recordings that die later get caught too.
+    dead_machine_labelled = set()
+
     if archive_dir is not None:
         live_uuids = ({ri[0] for ri, _ in cached}
                       | {ri[0] for ri, _, _ in todo})
@@ -2416,6 +2430,8 @@ def main():
                 a_meta = json.loads(str(z["meta"]))
             except Exception:
                 continue
+            if a_meta.get("which", "") in ("auto", "auto-confirm"):
+                dead_machine_labelled.add(u)
             fnpy = Path(a_meta.get("feature_npy", ""))
             if not fnpy.exists():
                 continue  # features cleared → can't reconstruct; skip
@@ -2623,6 +2639,20 @@ def main():
     # `not _ledger` would flip to False after the first assignment.
     _ledger_seeding = not _ledger
     _ledger_dirty = [False]
+    # Retire dead machine-labelled recordings from TEST (see the
+    # dead_machine_labelled comment at the archive-injection site).
+    # Runs against the ledger only — on the seeding run the set is
+    # applied right after seeding via the same flip below.
+    _retired = 0
+    for _u in dead_machine_labelled:
+        if _ledger.get(_u) == "test":
+            _ledger[_u] = "train"
+            _ledger_dirty[0] = True
+            _retired += 1
+    if _retired:
+        print(f"split ledger: retired {_retired} dead machine-labelled "
+              f"recording(s) from test → train (stale, never "
+              f"re-verifiable ground truth)", flush=True)
     _uuid_slug_for_split = dict(uuid_slug)  # live grid
     for r in per_rec:  # archive-injected recs: recover slug from uuid
         u = r[0]
@@ -2638,6 +2668,13 @@ def main():
             return False
         if uuid_str in _ledger:
             return _ledger[uuid_str] == "test"
+        if uuid_str in dead_machine_labelled:
+            # never admit a dead machine-labelled recording to test —
+            # covers the fresh-ledger/seeding path where the retirement
+            # flip above found no existing entry to act on.
+            _ledger[uuid_str] = "train"
+            _ledger_dirty[0] = True
+            return False
         if _ledger_seeding:
             # First-ever run (no ledger file yet): seed with the legacy
             # hash rule so every existing membership is preserved

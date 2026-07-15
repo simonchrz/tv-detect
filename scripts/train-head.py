@@ -1314,6 +1314,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     overall_frames = overall_correct = 0
     half_w = int(smooth_s * fps_extract / 2) if smooth_s > 0 else 0
     n_realistic = n_fallback = 0
+    per_rec_stats = []  # (uuid, title, n_frames, n_errors) for the GT-outlier guard
     for uuid, title, ads, X, y, *_ in recs:
         proba = clf.predict_proba(X)[:, 1]
         if half_w > 0:
@@ -1354,6 +1355,29 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         b["n_recs"] += 1
         overall_frames += n
         overall_correct += correct
+        per_rec_stats.append((uuid, title, n, n - correct))
+    # GT-outlier guard (2026-07-15): a healthy head doesn't fail at
+    # 47-65% on individual recordings while scoring ~96% overall — when
+    # it does, the recording's frozen ground truth is the likely
+    # culprit, not the model (found twice this week: "Reisen mit
+    # Kreta.de", then "Abenteuer Leben täglich"+"Von Hecke zu Hecke" =
+    # 50% of ALL measured test errors in two dead recs with
+    # incomplete old auto-era cutlists). Print suspects so the next
+    # broken-GT recording surfaces in the nightly log immediately
+    # instead of silently dragging metrics for weeks. Heuristic:
+    # per-rec error rate >= 25% AND >= 5x the corpus-wide rate.
+    if overall_frames:
+        _corpus_err = 1.0 - overall_correct / overall_frames
+        _suspects = [(u, t, e / n) for u, t, n, e in per_rec_stats
+                     if n > 0 and e / n >= 0.25
+                     and e / n >= 5 * max(_corpus_err, 0.01)]
+        if _suspects:
+            print(f"  ⚠ GT-outlier suspects (err-rate >=25% and >=5x "
+                  f"corpus mean {100*_corpus_err:.1f}% — check the "
+                  f"recording's frozen ads list before blaming the "
+                  f"model; candidates for TEST_SET_EXCLUDE):")
+            for u, t, r in sorted(_suspects, key=lambda x: -x[2]):
+                print(f"    {u}  {t[:40]:40s} err={100*r:.0f}%")
     if n_realistic or n_fallback:
         print(f"  realistic eval: {n_realistic}/{n_realistic + n_fallback} "
               f"test recs via full production pipeline (blocks.Form()), "
@@ -2450,6 +2474,11 @@ def main():
             a_which = a_meta.get("which", "")
             a_start = a_meta.get("start_ts", 0)
             a_age = (time.time() - a_start) / 86400.0 if a_start else 0.0
+            # Dead recs aren't in the gateway grid, so uuid_start (used
+            # by the minute-prior feature paths) would miss them — the
+            # frozen start_ts serves the same purpose.
+            if a_start and u not in uuid_start:
+                uuid_start[u] = int(a_start)
             # Re-apply the same suspect-cohort downgrade the LIVE walk does
             # (~line 1781) to frozen archive entries — root-caused 2026-07-13
             # via SpongeBob Schwammkopf: two archive entries written BEFORE
@@ -2605,7 +2634,21 @@ def main():
     # correct detections, not revealing a real weakness. Flagged in the
     # 2026-07-07 optimization backlog review; add future confirmed-bad
     # test recs here rather than re-litigating per rejection.
-    TEST_SET_EXCLUDE = {"dvr-anixe-1781518500"}
+    TEST_SET_EXCLUDE = {
+        "dvr-anixe-1781518500",
+        # 2026-07-15 FP-concentration analysis on the deployed MLP3:
+        # these two DEAD which=merged recordings alone carried 50% of
+        # ALL measured test-frame errors (4210 of 8385) — the model
+        # "false-positives" on 47-65% of their runtime, against a GT
+        # that marks only ~30% ad, has ZERO confirmed_show points, and
+        # can never be re-verified (no source/VOD/cache anywhere). A
+        # 95.6%-acc model doesn't fail at 65% on one recording; the
+        # frozen old auto-era cutlist is what's wrong (same class as
+        # Kreta.de above, but which=merged so the dead-machine-label
+        # retirement rule spared them).
+        "dvr-kabel-eins-1779980100",   # Abenteuer Leben täglich
+        "dvr-rtlzwei-1780226100",      # Von Hecke zu Hecke
+    }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────
     # The pure hash<test_frac rule left per-channel test coverage to
@@ -3503,6 +3546,40 @@ def main():
                 dn[:-1, 0] = d
             return np.hstack([X, oh, wp, dp, dn]).astype(np.float32)
 
+        # Neutral fill for the minute-prior column when a recording has
+        # no start_ts or its channel has no prior: corpus-wide mean of
+        # all priors (≈ base ad rate), so the column carries no signal
+        # instead of a false one.
+        _mp_neutral = 0.25
+        if minute_prior:
+            _all_p = [v for arr in minute_prior.values() for v in arr]
+            if _all_p:
+                _mp_neutral = float(sum(_all_p) / len(_all_p))
+
+        def _augment_cwt_minuteprior(X, slug, uuid):
+            # Production layout + P(ad | minute-of-hour) as ONE extra
+            # column appended LAST ([X, chan, whisper, dp, dn, mp]) —
+            # same prefix-compatible migration mechanics as temporal.
+            # Motivation (2026-07-15 FP analysis): 77% of test-frame
+            # errors are false "ad" calls deep inside show content
+            # (Galileo product segments, kids' content). German private
+            # channels slot ads at fixed minute offsets — the per-
+            # channel minute histogram (already built for Phase A
+            # pseudo-labels) is a strong prior AGAINST mid-show ad
+            # calls that the backbone can't know. Zero extraction cost:
+            # pure augmentation from start_ts, like whisper/temporal.
+            base = _augment_channel_whisper_temporal(X, slug, uuid)
+            T = X.shape[0]
+            start = uuid_start.get(uuid, 0)
+            if start and slug in minute_prior:
+                prior_arr = np.array(minute_prior[slug], dtype=np.float32)
+                minutes = ((start + np.arange(T) / args.fps_extract)
+                           // 60 % 60).astype(int)
+                mp = prior_arr[minutes].reshape(-1, 1)
+            else:
+                mp = np.full((T, 1), _mp_neutral, dtype=np.float32)
+            return np.hstack([base, mp]).astype(np.float32)
+
         def _build_train(recs, augment):
             # recs must be train_recs: rows are taken via the parallel
             # keep_masks / sw_train_parts arrays so the shadow variants
@@ -3578,6 +3655,20 @@ def main():
         # mlp32-channel-whisper-temporal / MLP3 v3). See
         # _augment_channel_whisper_temporal above if a future capacity
         # or feature probe needs the same pattern again.
+        #
+        # Minute-prior probe (started 2026-07-15): production replica
+        # (cwt, = shadow-semantics twin of the deployed arch) vs the
+        # same + P(ad|minute) column. Decision rule as with temporal:
+        # consistently positive median Δ across several nights →
+        # migrate (header bump + Go nn.go parity + daemon start_ts
+        # pass-through); noise → drop the column, keep minute-prior
+        # in Phase A pseudo-labelling only.
+        m_v6, mlp_v6, _ = _fit_eval(
+            f"MLP-32 + chan + whisper + temporal (prod replica)",
+            _augment_channel_whisper_temporal)
+        m_v7, mlp_v7, _ = _fit_eval(
+            f"MLP-32 + cwt + minute-prior (+1 dim)",
+            _augment_cwt_minuteprior)
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -3629,11 +3720,18 @@ def main():
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
                         ("MLP-32 + temporal", m_v3),
-                        (f"MLP-32 + channel + whisper", m_v4)]:
+                        (f"MLP-32 + channel + whisper", m_v4),
+                        ("MLP-32 + cwt (prod replica)", m_v6),
+                        ("MLP-32 + cwt + minute-prior", m_v7)]:
             d = _vmed(m) - base_med
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
             print(f"  {name:35s}  {_vmed(m):>6.3f}  "
                   f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%{mark}")
+        # The decision number for the minute-prior probe: Δ vs the
+        # production replica under identical shadow semantics.
+        d_mp = _vmed(m_v7) - _vmed(m_v6)
+        print(f"\n  minute-prior probe: cwt {_vmed(m_v6):.3f} → "
+              f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_mp:+.3f})")
         # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel).
         # Tells you "is whisper as an MLP input column better than
         # whisper as a post-processor rule set". Migration breaks even

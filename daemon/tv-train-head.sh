@@ -173,13 +173,14 @@ done
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper-temporal \
+    --shadow-eval \
     ${TVH_TRAIN_EXTRA_ARGS:-}
-# --shadow-eval RAUS 2026-07-12: die 7-Nächte-Serie (seit 07-07) entschied
-# beide offenen Fragen — MLP-64 blieb Rauschen (keep 32), +temporal war
-# 6/7 Nächte positiv → migriert nach mlp32-channel-whisper-temporal (MLP3
-# v3). Der Feature-Dim-Sprung löst heute Nacht einmalig den
-# "architecture switch"-Zwangsdeploy + History-Reset aus (siehe --head-arch
-# --help), wie beim whisper-Cutover zuvor.
+# --shadow-eval WIEDER AN seit 2026-07-15 für die minute-prior-Probe
+# (cwt-Produktions-Replikat vs +P(ad|minute)-Spalte; Ziel: die 77%
+# intra-show-FP-Fehlerklasse). Entscheidung nach einigen Nächten wie
+# bei temporal: konsistent positiv → Migration, Rauschen → wieder raus.
+# (Historie: erste Shadow-Serie 07-07..07-12 entschied MLP-64=Rauschen
+# und +temporal=Produktion / MLP3 v3.)
 rc=$?
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to

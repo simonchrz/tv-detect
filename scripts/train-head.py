@@ -1074,6 +1074,25 @@ def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60)
         fps, frame_count = _signals_header(cache_path)
     except Exception:
         return None
+    # Staleness guard (2026-07-16, found via a user TRIM): the signals
+    # cache is a decode snapshot — when the recording's source changes
+    # (trim replaces the .ts; the daemon's freshness sweep invalidates
+    # features + archive but doesn't know about THIS cache), the cached
+    # duration no longer matches the current features. Replaying proba
+    # of one length against signals of another silently mis-scores the
+    # recording. Compare durations; >10s apart → drop the cache (the
+    # nightly pre-pass rebuilds it from the new source) and fall back.
+    if abs(frame_count / fps - len(proba) / fps_extract) > 10:
+        try:
+            Path(cache_path).unlink()
+            _signals_header_cache.pop(str(cache_path), None)
+            print(f"  signals-cache: {uuid[:8]} stale "
+                  f"(cache {frame_count / fps:.0f}s vs features "
+                  f"{len(proba) / fps_extract:.0f}s — source changed?), "
+                  f"dropped for rebuild", flush=True)
+        except OSError:
+            pass
+        return None
     cfg = _fetch_detect_config(uuid) or {}
     nn_weight = cfg.get("nn_weight", -1)
     nn_weight = nn_weight if nn_weight is not None and nn_weight >= 0 else 0.3

@@ -35,7 +35,7 @@ func TestLoadRealMLPHead(t *testing.T) {
 	// channel hot via sidecar). The output should be a valid sigmoid
 	// (= in (0,1)), proving the matmul works against real weights.
 	feats := make([]float32, nnFeatDim)
-	out := d.confidenceMLP(feats, []float64{0}, []float64{0.5}, 1)
+	out := d.confidenceMLPChunk(feats, []float64{0}, []float64{0.5}, 1, 1, 0)
 	if len(out) != 1 || out[0] <= 0 || out[0] >= 1 {
 		t.Errorf("forward pass output %v, want sigmoid in (0,1)", out)
 	}

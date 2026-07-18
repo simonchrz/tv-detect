@@ -278,10 +278,23 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 	// from 95 s to 57 s sum (-40 %), wall -20 %. Pairs 1:1 with the
 	// nn.go session-creation nnBatch constant — both must match.
 	const nnBatchSize = 32
+	// Two-phase NN (2026-07-18): phase 1 streams 32-frame batches through
+	// the BACKBONE only (EmbedBatch), buffering embeddings + logo + rms
+	// per frame for the whole chunk; phase 2 (after the frame loop) runs
+	// the head over the chunk via ConfidenceChunk with real fps + chunk
+	// offset. Required because whisper (per-second, absolute time) and
+	// the temporal deltas (1-second spacing) cannot be built correctly
+	// inside a 32-frame batch — the old batch-scope head pass fed the
+	// head mistimed inputs (root cause of the production NN degradation:
+	// whisper column replayed the first 32 s for every batch, temporal
+	// deltas were ~25x smaller than trained + zeroed each batch edge).
+	// Memory: ~1280 floats/frame ≈ 13 MB per typical chunk — fine.
 	var (
-		nnPxBuf   [][]byte
-		nnLogoBuf []float64
-		nnRmsBuf  []float64
+		nnPxBuf     [][]byte
+		nnEmbeds    []float32
+		nnLogoAll   []float64
+		nnRmsAll    []float64
+		nnEmbedFail bool
 	)
 	flushNN := func() {
 		if nn == nil || len(nnPxBuf) == 0 {
@@ -289,19 +302,16 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		}
 		tNN := time.Now()
 		defer func() { out.nnNs += time.Since(tNN).Nanoseconds() }()
-		// Pass nnRmsBuf only when audio is in play; nil signals the
-		// nn detector to use a neutral 0.5 if its head expects an
-		// audio dim but we have no data (=  recording with no audio
-		// stream).
-		var rmsArg []float64
-		if len(audioRMS) > 0 {
-			rmsArg = nnRmsBuf
+		emb := nn.EmbedBatch(nnPxBuf)
+		if emb == nil {
+			// Backbone inference failure — mark so phase 2 falls back to
+			// neutral for the whole chunk (embedding offsets would
+			// otherwise desync from logo/rms indices).
+			nnEmbedFail = true
+		} else {
+			nnEmbeds = append(nnEmbeds, emb...)
 		}
-		out.nnConfs = append(out.nnConfs,
-			toNNConfs(nn.ConfidenceBatch(nnPxBuf, nnLogoBuf, rmsArg))...)
 		nnPxBuf = nnPxBuf[:0]
-		nnLogoBuf = nnLogoBuf[:0]
-		nnRmsBuf = nnRmsBuf[:0]
 	}
 	for f := range d.Frames() {
 		tFrame := time.Now()
@@ -328,7 +338,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 			pxCopy := make([]byte, len(f.Pixels))
 			copy(pxCopy, f.Pixels)
 			nnPxBuf = append(nnPxBuf, pxCopy)
-			nnLogoBuf = append(nnLogoBuf, logoConf)
+			nnLogoAll = append(nnLogoAll, logoConf)
 			// Per-frame audio RMS = the per-second value at the
 			// frame's wall-clock second. audioRMS is indexed by
 			// absolute seconds across the recording; chunk's startS
@@ -341,7 +351,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 					rms = float64(audioRMS[absSec])
 				}
 			}
-			nnRmsBuf = append(nnRmsBuf, rms)
+			nnRmsAll = append(nnRmsAll, rms)
 			if len(nnPxBuf) == nnBatchSize {
 				flushNN()
 			}
@@ -381,6 +391,30 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		count++
 	}
 	flushNN() // any tail frames waiting in the batch buffer
+	// Phase 2: head pass over the whole chunk with correctly-timed
+	// whisper/temporal inputs (see the two-phase comment above).
+	if nn != nil {
+		tNN := time.Now()
+		nFrames := len(nnLogoAll)
+		var rmsArg []float64
+		if len(audioRMS) > 0 {
+			rmsArg = nnRmsAll
+		}
+		if nnEmbedFail || len(nnEmbeds) != nFrames*1280 {
+			// Backbone failed somewhere — neutral chunk, same behaviour
+			// as the old per-batch failure path.
+			neutral := make([]float64, nFrames)
+			for i := range neutral {
+				neutral[i] = 0.5
+			}
+			out.nnConfs = append(out.nnConfs, neutral...)
+		} else {
+			out.nnConfs = append(out.nnConfs, toNNConfs(
+				nn.ConfidenceChunk(nnEmbeds, nnLogoAll, rmsArg,
+					nFrames, d.FPS, p.startS))...)
+		}
+		out.nnNs += time.Since(tNN).Nanoseconds()
+	}
 	black.Finish()
 	if err := d.Err(); err != nil {
 		out.err = err

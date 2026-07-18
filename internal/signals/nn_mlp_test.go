@@ -37,7 +37,7 @@ func TestConfidenceMLP_HandComputed(t *testing.T) {
 	feats[0] = 1.0
 	feats[1] = 2.0
 
-	out := d.confidenceMLP(feats, nil, nil, 1)
+	out := d.confidenceMLPChunk(feats, nil, nil, 1, 1, 0)
 	if len(out) != 1 {
 		t.Fatalf("len(out)=%d, want 1", len(out))
 	}
@@ -78,7 +78,7 @@ func TestConfidenceMLP_ReLUClamps(t *testing.T) {
 	feats := make([]float32, nnFeatDim)
 	feats[0] = 1.0 // pushes hidden[1] pre-act to -10
 
-	out := d.confidenceMLP(feats, nil, nil, 1)
+	out := d.confidenceMLPChunk(feats, nil, nil, 1, 1, 0)
 	// With ReLU: hidden[1] = max(0, -10) = 0; logit = 0; prob = 0.5.
 	// Without ReLU: prob ≈ sigmoid(-10) ≈ 4.5e-5 (= drastically off).
 	if math.Abs(out[0]-0.5) > 1e-6 {
@@ -123,7 +123,7 @@ func TestConfidenceMLP_LogoAudioChannelInputs(t *testing.T) {
 	logoConfs := []float64{1.0}
 	rmsConfs := []float64{1.0}
 
-	out := d.confidenceMLP(feats, logoConfs, rmsConfs, 1)
+	out := d.confidenceMLPChunk(feats, logoConfs, rmsConfs, 1, 1, 0)
 	// hidden[0] = 0 + 1.0*7 + 1.0*11 + 1.0*13 = 31  (channel idx 2 hot)
 	// logit = 31; prob = sigmoid(31) ≈ 1.0 (saturated)
 	if out[0] < 0.999 {
@@ -157,7 +157,7 @@ func TestConfidenceMLP_BatchIndependence(t *testing.T) {
 	feats := make([]float32, 2*nnFeatDim) // 2 frames, all zero
 	logoConfs := []float64{1.0, 0.0}      // frame 0: logo present, frame 1: absent
 
-	out := d.confidenceMLP(feats, logoConfs, nil, 2)
+	out := d.confidenceMLPChunk(feats, logoConfs, nil, 2, 1, 0)
 	if len(out) != 2 {
 		t.Fatalf("len(out)=%d, want 2", len(out))
 	}
@@ -359,7 +359,7 @@ func TestLoadMLPHeadV2_Roundtrip(t *testing.T) {
 	// sigmoid(4) ≈ 0.982 vs sigmoid(0) = 0.5.
 	d.SetWhisperProbs([]float64{1.0, 0.0})
 	feats := make([]float32, 2*nnFeatDim)
-	out := d.confidenceMLP(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2)
+	out := d.confidenceMLPChunk(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2, 1, 0)
 	if out[0] < 0.97 {
 		t.Errorf("frame 0 (whisper=1) prob=%.4f, want ≈0.98 (saturated)",
 			out[0])
@@ -370,7 +370,7 @@ func TestLoadMLPHeadV2_Roundtrip(t *testing.T) {
 
 	// Nil whisper-probs → fallback to 0.5 → sigmoid(4*0.5) ≈ 0.881.
 	d.SetWhisperProbs(nil)
-	out = d.confidenceMLP(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2)
+	out = d.confidenceMLPChunk(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2, 1, 0)
 	if math.Abs(out[0]-0.8807970779778823) > 1e-6 {
 		t.Errorf("nil whisper fallback prob=%.6f, want sigmoid(2)=0.8808",
 			out[0])
@@ -515,7 +515,7 @@ func TestLoadMLPHeadV3_Roundtrip(t *testing.T) {
 	// TestLoadMLPHeadV2_Roundtrip.
 	d.SetWhisperProbs([]float64{1.0, 0.0})
 	feats := make([]float32, 2*nnFeatDim)
-	out := d.confidenceMLP(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2)
+	out := d.confidenceMLPChunk(feats, []float64{0, 0}, []float64{0.5, 0.5}, 2, 1, 0)
 	if out[0] < 0.97 {
 		t.Errorf("frame 0 (whisper=1) prob=%.4f, want ≈0.98 (saturated)",
 			out[0])
@@ -580,7 +580,7 @@ func TestConfidenceMLP_TemporalDeltaMatchesPython(t *testing.T) {
 	logoConfs := []float64{0.2, 0.6, 0.6}
 	rmsConfs := []float64{0.3, 0.7, 0.7}
 
-	out := d.confidenceMLP(feats, logoConfs, rmsConfs, 3)
+	out := d.confidenceMLPChunk(feats, logoConfs, rmsConfs, 3, 1, 0)
 	if len(out) != 3 {
 		t.Fatalf("len(out)=%d, want 3", len(out))
 	}
@@ -600,5 +600,110 @@ func TestConfidenceMLP_TemporalDeltaMatchesPython(t *testing.T) {
 	if math.Abs(out[2]-0.5) > 1e-6 {
 		t.Errorf("frame 2 (identical to frame 1, zero delta) prob=%.6f, "+
 			"want 0.5", out[2])
+	}
+}
+
+// TestConfidenceMLPChunk_TemporalAt25fps is the parity test the 07-12
+// migration was missing: at production frame rates the temporal deltas
+// must be computed against the frame ONE SECOND away (step = fps), not
+// the neighbouring frame. The old batch-scope pass compared consecutive
+// 25fps frames (≈25x smaller deltas, zeroed each 32-frame batch edge) —
+// the root cause of the 2026-07-18 production NN degradation.
+func TestConfidenceMLPChunk_TemporalAt25fps(t *testing.T) {
+	const H = 1
+	const nTemporal = 2
+	const fps = 25.0
+	const n = 60 // 2.4 s at 25fps
+	inDim := nnFeatDim + nTemporal
+	temporalOff := nnFeatDim
+	W1 := make([]float32, inDim*H)
+	W1[temporalOff*H+0] = 1.0     // dp
+	W1[(temporalOff+1)*H+0] = 1.0 // dn
+	d := &NNDetector{
+		headLoaded:   true,
+		headIsMLP:    true,
+		mlpInDim:     inDim,
+		mlpHidden:    H,
+		mlpOutDim:    1,
+		mlpBackbone:  nnFeatDim,
+		mlpNTemporal: nTemporal,
+		mlpW1:        W1,
+		mlpB1:        []float32{0},
+		mlpW2:        []float32{1.0},
+		mlpB2:        []float32{0},
+		mlpChanIdx:   -1,
+	}
+	// Embedding[0] ramps by +1.0 per FRAME → the delta to the frame 25
+	// indices away is exactly 25.0; consecutive-frame deltas would be 1.0.
+	feats := make([]float32, n*nnFeatDim)
+	for i := 0; i < n; i++ {
+		feats[i*nnFeatDim] = float32(i)
+	}
+	out := d.confidenceMLPChunk(feats, nil, nil, n, fps, 0)
+
+	// Frame 30 (≥ step from both edges): dp = dn = 25 → logit 50 →
+	// saturated ≈ 1.0. With the OLD consecutive-frame bug it would be
+	// sigmoid(2) ≈ 0.88 — the test discriminates sharply.
+	if out[30] < 0.999999 {
+		t.Errorf("frame 30 prob=%.8f, want ≈1.0 (dp=dn=25 at 1s spacing; "+
+			"consecutive-frame deltas would give sigmoid(2)≈0.88)", out[30])
+	}
+	// Frame 10 (< step from chunk start): dp must be 0, dn = 25 →
+	// logit 25 → still saturated but distinguishable via a weaker head…
+	// simpler: frame n-10 (< step from end): dp = 25, dn = 0 → logit 25.
+	// Both edges: verify frame 0 has dp=0 (logit = dn = 25 → ≈1.0) and
+	// that a WOULD-BE consecutive delta of 1.0 never appears alone:
+	// check frame 55 (dp=25, dn=0 → sigmoid(25)) vs frame 30 equality.
+	if math.Abs(out[55]-out[30]) > 1e-9 && out[55] < 0.999999 {
+		t.Errorf("frame 55 prob=%.8f, want saturated (dp=25, dn=0)", out[55])
+	}
+}
+
+// TestConfidenceMLPChunk_WhisperAbsoluteSeconds pins the whisper column
+// to ABSOLUTE wall-clock seconds (chunk offset + frame/fps). The old
+// batch-scope pass indexed the per-second array with the batch-local
+// frame index — every 32-frame batch replayed the first 32 seconds of
+// whisper data (second bug in the 2026-07-18 root-cause set).
+func TestConfidenceMLPChunk_WhisperAbsoluteSeconds(t *testing.T) {
+	const H = 1
+	const nWhisper = 1
+	const fps = 25.0
+	const chunkStart = 100.0 // chunk begins at t=100 s in the recording
+	const n = 50             // 2 s of frames
+	inDim := nnFeatDim + nWhisper
+	whisperOff := nnFeatDim
+	W1 := make([]float32, inDim*H)
+	W1[whisperOff*H+0] = 4.0
+	d := &NNDetector{
+		headLoaded:  true,
+		headIsMLP:   true,
+		mlpInDim:    inDim,
+		mlpHidden:   H,
+		mlpOutDim:   1,
+		mlpBackbone: nnFeatDim,
+		mlpNWhisper: nWhisper,
+		mlpW1:       W1,
+		mlpB1:       []float32{0},
+		mlpW2:       []float32{1.0},
+		mlpB2:       []float32{0},
+		mlpChanIdx:  -1,
+	}
+	// Whisper per-second array: 1.0 at seconds 100+101, 0.0 elsewhere.
+	probs := make([]float64, 200)
+	probs[100] = 1.0
+	probs[101] = 1.0
+	d.mlpWhisperProbs = probs
+
+	feats := make([]float32, n*nnFeatDim)
+	out := d.confidenceMLPChunk(feats, nil, nil, n, fps, chunkStart)
+
+	// ALL 50 frames live in seconds 100-101 → whisper=1.0 → sigmoid(4).
+	want := 1.0 / (1.0 + math.Exp(-4.0))
+	for _, i := range []int{0, 24, 25, 49} {
+		if math.Abs(out[i]-want) > 1e-6 {
+			t.Errorf("frame %d prob=%.6f, want %.6f (whisper at abs sec "+
+				"%d — batch-local indexing would read sec %d = 0.0)",
+				i, out[i], want, int(chunkStart)+i/25, i)
+		}
 	}
 }

@@ -730,25 +730,25 @@ func (d *NNDetector) Confidence(pixels []byte, logoConf, rmsConf float64) float6
 	return r[0]
 }
 
-// ConfidenceBatch runs ONNX inference on up to nnBatch frames in
-// one session.Run call (CoreML batches matmul efficiently on
-// M-series GPUs). The session was created with a fixed batch
-// dimension of nnBatch; partial batches are zero-padded and only
-// the first len(framesPixels) results are returned. Caller must
-// pass framesPixels and logoConfs of equal length, ≤ nnBatch.
-func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs []float64) []float64 {
+// EmbedBatch runs ONLY the backbone on up to nnBatch frames and returns a
+// COPY of the embeddings (n * nnFeatDim float32, frame-major). Part of the
+// two-phase inference split (2026-07-18): the head pass moved to
+// ConfidenceChunk so time-dependent input columns (whisper, temporal
+// deltas) can be built with correct ABSOLUTE timing over a whole chunk —
+// inside a 32-frame batch neither is computable correctly (root cause of
+// the production NN degradation found 2026-07-18: whisper indexed
+// batch-locally = first 32 s repeated per batch, temporal deltas at
+// consecutive-25fps-frame scale ≈ 25x smaller than the 1 s-spacing the
+// head was trained on, zeroed at every batch edge).
+// Returns nil on inference failure (caller substitutes neutral 0.5s).
+func (d *NNDetector) EmbedBatch(framesPixels [][]byte) []float32 {
 	n := len(framesPixels)
 	if n == 0 {
 		return nil
 	}
 	if n > nnBatch {
-		// Caller error — split into multiple calls upstream.
 		n = nnBatch
 		framesPixels = framesPixels[:nnBatch]
-		logoConfs = logoConfs[:nnBatch]
-		if rmsConfs != nil {
-			rmsConfs = rmsConfs[:nnBatch]
-		}
 	}
 	in := d.inTensor.GetData()
 	stride := 3 * nnInputH * nnInputW
@@ -756,36 +756,54 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 		preprocess(framesPixels[i], d.frameW, d.frameH,
 			in[i*stride:(i+1)*stride])
 	}
-	// Zero-pad unused slots so leftover data from a previous call
-	// can't leak into this batch's results.
 	for i := n; i < nnBatch; i++ {
 		clear(in[i*stride : (i+1)*stride])
 	}
 	if err := d.session.Run(); err != nil {
-		out := make([]float64, n)
-		for i := range out {
-			out[i] = 0.5
-		}
+		return nil
+	}
+	out := make([]float32, n*nnFeatDim)
+	copy(out, d.outTensor.GetData()[:n*nnFeatDim])
+	return out
+}
+
+// ConfidenceChunk runs the head pass over a whole chunk's embeddings with
+// correctly-timed auxiliary inputs. embeds is frame-major (n * nnFeatDim,
+// as returned by EmbedBatch calls concatenated in order); fps is the
+// recording frame rate; chunkStartS the chunk's absolute start offset in
+// the recording (for whisper's per-second indexing). A nil embeds or
+// n == 0 returns all-neutral.
+//
+// Timing semantics (MUST mirror scripts/train-head.py, which trains on
+// 1 fps rows):
+//   - whisper column: whisperProbs[int(chunkStartS + i/fps)] — per-second
+//     array indexed by the frame's absolute wall-clock second (same
+//     mapping parallel.go uses for audio RMS).
+//   - temporal deltas: dp[i] = ||base(i) - base(i-step)||, dn[i] =
+//     ||base(i+step) - base(i)|| with step = round(fps) — i.e. the frame
+//     ONE SECOND away, matching the 1 s row spacing of training's
+//     _augment_channel_whisper_temporal. Frames within step of the chunk
+//     edges get 0 (training zeroes recording edges; a chunked run zeroes
+//     ~step frames per chunk boundary — ~2 % of frames at 18 chunks,
+//     bounded and directionless).
+func (d *NNDetector) ConfidenceChunk(embeds []float32, logoConfs, rmsConfs []float64, n int, fps, chunkStartS float64) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = 0.5
+	}
+	if n == 0 || embeds == nil || len(embeds) < n*nnFeatDim {
 		return out
 	}
-	feats := d.outTensor.GetData()
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	out := make([]float64, n)
 	if !d.headLoaded {
-		for i := range out {
-			out[i] = 0.5
-		}
 		return out
 	}
 	if d.headIsMLP {
-		return d.confidenceMLP(feats, logoConfs, rmsConfs, n)
+		return d.confidenceMLPChunk(embeds, logoConfs, rmsConfs, n, fps, chunkStartS)
 	}
-	// Layout (matches train-head.py featurize_recording order):
-	//   [0..1280)        backbone
-	//   [1280]           logo  (if headWithLogo)
-	//   [1280+(0|1) ..]  chan one-hot (if headWithChan, len=nC)
-	//   [tail]           audio (if headWithAudio) — appended LAST
+	// LogReg path — per-frame, no time-dependent inputs. Same math as
+	// the historical ConfidenceBatch LogReg branch.
 	chanBase := nnFeatDim
 	if d.headWithLogo {
 		chanBase = nnFeatDim + 1
@@ -804,7 +822,7 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 		logit := d.headBias
 		off := i * nnFeatDim
 		for j := 0; j < nnFeatDim; j++ {
-			logit += d.headW[j] * feats[off+j]
+			logit += d.headW[j] * embeds[off+j]
 		}
 		if d.headWithLogo {
 			logit += d.headW[nnFeatDim] * float32(logoConfs[i])
@@ -813,9 +831,6 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 			logit += d.headW[chanBase+d.channelIdx]
 		}
 		if d.headWithAudio {
-			// Caller may pass nil rmsConfs for legacy heads — treat
-			// as neutral 0.5 so a missing audio stream doesn't bias
-			// predictions toward show or ad.
 			rms := 0.5
 			if rmsConfs != nil && i < len(rmsConfs) {
 				rms = rmsConfs[i]
@@ -827,62 +842,73 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 	return out
 }
 
-// confidenceMLP runs the v1 MLP forward pass for n frames. Caller
-// holds d.mu.RLock — do NOT take it again here.
-//
-//	hidden_j = ReLU( b1_j + Σ_k x_k * W1[k*H+j] )      for j in [0, H)
-//	logit    = b2_0 + Σ_j hidden_j * W2[j*1+0]         (= H mul-adds; output_dim=1)
-//	prob     = 1 / (1 + exp(-logit))
-//
-// Input vector layout (must mirror train-head.py
-// featurize_recording, which the writer asserts):
-//
-//	[0..1280)              backbone
-//	[1280..1280+nLogo)     logo conf (= 0 or 1 entry)
-//	[+nAudio entries)      audio RMS (= 0 or 1 entry)
-//	[+nChannel entries)    channel one-hot (size from sidecar)
-//
-// Note: the LogReg layout puts channel BEFORE audio, but the MLP
-// header uses backbone+logo+audio+channel order to match what
-// write_mlp_head_v1 expects (sklearn flattens columns in the order
-// they were concat'd in the augment step). Stay consistent with the
-// header's contract — backbone, logo, audio, channel.
-func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float64, n int) []float64 {
+// ConfidenceBatch runs backbone + head on up to nnBatch frames. Retained
+// for callers WITHOUT chunk-timing context (single-frame Confidence, the
+// nn-smoke tool): frames are treated as 1 s apart (fps=1, offset 0) —
+// the training-row semantic. The production pipeline does NOT use this;
+// it collects EmbedBatch results per chunk and calls ConfidenceChunk
+// with real fps/offset so whisper + temporal columns are timed correctly.
+func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs []float64) []float64 {
+	n := len(framesPixels)
+	if n == 0 {
+		return nil
+	}
+	if n > nnBatch {
+		// Caller error — split into multiple calls upstream.
+		n = nnBatch
+		framesPixels = framesPixels[:nnBatch]
+		logoConfs = logoConfs[:nnBatch]
+		if rmsConfs != nil {
+			rmsConfs = rmsConfs[:nnBatch]
+		}
+	}
+	embeds := d.EmbedBatch(framesPixels)
+	if embeds == nil {
+		out := make([]float64, n)
+		for i := range out {
+			out[i] = 0.5
+		}
+		return out
+	}
+	return d.ConfidenceChunk(embeds, logoConfs, rmsConfs, n, 1, 0)
+}
+
+
+// confidenceMLPChunk is the chunk-scope MLP forward pass with correctly-
+// timed auxiliary inputs (see ConfidenceChunk for the timing contract).
+// Caller holds d.mu.RLock. Replaces the batch-scope confidenceMLP, whose
+// batch-local indexing was the 2026-07-18 root cause (whisper read the
+// first 32 seconds for every batch; temporal deltas were consecutive-
+// frame-scale and zeroed at every 32-frame boundary).
+func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []float64, n int, fps, chunkStartS float64) []float64 {
 	out := make([]float64, n)
 	x := make([]float32, d.mlpInDim)
 	hidden := make([]float32, d.mlpHidden)
 	chanOff := nnFeatDim + d.mlpNLogo + d.mlpNAudio
 	whisperOff := chanOff + d.mlpNChannel
 	temporalOff := whisperOff + d.mlpNWhisper
-	// Per-frame whisper-prob array, populated by SetWhisperProbs from
-	// the surrounding recording's whisper.json (= MLP2-format heads
-	// only). nil → fallback to neutral 0.5 per frame which lets the
-	// model treat the whisper input as uninformative without crashing
-	// the index path (= the trained weight on this column will absorb
-	// the constant; missed +0.075 IoU but never wrong direction).
-	whisperPerFrame := d.mlpWhisperProbs
-	// Temporal-delta arrays (MLP3-format heads only): L2 distance to
-	// the previous/next frame's [backbone, logo?, audio?] vector.
-	// Precomputed in one forward pass over the whole recording (not
-	// inline in the main loop below) because dn[i] needs frame i+1,
-	// which isn't built yet when the main loop reaches frame i.
-	// dpTemporal[i] = ||base(i)-base(i-1)||, dnTemporal[i] =
-	// ||base(i+1)-base(i)||; both 0 at the recording's edges — MUST
-	// mirror scripts/train-head.py's _augment_channel_whisper_temporal
-	// exactly (same base slice, same edge-zero convention) or the
-	// trained weights score against a differently-distributed input.
+	whisperPerSec := d.mlpWhisperProbs
+	if fps <= 0 {
+		fps = 1
+	}
+	step := int(fps + 0.5)
+	if step < 1 {
+		step = 1
+	}
+	// Temporal deltas at 1-second spacing over the WHOLE chunk. Base
+	// vector per frame = [backbone, logo?, audio?] — mirrors training's
+	// X rows (train-head.py _augment_channel_whisper_temporal computes
+	// np.linalg.norm(X[t] - X[t-1]) on 1 fps rows of exactly that
+	// layout).
 	var dpTemporal, dnTemporal []float32
 	if d.mlpNTemporal > 0 {
 		baseDim := nnFeatDim + d.mlpNLogo + d.mlpNAudio
-		dpTemporal = make([]float32, n)
-		dnTemporal = make([]float32, n)
-		prev := make([]float32, baseDim)
-		cur := make([]float32, baseDim)
+		base := make([]float32, n*baseDim)
 		for i := 0; i < n; i++ {
-			copy(cur[:nnFeatDim], feats[i*nnFeatDim:(i+1)*nnFeatDim])
-			off := nnFeatDim
+			copy(base[i*baseDim:], embeds[i*nnFeatDim:(i+1)*nnFeatDim])
+			off := i*baseDim + nnFeatDim
 			if d.mlpNLogo > 0 {
-				cur[off] = float32(logoConfs[i])
+				base[off] = float32(logoConfs[i])
 				off++
 			}
 			if d.mlpNAudio > 0 {
@@ -890,41 +916,39 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 				if rmsConfs != nil && i < len(rmsConfs) {
 					rms = rmsConfs[i]
 				}
-				cur[off] = float32(rms)
-				off++
+				base[off] = float32(rms)
 			}
-			if i > 0 {
-				var sumSq float32
-				for k := 0; k < baseDim; k++ {
-					diff := cur[k] - prev[k]
-					sumSq += diff * diff
-				}
-				dist := float32(math.Sqrt(float64(sumSq)))
-				dpTemporal[i] = dist
-				dnTemporal[i-1] = dist
+		}
+		dpTemporal = make([]float32, n)
+		dnTemporal = make([]float32, n)
+		for i := step; i < n; i++ {
+			a := base[i*baseDim : (i+1)*baseDim]
+			b := base[(i-step)*baseDim : (i-step+1)*baseDim]
+			var sumSq float32
+			for k := 0; k < baseDim; k++ {
+				diff := a[k] - b[k]
+				sumSq += diff * diff
 			}
-			copy(prev, cur)
+			dist := float32(math.Sqrt(float64(sumSq)))
+			dpTemporal[i] = dist
+			dnTemporal[i-step] = dist
 		}
 	}
 	for i := 0; i < n; i++ {
-		// Build the input vector for frame i. Reuse x (= zeroed before
-		// each frame so unused channel one-hot slots default to 0).
-		copy(x[:nnFeatDim], feats[i*nnFeatDim:(i+1)*nnFeatDim])
+		copy(x[:nnFeatDim], embeds[i*nnFeatDim:(i+1)*nnFeatDim])
 		off := nnFeatDim
 		if d.mlpNLogo > 0 {
 			x[off] = float32(logoConfs[i])
 			off++
 		}
 		if d.mlpNAudio > 0 {
-			rms := 0.5 // neutral when stream is missing
+			rms := 0.5
 			if rmsConfs != nil && i < len(rmsConfs) {
 				rms = rmsConfs[i]
 			}
 			x[off] = float32(rms)
 			off++
 		}
-		// Channel one-hot: zero the block, then set the resolved idx
-		// (if any) to 1.0. Cheap because mlpNChannel ≤ ~32 in practice.
 		if d.mlpNChannel > 0 {
 			for k := 0; k < d.mlpNChannel; k++ {
 				x[chanOff+k] = 0
@@ -933,26 +957,28 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 				x[chanOff+d.mlpChanIdx] = 1.0
 			}
 		}
-		// Whisper-prob slot (MLP2 format only). Per-frame value from
-		// the per-recording whisper.json; absent → 0.5 neutral.
+		// Whisper: per-second array indexed by the frame's ABSOLUTE
+		// wall-clock second (chunk offset + frame-local time) — the
+		// same mapping parallel.go applies to audio RMS.
 		if d.mlpNWhisper > 0 {
 			wp := float32(0.5)
-			if whisperPerFrame != nil && i < len(whisperPerFrame) {
-				wp = float32(whisperPerFrame[i])
+			if whisperPerSec != nil {
+				absSec := int(chunkStartS + float64(i)/fps)
+				if absSec >= 0 && absSec < len(whisperPerSec) {
+					wp = float32(whisperPerSec[absSec])
+				}
 			}
 			x[whisperOff] = wp
 		}
-		// Temporal-delta slots (MLP3 format only).
 		if d.mlpNTemporal > 0 {
 			x[temporalOff] = dpTemporal[i]
 			x[temporalOff+1] = dnTemporal[i]
 		}
-		// Hidden layer: hidden_j = ReLU(b1_j + Σ_k x_k * W1[k*H+j])
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {
 			xk := x[k]
 			if xk == 0 {
-				continue // sparse one-hot inputs short-circuit
+				continue
 			}
 			rowOff := k * d.mlpHidden
 			for j := 0; j < d.mlpHidden; j++ {
@@ -964,8 +990,6 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 				hidden[j] = 0
 			}
 		}
-		// Output layer (output_dim=1): logit = b2_0 + Σ_j hidden_j * W2[j].
-		// W2 is row-major (H, O); for O=1 the row stride is 1.
 		logit := d.mlpB2[0]
 		for j := 0; j < d.mlpHidden; j++ {
 			logit += hidden[j] * d.mlpW2[j]
@@ -976,11 +1000,11 @@ func (d *NNDetector) confidenceMLP(feats []float32, logoConfs, rmsConfs []float6
 }
 
 // SetWhisperProbs supplies the per-second whisper-prob array for
-// the current recording. Indexed by frame index at inference (=
-// per-second granularity matches train-head extraction). Only
-// consumed when the loaded head is MLP2-format with n_whisper>0;
-// other formats ignore the call. Pass nil to clear (= back to
-// neutral 0.5 fallback).
+// the current recording. Indexed by ABSOLUTE wall-clock second in
+// ConfidenceChunk (per-second granularity matches train-head
+// extraction). Only consumed when the loaded head is MLP2/MLP3-format
+// with n_whisper>0; other formats ignore the call. Pass nil to clear
+// (= back to neutral 0.5 fallback).
 func (d *NNDetector) SetWhisperProbs(probs []float64) {
 	d.mu.Lock()
 	d.mlpWhisperProbs = probs

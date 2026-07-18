@@ -5,7 +5,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>DETECT_PARALLEL</key>
-		<string>2</string>
+		<string>3</string>
 		<key>GATEWAY</key>
 		<string>https://raspberrypi5lan:8443</string>
 		<key>SOURCE_CACHE_MAX_GB</key>
@@ -23,6 +23,14 @@
 	<string>com.user.tv-thumbs-daemon</string>
 	<key>ProgramArguments</key>
 	<array>
+		<!-- 2026-07-18: the 07-13 /usr/bin/env DETECT_PARALLEL=3 wrapper
+		     was removed after a user-run bootout+bootstrap finally went
+		     through and confirmed the EnvironmentVariables dict above is
+		     honored again (launchctl print shows 3; the earlier silent
+		     bootout no-ops never got a root cause). If launchd ever holds
+		     a stale env dict again: bootout+bootstrap from an interactive
+		     shell, NOT kickstart -k (which reuses the cached job
+		     definition wholesale, ProgramArguments included). -->
 		<string>/opt/homebrew/bin/python3.13</string>
 		<string>/Users/simon/bin/tv-thumbs-daemon.py</string>
 	</array>

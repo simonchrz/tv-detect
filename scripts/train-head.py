@@ -978,6 +978,13 @@ def _ensure_signals_cache(uuid, slug, budget):
     cache_path = SIGNALS_CACHE / f"{uuid}.json"
     if cache_path.is_file():
         return cache_path
+    if cache_path.with_suffix(".stale").is_file():
+        # Tombstoned by _replay_blocks: the current source is known to
+        # mismatch this recording's frozen features — rebuilding would
+        # just re-create the same doomed cache. Cleared naturally if
+        # the features ever get re-extracted (different filename) or
+        # manually by deleting the .stale file.
+        return None
     if budget[0] <= 0 or not TVD_BIN.is_file():
         return None
     src = SOURCE_CACHE / f"{uuid}.ts"
@@ -1086,10 +1093,19 @@ def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60)
         try:
             Path(cache_path).unlink()
             _signals_header_cache.pop(str(cache_path), None)
+            # Tombstone: when the CURRENT source itself no longer matches
+            # the frozen features (source truncated after extraction, rec
+            # dead → features never re-extracted), a rebuild produces the
+            # exact same mismatch — without this marker the pre-pass
+            # rebuilt and the eval re-dropped the cache every single
+            # night (observed 07-17/07-18 on a dead Let's Dance rec).
+            Path(cache_path).with_suffix(".stale").write_text(
+                f"cache {frame_count / fps:.0f}s vs features "
+                f"{len(proba) / fps_extract:.0f}s")
             print(f"  signals-cache: {uuid[:8]} stale "
                   f"(cache {frame_count / fps:.0f}s vs features "
                   f"{len(proba) / fps_extract:.0f}s — source changed?), "
-                  f"dropped for rebuild", flush=True)
+                  f"dropped + tombstoned", flush=True)
         except OSError:
             pass
         return None

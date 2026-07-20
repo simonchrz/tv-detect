@@ -2703,6 +2703,19 @@ def main():
         # retirement rule spared them).
         "dvr-kabel-eins-1779980100",   # Abenteuer Leben täglich
         "dvr-rtlzwei-1780226100",      # Von Hecke zu Hecke
+        # 2026-07-20 Form()-sweep triage: these six scored IoU 0.000
+        # across ALL 217 grid combos (features↔signals durations verified
+        # aligned, so not a cache artifact) — the GT itself is the outlier,
+        # not the params. No user labels, no archive npz. Four carry an
+        # empty machine cutlist on 63-82-min recordings (n_blocks=0-as-
+        # labels class), two a single tail block running exactly to the
+        # recording end (captured-neighbour signature).
+        "dvr-prosieben-1783011902",    # 72min, zero-block GT
+        "dvr-prosieben-1783271066",    # 82min, zero-block GT
+        "dvr-vox-1783008000",          # 63min, zero-block GT
+        "dvr-vox-1783357200",          # 78min, zero-block GT
+        "dvr-prosieben-1780544100",    # Call Me Kat — GT=[1320,1920.56] to EOF
+        "dvr-prosieben-1781406105",    # Die Goldbergs — GT=[1291,1592] to EOF
     }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────

@@ -1141,6 +1141,9 @@ def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60)
             cmd += ["--max-block-sec", str(max_block_s)]
         if nn_gate is not None and nn_gate >= 0:
             cmd += ["--nn-gate", str(nn_gate)]
+        nn_smooth = cfg.get("nn_smooth", -1)
+        if nn_smooth is not None and nn_smooth >= 0:
+            cmd += ["--nn-smooth", str(nn_smooth)]
         if cfg.get("start_extend_s", 0):
             cmd += ["--start-extend", str(cfg["start_extend_s"])]
         if cfg.get("end_extend_s", 0):

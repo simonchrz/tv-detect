@@ -1772,6 +1772,13 @@ def process_detect(uuid):
     nn_gate = cfg.get("nn_gate", -1)
     if nn_gate is not None and nn_gate >= 0:
         cmd += ["--nn-gate", str(nn_gate)]
+    # nn_smooth: per-show/channel NN-confidence smoothing window override
+    # (sentinel -1 = no override, tv-detect's CLI default 10s applies).
+    # First user: vox nn_smooth=5 — sweep 2026-07-20 showed 10s smearing
+    # costs boundary precision on its fast-cut formats.
+    nn_smooth = cfg.get("nn_smooth", -1)
+    if nn_smooth is not None and nn_smooth >= 0:
+        cmd += ["--nn-smooth", str(nn_smooth)]
     # --with-audio when the deployed head was trained with audio
     # (gateway tells us via the cfg flag; based on head.bin size).
     # Adds ~5-10 s ffmpeg pass per recording but unlocks the audio

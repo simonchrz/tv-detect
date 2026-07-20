@@ -154,7 +154,10 @@ def baseline_params(cfg):
     nn_weight = nn_weight if nn_weight is not None and nn_weight >= 0 else 0.3
     nn_gate = cfg.get("nn_gate", -1)
     nn_gate = nn_gate if nn_gate is not None and nn_gate >= 0 else 0.3
+    nn_smooth = cfg.get("nn_smooth", -1)
+    nn_smooth = nn_smooth if nn_smooth is not None and nn_smooth >= 0 else 10
     p = {
+        "nn_smooth": nn_smooth,
         "nn_weight": nn_weight,
         "nn_gate": nn_gate,
         "logo_smooth_s": cfg.get("logo_smooth_s") or 0,

@@ -1241,14 +1241,25 @@ def process_recording(uuid, do_hls, do_thumbs):
             try:
                 probe = subprocess.run(
                     [FFPROBE, "-v", "error", "-select_streams", "v:0",
-                     "-show_entries", "stream=codec_name", "-of",
-                     "default=nokey=1:noprint_wrappers=1", src_url],
+                     "-show_entries", "stream=codec_name,field_order",
+                     "-of", "json", src_url],
                     capture_output=True, text=True, timeout=30,
                     env=SPAWN_ENV)
-                vcodec = (probe.stdout or "").strip()
+                vstream = (json.loads(probe.stdout or "{}")
+                           .get("streams") or [{}])[0]
+                vcodec = vstream.get("codec_name", "")
+                field_order = vstream.get("field_order", "")
             except Exception:
-                vcodec = ""
-            if vcodec in SAFE_VIDEO:
+                vcodec, field_order = "", ""
+            # Interlaced broadcast never goes out as copy: Comedy Central
+            # flipped its encoder ~2026-07 to Main/interlaced h264 that also
+            # violates its own SPS ref-frame limit — ffmpeg decodes it with
+            # warnings, AVPlayer/VideoToolbox drops the video entirely
+            # (audio-only playback). Deinterlace + re-encode instead.
+            # "unknown"/absent field_order counts as progressive so metadata
+            # gaps don't stampede every remux into a transcode.
+            interlaced = field_order not in ("", "unknown", "progressive")
+            if vcodec in SAFE_VIDEO and not interlaced:
                 v_opts = ["-c:v", "copy"]
             else:
                 # libx264 ultrafast on M5 Pro encodes 90× realtime
@@ -1263,7 +1274,9 @@ def process_recording(uuid, do_hls, do_thumbs):
                 # 1046 px musste die App-Bridge croppen+kopieren; mit 1040
                 # trifft der Decoder-Buffer die VT-Session exakt (Zero-Copy-
                 # Direct-Pass). AR-Fehler durch round ≤ ~0,8 %, unsichtbar.
+                deint = "bwdif=mode=send_field," if interlaced else ""
                 v_opts = ["-vf",
+                          deint +
                           "scale=round(iw*sar/16)*16:trunc(ih/2)*2,setsar=1",
                           "-c:v", "libx264", "-preset", "ultrafast",
                           "-profile:v", "main", "-pix_fmt", "yuv420p",

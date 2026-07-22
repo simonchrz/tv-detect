@@ -5074,6 +5074,45 @@ def main():
                       f"({len(minute_prior)} slugs, neutral {mp_neutral:.3f})")
             except Exception as e:
                 print(f"  minute-prior sidecar err: {e}")
+        # Per-rec IoU sidecar: the deployed candidate's (and, when the
+        # head-to-head ran, the champion's) per-recording IoU + show
+        # titles. Turns the "why did the mean move?" morning
+        # decomposition into a two-file diff instead of an hour of log
+        # archaeology (2026-07-21: the 0.81→0.77 drop took exactly
+        # that hour to attribute to GT churn + composition).
+        try:
+            pr_path = Path(args.output).with_suffix(".per-rec-iou.json")
+            _round = lambda d: {u: round(float(v), 4)
+                                for u, v in (d or {}).items()}
+            pr_path.write_text(json.dumps({
+                "ts": ts,
+                "candidate": _round(metrics_smooth.get("per_rec_iou")
+                                    if metrics_smooth else {}),
+                "champion": _round(
+                    deployed_test_metrics.get("per_rec_iou")
+                    if deployed_test_metrics else {}),
+                "titles": {r[0]: r[1] for r in (test_recs or [])},
+            }, indent=2))
+            print(f"  per-rec-iou sidecar: {pr_path.name} "
+                  f"({len(metrics_smooth.get('per_rec_iou') or {})} recs)")
+            # Compact log companion: the biggest per-rec movers vs the
+            # champion (when the head-to-head ran) — the first thing a
+            # "why did the metric move?" morning look needs.
+            cand_pri = metrics_smooth.get("per_rec_iou") or {}
+            champ_pri = (deployed_test_metrics or {}).get("per_rec_iou") or {}
+            movers = sorted(((u, cand_pri[u] - champ_pri[u])
+                             for u in cand_pri if u in champ_pri),
+                            key=lambda x: abs(x[1]), reverse=True)[:8]
+            _titles = {r[0]: r[1] for r in (test_recs or [])}
+            if movers and abs(movers[0][1]) >= 0.005:
+                print("  top per-rec movers (candidate − champion):")
+                for u, dlt in movers:
+                    if abs(dlt) < 0.005:
+                        break
+                    print(f"    {dlt:+.2f}  {u}  "
+                          f"{_titles.get(u, '')[:36]}")
+        except Exception as e:
+            print(f"  per-rec-iou sidecar err: {e}")
         # Archive the FULL bundle (head + its sidecars) under the same ts, so
         # any past champion is restorable as a unit. The live sidecars next to
         # head.bin get overwritten on every deploy, so an archived head.<ts>.bin
@@ -5083,7 +5122,8 @@ def main():
         # head.bin was archived, the champion's 10-slug channel-map was gone.
         try:
             for suffix in (".calibration.json", ".test-set.json",
-                           ".channel-map.json", ".minute-prior.json"):
+                           ".channel-map.json", ".minute-prior.json",
+                           ".per-rec-iou.json"):
                 live = Path(args.output).with_suffix(suffix)
                 if live.exists():
                     (archive_dir / f"head.{ts}{suffix}").write_text(

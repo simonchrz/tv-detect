@@ -43,22 +43,23 @@ type NNDetector struct {
 	// MLP-head state (when headIsMLP=true; LogReg fields above are
 	// unused). Loaded from a "MLP1" magic-prefixed head.bin as
 	// specified in scripts/train-head.py write_mlp_head_v1.
-	headIsMLP    bool
-	mlpInDim     int            // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel + mlpNWhisper + mlpNTemporal)
-	mlpHidden    int            // hidden-layer size (e.g. 32)
-	mlpOutDim    int            // = 1 today; format carries the field for fwd-compat
-	mlpBackbone  int            // sanity vs nnFeatDim
-	mlpNLogo     int            // 0 or 1
-	mlpNAudio    int            // 0 or 1
-	mlpNChannel  int            // size of channel one-hot block
-	mlpNWhisper  int            // 0 or 1 — per-frame whisper-prob slot (v2+)
-	mlpNTemporal int            // 0 or 2 — L2 distance to prev/next frame (v3+)
-	mlpW1        []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
-	mlpB1        []float32      // mlpHidden
-	mlpW2        []float32      // (mlpHidden, mlpOutDim) row-major
-	mlpB2        []float32      // mlpOutDim
-	mlpChanMap   map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
-	mlpChanIdx   int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
+	headIsMLP       bool
+	mlpInDim        int            // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel + mlpNWhisper + mlpNTemporal)
+	mlpHidden       int            // hidden-layer size (e.g. 32)
+	mlpOutDim       int            // = 1 today; format carries the field for fwd-compat
+	mlpBackbone     int            // sanity vs nnFeatDim
+	mlpNLogo        int            // 0 or 1
+	mlpNAudio       int            // 0 or 1
+	mlpNChannel     int            // size of channel one-hot block
+	mlpNWhisper     int            // 0 or 1 — per-frame whisper-prob slot (v2+)
+	mlpNTemporal    int            // 0 or 2 — L2 distance to prev/next frame (v3+)
+	mlpNMinutePrior int            // 0 or 1 — P(ad | minute-of-hour) slot (v4+)
+	mlpW1           []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
+	mlpB1           []float32      // mlpHidden
+	mlpW2           []float32      // (mlpHidden, mlpOutDim) row-major
+	mlpB2           []float32      // mlpOutDim
+	mlpChanMap      map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
+	mlpChanIdx      int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
 	// Per-recording whisper-prob array (length = recording duration in
 	// seconds). Set ONCE at recording start via SetWhisperProbs from
 	// the per-recording whisper.json. Indexed at inference by frame
@@ -66,6 +67,16 @@ type NNDetector struct {
 	// extraction). Only used when mlpNWhisper > 0; nil for v1 heads
 	// or when the daemon hasn't supplied whisper data.
 	mlpWhisperProbs []float64
+	// Minute-of-hour prior (v4 heads): the recording channel's 60-bucket
+	// P(ad | minute_of_hour) histogram resolved from the
+	// <head>.minute-prior.json sidecar at load, plus the sidecar's
+	// corpus-wide neutral fill. Frame → minute via startTS (wall-clock
+	// recording start, set via SetStartTS / --start-ts) + frame offset.
+	// nil prior or startTS==0 → the neutral value (matches train-head.py
+	// _minuteprior_col exactly).
+	mlpMinutePrior []float32
+	mlpMPNeutral   float32
+	startTS        int64
 }
 
 // Backbone tensor shape: (1, 3, 224, 224). Output: (1, 1280).
@@ -250,13 +261,14 @@ func (d *NNDetector) reloadHead() error {
 	if err != nil {
 		return err
 	}
-	// MLP magic-prefix detection. Three known formats:
+	// MLP magic-prefix detection. Four known formats:
 	//   "MLP1" (v1) — backbone + logo + audio + channel one-hot
 	//   "MLP2" (v2) — v1 + per-frame whisper-prob input slot
 	//   "MLP3" (v3) — v2 + L2-distance-to-prev/next-frame input slots
+	//   "MLP4" (v4) — v3 + minute-of-hour-prior input slot
 	// Each gets its own loader because the header layout differs
-	// (v3 is 44 B, v2 40 B, v1 36 B). Falls through to the legacy
-	// LogReg size-detection path when no magic matches.
+	// (v4 is 48 B, v3 44 B, v2 40 B, v1 36 B). Falls through to the
+	// legacy LogReg size-detection path when no magic matches.
 	if len(raw) >= 4 && raw[0] == 'M' && raw[1] == 'L' && raw[2] == 'P' {
 		switch raw[3] {
 		case '1':
@@ -265,6 +277,8 @@ func (d *NNDetector) reloadHead() error {
 			return d.loadMLPHeadV2(raw, mtime)
 		case '3':
 			return d.loadMLPHeadV3(raw, mtime)
+		case '4':
+			return d.loadMLPHeadV4(raw, mtime)
 		}
 		// Unknown MLPx version → fall through to LogReg size
 		// detection, which will fail with a clean error rather
@@ -326,6 +340,8 @@ func (d *NNDetector) reloadHead() error {
 	d.mlpChanMap = nil
 	d.mlpNWhisper = 0
 	d.mlpNTemporal = 0
+	d.mlpNMinutePrior = 0
+	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
 }
@@ -432,6 +448,8 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	// v1 → no whisper/temporal slots.
 	d.mlpNWhisper = 0
 	d.mlpNTemporal = 0
+	d.mlpNMinutePrior = 0
+	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
 }
@@ -620,6 +638,8 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	d.mlpNChannel = nChan
 	d.mlpNWhisper = nWhisper
 	d.mlpNTemporal = nTemporal
+	d.mlpNMinutePrior = 0
+	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
 	d.mlpW2 = W2
@@ -633,6 +653,166 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	d.headWithAudio = false
 	d.mu.Unlock()
 	return nil
+}
+
+// loadMLPHeadV4 parses an "MLP4"-magic head.bin (= written by
+// scripts/train-head.py write_mlp_head_v4). Identical layout to v3
+// except the header carries a 12th uint32 LE field `n_minuteprior`
+// (0 or 1) at offset 44..47, growing the header from 44 to 48 bytes.
+// input_dim must equal backbone+logo+audio+channel+whisper+temporal
+// +minuteprior.
+//
+// At inference the minute-prior column is appended LAST (= AFTER the
+// temporal deltas), so the v1/v2/v3 column order stays a prefix. The
+// per-channel P(ad | minute-of-hour) histogram comes from the
+// <head>.minute-prior.json sidecar (resolved for channelSlug at load);
+// frame → minute via startTS + frame offset — MUST mirror
+// scripts/train-head.py's _minuteprior_col exactly.
+func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
+	const headerLen = 48
+	if len(raw) < headerLen {
+		return fmt.Errorf("MLP4 head truncated: %d B < %d B header",
+			len(raw), headerLen)
+	}
+	u32 := func(off int) uint32 {
+		return uint32(raw[off]) | uint32(raw[off+1])<<8 |
+			uint32(raw[off+2])<<16 | uint32(raw[off+3])<<24
+	}
+	if u32(0) != 0x34504C4D {
+		return fmt.Errorf("MLP4 head magic mismatch: got 0x%08x, want 0x34504C4D",
+			u32(0))
+	}
+	version := u32(4)
+	if version != 4 {
+		return fmt.Errorf("MLP4 head version %d unsupported (this build reads v4)",
+			version)
+	}
+	inDim := int(u32(8))
+	hidden := int(u32(12))
+	outDim := int(u32(16))
+	backbone := int(u32(20))
+	nLogo := int(u32(24))
+	nAudio := int(u32(28))
+	nChan := int(u32(32))
+	nWhisper := int(u32(36))
+	nTemporal := int(u32(40))
+	nMinutePrior := int(u32(44))
+	if backbone != nnFeatDim {
+		return fmt.Errorf("MLP4 head backbone_dim %d != nnFeatDim %d "+
+			"(rebuild head against the current backbone)",
+			backbone, nnFeatDim)
+	}
+	if backbone+nLogo+nAudio+nChan+nWhisper+nTemporal+nMinutePrior != inDim {
+		return fmt.Errorf("MLP4 head input_dim %d inconsistent with "+
+			"backbone %d + logo %d + audio %d + chan %d + whisper %d + "+
+			"temporal %d + minuteprior %d",
+			inDim, backbone, nLogo, nAudio, nChan, nWhisper, nTemporal,
+			nMinutePrior)
+	}
+	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
+	if len(raw) != expected {
+		return fmt.Errorf("MLP4 head size %d != expected %d (in=%d hid=%d out=%d)",
+			len(raw), expected, inDim, hidden, outDim)
+	}
+	off := headerLen
+	readFloats := func(n int) []float32 {
+		out := make([]float32, n)
+		for i := 0; i < n; i++ {
+			out[i] = floatLE(raw[off+i*4:])
+		}
+		off += n * 4
+		return out
+	}
+	W1 := readFloats(inDim * hidden)
+	b1 := readFloats(hidden)
+	W2 := readFloats(hidden * outDim)
+	b2 := readFloats(outDim)
+	chanMap, mlpChanIdx, err := d.loadChannelMap(nChan)
+	if err != nil {
+		return fmt.Errorf("MLP4 head: %w", err)
+	}
+	var mpPrior []float32
+	mpNeutral := float32(0.25)
+	if nMinutePrior > 0 {
+		mpPrior, mpNeutral, err = d.loadMinutePrior()
+		if err != nil {
+			return fmt.Errorf("MLP4 head: %w", err)
+		}
+	}
+	d.mu.Lock()
+	d.headIsMLP = true
+	d.headLoaded = true
+	d.headMtime = mtime
+	d.mlpInDim = inDim
+	d.mlpHidden = hidden
+	d.mlpOutDim = outDim
+	d.mlpBackbone = backbone
+	d.mlpNLogo = nLogo
+	d.mlpNAudio = nAudio
+	d.mlpNChannel = nChan
+	d.mlpNWhisper = nWhisper
+	d.mlpNTemporal = nTemporal
+	d.mlpNMinutePrior = nMinutePrior
+	d.mlpMinutePrior = mpPrior
+	d.mlpMPNeutral = mpNeutral
+	d.mlpW1 = W1
+	d.mlpB1 = b1
+	d.mlpW2 = W2
+	d.mlpB2 = b2
+	d.mlpChanMap = chanMap
+	d.mlpChanIdx = mlpChanIdx
+	d.headW = nil
+	d.headBias = 0
+	d.headWithLogo = false
+	d.headWithChan = false
+	d.headWithAudio = false
+	d.mu.Unlock()
+	return nil
+}
+
+// loadMinutePrior reads <head_dir>/<head_basename>.minute-prior.json
+// and resolves the recording's channel slug to its 60-bucket
+// P(ad | minute-of-hour) histogram. A missing slug is NOT an error —
+// inference falls back to the sidecar's corpus-wide neutral value
+// (same graceful degradation as an unknown channel one-hot). A
+// missing/corrupt sidecar IS an error: a v4 head without its prior
+// table would silently score against a differently-distributed input.
+func (d *NNDetector) loadMinutePrior() ([]float32, float32, error) {
+	dir := filepath.Dir(d.headPath)
+	stem := strings.TrimSuffix(filepath.Base(d.headPath), ".bin")
+	sidecar := filepath.Join(dir, stem+".minute-prior.json")
+	raw, err := os.ReadFile(sidecar)
+	if err != nil {
+		return nil, 0, fmt.Errorf("minute-prior sidecar missing at %s: %w",
+			sidecar, err)
+	}
+	var sc struct {
+		Version int                  `json:"version"`
+		Neutral float64              `json:"neutral"`
+		Priors  map[string][]float64 `json:"priors"`
+	}
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		return nil, 0, fmt.Errorf("minute-prior sidecar parse: %w", err)
+	}
+	if sc.Version != 1 {
+		return nil, 0, fmt.Errorf("minute-prior sidecar version %d != 1",
+			sc.Version)
+	}
+	neutral := float32(sc.Neutral)
+	if arr, ok := sc.Priors[d.channelSlug]; ok && len(arr) == 60 {
+		prior := make([]float32, 60)
+		for i, v := range arr {
+			prior[i] = float32(v)
+		}
+		return prior, neutral, nil
+	}
+	if d.channelSlug != "" {
+		fmt.Fprintf(os.Stderr,
+			"nn: MLP4 head loaded but channel slug %q has no minute-prior "+
+				"histogram (%d known) — using neutral %.3f\n",
+			d.channelSlug, len(sc.Priors), neutral)
+	}
+	return nil, neutral, nil
 }
 
 // loadChannelMap reads <head_dir>/<head_basename>.channel-map.json
@@ -873,7 +1053,6 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 	return d.ConfidenceChunk(embeds, logoConfs, rmsConfs, n, 1, 0)
 }
 
-
 // confidenceMLPChunk is the chunk-scope MLP forward pass with correctly-
 // timed auxiliary inputs (see ConfidenceChunk for the timing contract).
 // Caller holds d.mu.RLock. Replaces the batch-scope confidenceMLP, whose
@@ -887,6 +1066,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	chanOff := nnFeatDim + d.mlpNLogo + d.mlpNAudio
 	whisperOff := chanOff + d.mlpNChannel
 	temporalOff := whisperOff + d.mlpNWhisper
+	minutePriorOff := temporalOff + d.mlpNTemporal
 	whisperPerSec := d.mlpWhisperProbs
 	if fps <= 0 {
 		fps = 1
@@ -974,6 +1154,21 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 			x[temporalOff] = dpTemporal[i]
 			x[temporalOff+1] = dnTemporal[i]
 		}
+		// Minute-of-hour prior (v4): wall-clock minute of this frame =
+		// recording start + absolute in-recording offset. Mirrors
+		// train-head.py _minuteprior_col: (start + t) // 60 % 60. No
+		// startTS or no per-channel histogram → the sidecar's neutral.
+		if d.mlpNMinutePrior > 0 {
+			mp := d.mlpMPNeutral
+			if d.startTS > 0 && d.mlpMinutePrior != nil {
+				absS := float64(d.startTS) + chunkStartS + float64(i)/fps
+				minute := int(absS/60) % 60
+				if minute >= 0 && minute < 60 {
+					mp = d.mlpMinutePrior[minute]
+				}
+			}
+			x[minutePriorOff] = mp
+		}
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {
 			xk := x[k]
@@ -1005,6 +1200,17 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 // extraction). Only consumed when the loaded head is MLP2/MLP3-format
 // with n_whisper>0; other formats ignore the call. Pass nil to clear
 // (= back to neutral 0.5 fallback).
+// SetStartTS supplies the recording's wall-clock start (unix seconds,
+// = the DVR grid's start_real; the daemon passes it via --start-ts).
+// Only consumed when the loaded head is MLP4-format with
+// n_minuteprior>0; other formats ignore it. 0 (unset) → the neutral
+// fill, matching train-head.py's missing-start_ts fallback.
+func (d *NNDetector) SetStartTS(ts int64) {
+	d.mu.Lock()
+	d.startTS = ts
+	d.mu.Unlock()
+}
+
 func (d *NNDetector) SetWhisperProbs(probs []float64) {
 	d.mu.Lock()
 	d.mlpWhisperProbs = probs

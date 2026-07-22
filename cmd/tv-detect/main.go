@@ -25,61 +25,62 @@ import (
 
 func main() {
 	var (
-		logoPath       = flag.String("logo", "", "path to comskip .logo.txt template")
-		workers        = flag.Int("workers", runtime.NumCPU(), "parallel chunk workers (1 = single pipeline)")
-		output         = flag.String("output", "summary", "output format: summary | cutlist")
-		minBlockSec    = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
-		maxBlockSec    = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
-		maxBlockFrac   = flag.Float64("max-block-fraction", 0.5, "drop any final block longer than this fraction of total recording duration (0 = off). Catches state-machine runaway false positives where a sustained logo-washout opens a block that never closes.")
-		minShowSegSec  = flag.Float64("min-show-segment", 60, "min show between blocks before merging — also sets how long logo-present is required to declare block end")
-		maxAdGapSec    = flag.Float64("max-ad-gap", 30, "post-refine merge: glue adjacent ad blocks if the gap between them is shorter than this (catches promo slates between ad break halves; 0 disables)")
-		startExtendS   = flag.Float64("start-extend", 0, "pull each detected block's start back by N seconds (channel-specific systematic correction from user-feedback boundary drift; capped at the prior block's end)")
-		endExtendS     = flag.Float64("end-extend", 0, "push each detected block's end forward by N seconds (channel-specific sponsor-tail trim from user-feedback drift; capped at the next block's start)")
-		iframeSnapS    = flag.Float64("iframe-snap", 5, "post-refine snap each boundary to the nearest I-frame within ±N seconds. 0 = off. Real ad-inserts always align with encoder I-frames.")
-		logoCrossS     = flag.Float64("logo-cross-refine", 2, "post-refine snap each boundary to the precise frame where logoConf crosses --logo-threshold within ±N seconds. 0 = off. Sub-frame precision (40 ms) using the existing 25-fps logo signal — no extra decode.")
-		sceneCutSnapS  = flag.Float64("scene-cut-snap", 0, "post-refine snap each boundary to the nearest hard scene cut within ±N seconds. 0 = off (default — empirical test showed regressions on some shows when the I-frame snap was authoritative for those broadcasters). Set 1.5 to enable.")
-		letterboxSnapS = flag.Float64("letterbox-snap", 5, "post-refine snap each boundary to the nearest letterbox transition (onset for START, offset for END) within ±N seconds. 0 = off. Geometric deterministic signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI/VOX). No-op when no letterbox transitions detected.")
-		minAbsentS     = flag.Float64("min-absent-open", 5, "seconds of continuous logo-absent before a candidate block opens (filters single-frame flickers in the show)")
-		refineWindowS  = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
-		logoThreshold  = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
-		blackframeDur  = flag.Float64("blackframe-d", 0.10, "min duration for blackframe (seconds)")
-		silenceNoiseDB = flag.Float64("silence-noise-db", -30, "silence noise floor (dB)")
-		silenceDur     = flag.Float64("silence-d", 0.50, "min silence duration (seconds)")
-		sceneThreshold = flag.Float64("scene-threshold", 0.40, "histogram distance above which a frame pair is a scene cut")
-		quiet          = flag.Bool("quiet", false, "suppress progress output to stderr")
-		probeOnly      = flag.Bool("probe", false, "only print stream metadata and exit")
-		decodeWidth    = flag.Int("decode-width", 0, "scale frames to width (0 = native)")
-		decodeHeight   = flag.Int("decode-height", 0, "scale frames to height (0 = native)")
-		ffmpegExtraIn  = flag.String("ffmpeg-extra-input-args", "", "space-separated ffmpeg flags to inject BEFORE -i in the decode subprocess. Use for error-tolerance on corrupt IPTV streams: '-err_detect ignore_err -fflags +discardcorrupt' keeps ffmpeg producing frames through h264 PPS/packet-loss errors instead of aborting, which would silently make the affected frame range unmeasurable (logo signal returns sentinel 0.5 → block-formation fails to find ad blocks).")
-		emitBlackframes = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout")
-		emitSilences    = flag.Bool("emit-silences", false, "print detected silence events to stdout")
-		emitScenes      = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
-		emitLetterbox   = flag.Bool("emit-letterbox", false, "print detected letterbox transitions (onset/offset) to stdout")
-		emitLogoCSV     = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
-		emitBumperCSV   = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
-		emitNNCSV       = flag.Bool("emit-nn-csv", false, "print per-frame raw NN ad-confidence as CSV (pre-smoothing, pre-bumper-snap — the signal that actually drives block boundaries)")
-		bumperTemplates = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
-		bumperStartTpls = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
-		withAudio       = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
-		bumperSnapS     = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
-		bumperThresh    = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
-		bumperStride    = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
-		nnBackbone      = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
-		nnHead          = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
-		nnWhisperJSON   = flag.String("nn-whisper-json", "", "path to per-recording whisper.json (= ~/.cache/tv-whisper/<uuid>.whisper.json on the daemon side). When set AND the loaded head is MLP2 v2 (= n_whisper>0), each detected frame's whisper-prob is fed to the head as an additional input column. Ignored for MLP1 / LogReg heads. Missing file or unset → MLP2 forward pass falls back to neutral 0.5 per frame (= still works, just loses the +0.075 IoU Stage-4 gain).")
-		nnChannelSlug   = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
-		nnWeight        = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
-		nnGate          = flag.Float64("nn-gate", 0.3, "ignore NN where |conf - 0.5| < this (0 = always use NN, 0.3 = only when conf < 0.2 or > 0.8)")
-		nnSmoothS       = flag.Float64("nn-smooth", 10, "rolling-mean window (s, total) on NN confidences before blending. 0 = off. Single-frame backbone is noisy; 10s smoothing gives clean block boundaries.")
-		speakerCSV      = flag.String("speaker-csv", "", "path to per-window speaker-fingerprint CSV (time_s,speaker_conf,has_speech) produced by scripts/compute-speaker-confs.py. Loaded once, expanded to per-frame, blended into the logo+NN show-likelihood score per --speaker-weight.")
-		speakerWeight   = flag.Float64("speaker-weight", 0, "blend weight of speaker-fingerprint evidence vs logo+NN (0 = off, 0.3 = strong but won't override confident logo+NN). Only effective when --speaker-csv is supplied.")
-		logoSmoothS     = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
-		autoTrain       = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
-		logoYOffset     = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
-		logoEdgeThresh  = flag.Int("logo-edge-threshold", 0, "Sobel |Gx|+|Gy| above which a frame pixel counts as edge during MATCH-time logo confidence. 0 = use built-in default 80. Raise per-channel for visually-busy channels (VOX/Nick/RTL ad content has high edge density everywhere → asymmetric template-match scores 1.0 even with no logo present). Higher value = fewer frame pixels qualify as edge = harder for non-logo content to false-positive. Try 100-140 for noisy channels.")
-		logoCNN         = flag.String("logo-cnn", "", "path to per-channel logo CNN ONNX (= scripts/train_logo_cnn.py output). When set + --logo also set, replaces the edge-template Sobel signal with CNN inference on the same bbox region. CNN is 87-100% accurate per channel vs ~50% random for edge-template on hard channels (VOX/Nick/RTL). Falls back to edge-template if the ONNX file fails to load.")
-		logoCNNMargin   = flag.Int("logo-cnn-margin", 50, "padding (px) around the template bbox for CNN crop input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX used for training. Only relevant when --logo-cnn is set.")
-		autoTrainEdge   = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
+		logoPath         = flag.String("logo", "", "path to comskip .logo.txt template")
+		workers          = flag.Int("workers", runtime.NumCPU(), "parallel chunk workers (1 = single pipeline)")
+		output           = flag.String("output", "summary", "output format: summary | cutlist")
+		minBlockSec      = flag.Float64("min-block-sec", 60, "filter sub-N-second blocks")
+		maxBlockSec      = flag.Float64("max-block-sec", 900, "split blocks longer than N seconds")
+		maxBlockFrac     = flag.Float64("max-block-fraction", 0.5, "drop any final block longer than this fraction of total recording duration (0 = off). Catches state-machine runaway false positives where a sustained logo-washout opens a block that never closes.")
+		minShowSegSec    = flag.Float64("min-show-segment", 60, "min show between blocks before merging — also sets how long logo-present is required to declare block end")
+		maxAdGapSec      = flag.Float64("max-ad-gap", 30, "post-refine merge: glue adjacent ad blocks if the gap between them is shorter than this (catches promo slates between ad break halves; 0 disables)")
+		startExtendS     = flag.Float64("start-extend", 0, "pull each detected block's start back by N seconds (channel-specific systematic correction from user-feedback boundary drift; capped at the prior block's end)")
+		endExtendS       = flag.Float64("end-extend", 0, "push each detected block's end forward by N seconds (channel-specific sponsor-tail trim from user-feedback drift; capped at the next block's start)")
+		iframeSnapS      = flag.Float64("iframe-snap", 5, "post-refine snap each boundary to the nearest I-frame within ±N seconds. 0 = off. Real ad-inserts always align with encoder I-frames.")
+		logoCrossS       = flag.Float64("logo-cross-refine", 2, "post-refine snap each boundary to the precise frame where logoConf crosses --logo-threshold within ±N seconds. 0 = off. Sub-frame precision (40 ms) using the existing 25-fps logo signal — no extra decode.")
+		sceneCutSnapS    = flag.Float64("scene-cut-snap", 0, "post-refine snap each boundary to the nearest hard scene cut within ±N seconds. 0 = off (default — empirical test showed regressions on some shows when the I-frame snap was authoritative for those broadcasters). Set 1.5 to enable.")
+		letterboxSnapS   = flag.Float64("letterbox-snap", 5, "post-refine snap each boundary to the nearest letterbox transition (onset for START, offset for END) within ±N seconds. 0 = off. Geometric deterministic signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI/VOX). No-op when no letterbox transitions detected.")
+		minAbsentS       = flag.Float64("min-absent-open", 5, "seconds of continuous logo-absent before a candidate block opens (filters single-frame flickers in the show)")
+		refineWindowS    = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
+		logoThreshold    = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
+		blackframeDur    = flag.Float64("blackframe-d", 0.10, "min duration for blackframe (seconds)")
+		silenceNoiseDB   = flag.Float64("silence-noise-db", -30, "silence noise floor (dB)")
+		silenceDur       = flag.Float64("silence-d", 0.50, "min silence duration (seconds)")
+		sceneThreshold   = flag.Float64("scene-threshold", 0.40, "histogram distance above which a frame pair is a scene cut")
+		quiet            = flag.Bool("quiet", false, "suppress progress output to stderr")
+		probeOnly        = flag.Bool("probe", false, "only print stream metadata and exit")
+		decodeWidth      = flag.Int("decode-width", 0, "scale frames to width (0 = native)")
+		decodeHeight     = flag.Int("decode-height", 0, "scale frames to height (0 = native)")
+		ffmpegExtraIn    = flag.String("ffmpeg-extra-input-args", "", "space-separated ffmpeg flags to inject BEFORE -i in the decode subprocess. Use for error-tolerance on corrupt IPTV streams: '-err_detect ignore_err -fflags +discardcorrupt' keeps ffmpeg producing frames through h264 PPS/packet-loss errors instead of aborting, which would silently make the affected frame range unmeasurable (logo signal returns sentinel 0.5 → block-formation fails to find ad blocks).")
+		emitBlackframes  = flag.Bool("emit-blackframes", false, "print detected blackframe events to stdout")
+		emitSilences     = flag.Bool("emit-silences", false, "print detected silence events to stdout")
+		emitScenes       = flag.Bool("emit-scenes", false, "print detected scene cuts to stdout")
+		emitLetterbox    = flag.Bool("emit-letterbox", false, "print detected letterbox transitions (onset/offset) to stdout")
+		emitLogoCSV      = flag.Bool("emit-logo-csv", false, "print per-frame logo confidence as CSV")
+		emitBumperCSV    = flag.Bool("emit-bumper-csv", false, "print per-frame bumper match score as CSV (max IoU across templates)")
+		emitNNCSV        = flag.Bool("emit-nn-csv", false, "print per-frame raw NN ad-confidence as CSV (pre-smoothing, pre-bumper-snap — the signal that actually drives block boundaries)")
+		bumperTemplates  = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
+		bumperStartTpls  = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
+		withAudio        = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
+		bumperSnapS      = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
+		bumperThresh     = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
+		bumperStride     = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
+		nnBackbone       = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
+		nnHead           = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
+		nnWhisperJSON    = flag.String("nn-whisper-json", "", "path to per-recording whisper.json (= ~/.cache/tv-whisper/<uuid>.whisper.json on the daemon side). When set AND the loaded head is MLP2 v2 (= n_whisper>0), each detected frame's whisper-prob is fed to the head as an additional input column. Ignored for MLP1 / LogReg heads. Missing file or unset → MLP2 forward pass falls back to neutral 0.5 per frame (= still works, just loses the +0.075 IoU Stage-4 gain).")
+		nnChannelSlug    = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
+		nnStartTS        = flag.Int64("start-ts", 0, "recording wall-clock start (unix seconds, = the DVR grid's start_real). Only used when the loaded head is MLP4 v4 (n_minuteprior>0): each frame's minute-of-hour selects the per-channel P(ad|minute) prior from head.minute-prior.json. 0/unset → the sidecar's neutral value (head still works, loses the prior signal).")
+		nnWeight         = flag.Float64("nn-weight", 0.3, "blend weight of NN evidence vs logo (0 = logo only, 1 = NN only)")
+		nnGate           = flag.Float64("nn-gate", 0.3, "ignore NN where |conf - 0.5| < this (0 = always use NN, 0.3 = only when conf < 0.2 or > 0.8)")
+		nnSmoothS        = flag.Float64("nn-smooth", 10, "rolling-mean window (s, total) on NN confidences before blending. 0 = off. Single-frame backbone is noisy; 10s smoothing gives clean block boundaries.")
+		speakerCSV       = flag.String("speaker-csv", "", "path to per-window speaker-fingerprint CSV (time_s,speaker_conf,has_speech) produced by scripts/compute-speaker-confs.py. Loaded once, expanded to per-frame, blended into the logo+NN show-likelihood score per --speaker-weight.")
+		speakerWeight    = flag.Float64("speaker-weight", 0, "blend weight of speaker-fingerprint evidence vs logo+NN (0 = off, 0.3 = strong but won't override confident logo+NN). Only effective when --speaker-csv is supplied.")
+		logoSmoothS      = flag.Float64("logo-smooth", 5, "rolling-mean window (s, total) on logo confidences before block formation. 0 = off. Catches sub-second logo flickers caused by lower-third graphics that prevent the state machine from closing blocks (e.g. ProSieben/Galileo with persistent banner overlays).")
+		autoTrain        = flag.Float64("auto-train", 0, "if --logo not provided, train one from the first N minutes of input and cache as <input-dir>/<basename>.trained.logo.txt")
+		logoYOffset      = flag.Int("logo-y-offset", 0, "shift the logo template's Y coordinates by N pixels (= letterbox top-bar height). Use when a 16:9 program airs in a 4:3 broadcast container — the actual logo sits below the template's trained position because the visible content is pushed down by the letterbox bar.")
+		logoEdgeThresh   = flag.Int("logo-edge-threshold", 0, "Sobel |Gx|+|Gy| above which a frame pixel counts as edge during MATCH-time logo confidence. 0 = use built-in default 80. Raise per-channel for visually-busy channels (VOX/Nick/RTL ad content has high edge density everywhere → asymmetric template-match scores 1.0 even with no logo present). Higher value = fewer frame pixels qualify as edge = harder for non-logo content to false-positive. Try 100-140 for noisy channels.")
+		logoCNN          = flag.String("logo-cnn", "", "path to per-channel logo CNN ONNX (= scripts/train_logo_cnn.py output). When set + --logo also set, replaces the edge-template Sobel signal with CNN inference on the same bbox region. CNN is 87-100% accurate per channel vs ~50% random for edge-template on hard channels (VOX/Nick/RTL). Falls back to edge-template if the ONNX file fails to load.")
+		logoCNNMargin    = flag.Int("logo-cnn-margin", 50, "padding (px) around the template bbox for CNN crop input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX used for training. Only relevant when --logo-cnn is set.")
+		autoTrainEdge    = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 
 		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
@@ -231,26 +232,27 @@ func main() {
 	// Video decode + per-frame signal extraction, split across N chunks.
 	t0 := time.Now()
 	res, err := pipeline.Run(ctx, pipeline.Opts{
-		Input:          input,
-		Workers:        *workers,
-		DecodeWidth:    *decodeWidth,
-		DecodeHeight:   *decodeHeight,
+		Input:                input,
+		Workers:              *workers,
+		DecodeWidth:          *decodeWidth,
+		DecodeHeight:         *decodeHeight,
 		FFmpegExtraInputArgs: parseFFmpegExtraArgs(*ffmpegExtraIn),
-		BlackframeDurS: *blackframeDur,
-		SceneThreshold: *sceneThreshold,
-		LogoTemplate:    tmpl,
-		LogoYOffset:     *logoYOffset,
-		LogoEdgeThresh:  *logoEdgeThresh,
-		LogoCNNPath:     *logoCNN,
-		LogoCNNMargin:   *logoCNNMargin,
+		BlackframeDurS:       *blackframeDur,
+		SceneThreshold:       *sceneThreshold,
+		LogoTemplate:         tmpl,
+		LogoYOffset:          *logoYOffset,
+		LogoEdgeThresh:       *logoEdgeThresh,
+		LogoCNNPath:          *logoCNN,
+		LogoCNNMargin:        *logoCNNMargin,
 		BumperTemplates:      parseBumperTemplates(*bumperTemplates),
 		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
 		BumperStride:         *bumperStride,
 		WithAudio:            *withAudio,
-		NNBackbonePath: *nnBackbone,
-		NNHeadPath:     *nnHead,
-		NNChannelSlug:  *nnChannelSlug,
-		NNWhisperJSON:  *nnWhisperJSON,
+		NNBackbonePath:       *nnBackbone,
+		NNHeadPath:           *nnHead,
+		NNChannelSlug:        *nnChannelSlug,
+		NNWhisperJSON:        *nnWhisperJSON,
+		NNStartTS:            *nnStartTS,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)

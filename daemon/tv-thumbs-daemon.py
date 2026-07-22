@@ -1637,6 +1637,19 @@ def process_detect(uuid):
         if "404" not in msg:
             print(f"  detect {uuid[:8]}: channel-map sidecar fetch "
                   f"err (non-fatal): {e}", flush=True)
+    # MLP4 heads additionally need the minute-prior sidecar (per-channel
+    # P(ad | minute-of-hour) table). Same non-fatal semantics: 404 =
+    # pre-v4 head; the Go loader hard-fails only if head.bin itself is
+    # v4 and the sidecar is genuinely missing next to it.
+    mp_path = MODEL_CACHE / "head.minute-prior.json"
+    mp_url = f"{GATEWAY}/api/internal/detect-models/head.minute-prior.json"
+    try:
+        http_download(mp_url, mp_path)
+    except Exception as e:
+        msg = str(e)
+        if "404" not in msg:
+            print(f"  detect {uuid[:8]}: minute-prior sidecar fetch "
+                  f"err (non-fatal): {e}", flush=True)
 
     # Per-channel logo. Resolution-aware: HD recordings (= width >=1280)
     # need an HD-trained logo because the bbox pixel-coords differ
@@ -1831,6 +1844,14 @@ def process_detect(uuid):
                 "--max-block-sec", str(cfg["max_block_s"])]
     if slug:
         cmd += ["--channel-slug", slug]
+    # Recording wall-clock start for the MLP4 minute-of-hour prior.
+    # tv-detect only consumes this when the loaded head has
+    # n_minuteprior>0; older heads silently ignore it. Missing
+    # start_real → flag omitted → tv-detect uses the sidecar's
+    # neutral value (same fallback train-head.py applies).
+    _start_ts = cfg.get("start_real") or 0
+    if _start_ts:
+        cmd += ["--start-ts", str(int(_start_ts))]
     if logo_path and logo_path.exists() and logo_path.stat().st_size > 0:
         cmd += ["--logo", str(logo_path)]
         if decode_width and decode_height:

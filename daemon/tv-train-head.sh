@@ -154,7 +154,8 @@ LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
 #     fire the test-composition-changed reason against the real prev set.
 # 404 just means none-yet-on-Pi → start fresh, fine.
 for f in head.bin head.gate.bin head.channel-map.json \
-         head.history.json head.test-set.json head.calibration.json; do
+         head.history.json head.test-set.json head.calibration.json \
+         head.minute-prior.json; do
   $CURL -o "$TRAIN_OUT/$f" \
       "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
 done
@@ -172,9 +173,14 @@ done
     --with-self-training \
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
-    --head-arch mlp32-channel-whisper-temporal \
+    --head-arch mlp32-channel-whisper-temporal-mp \
     --shadow-eval \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-07-22: --head-arch auf -mp (MLP4 v4) migriert nach 3 positiven
+# Shadow-Nächten (+0.021/+0.021/+0.016). Erste Nacht: dim-change →
+# head-to-head skippt, Floor-Gate greift; head.minute-prior.json wird
+# ab dann mit dem Bundle deployt (Go nn.go v4 + Daemon --start-ts in
+# tandem deployt).
 # --shadow-eval WIEDER AN seit 2026-07-15 für die minute-prior-Probe
 # (cwt-Produktions-Replikat vs +P(ad|minute)-Spalte; Ziel: die 77%
 # intra-show-FP-Fehlerklasse). Entscheidung nach einigen Nächten wie

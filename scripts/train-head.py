@@ -240,6 +240,71 @@ def write_mlp_head_v3(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+# ── MLP head.bin file format (v4 — adds minute-of-hour prior input) ─
+# Identical to v3 except:
+#   - magic is "MLP4" (= 0x34504C4D LE) — a v3-only Go binary fails
+#     clean on a v4 file (0.5 fallback) instead of mis-parsing.
+#   - header grows from 44 → 48 bytes: appends a 12th uint32 LE field
+#     `n_minuteprior` (0 or 1) AFTER `n_temporal`.
+#   - input_dim contract becomes
+#         backbone + n_logo + n_audio + n_channel + n_whisper
+#         + n_temporal + n_minuteprior == input_dim
+#   - input vector layout at inference becomes
+#         [backbone(1280), logo?, audio?, chan_onehot?, whisper_prob?,
+#          l2_dist_prev?, l2_dist_next?, minute_prior?]
+#     (= appended LAST so v1/v2/v3 column order stays a prefix).
+#     minute_prior = P(ad | minute_of_hour) from the per-channel
+#     histogram sidecar head.minute-prior.json (built nightly from all
+#     labelled recordings); frame → minute via the recording's wall-
+#     clock start_ts + frame offset. Unknown slug / missing start_ts →
+#     the sidecar's corpus-wide neutral value. See nn.go
+#     loadMLPHeadV4 + minutePriorAt for the matching Go side.
+# Migrated to production 2026-07-22 after a 3-night --shadow-eval
+# series (+0.021/+0.021/+0.016 vs the cwt production replica).
+def write_mlp_head_v4(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0, n_temporal=0,
+                      n_minuteprior=0):
+    """Serialise an sklearn-compatible MLP to the v4 MLP head.bin
+    format. Same atomic write + shape validation as v3, plus the
+    minute-prior input slot. Returns bytes written."""
+    import struct
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if (backbone_dim + n_logo + n_audio + n_channel + n_whisper + n_temporal
+            + n_minuteprior != input_dim):
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel} + "
+            f"whisper {n_whisper} + temporal {n_temporal} + "
+            f"minuteprior {n_minuteprior}")
+    header = struct.pack("<12I",
+                         0x34504C4D,  # "MLP4" little-endian
+                         4, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper, n_temporal, n_minuteprior)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 class _DeployedMLP:
     """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
     so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test
@@ -271,7 +336,15 @@ def load_deployed_mlp(path):
     if len(raw) < 40:
         return None
     magic = struct.unpack("<I", raw[:4])[0]
-    if magic == 0x33504C4D:  # "MLP3", version 3, 44-byte header
+    if magic == 0x34504C4D:  # "MLP4", version 4, 48-byte header
+        if len(raw) < 48:
+            return None
+        hdr = struct.unpack("<12I", raw[:48])
+        if hdr[1] != 4:
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        off = 48
+    elif magic == 0x33504C4D:  # "MLP3", version 3, 44-byte header
         if len(raw) < 44:
             return None
         hdr = struct.unpack("<11I", raw[:44])
@@ -1564,7 +1637,7 @@ def _worker_extract(args):
 
 
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
-                           wants_temporal=False):
+                           wants_temporal=False, mp_col=None):
     """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
     matrix a v2/v3 MLP teacher was trained on, so it scores identically in
     the label-hygiene pass.
@@ -1592,6 +1665,10 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
             dn[:-1, 0] = d
         parts.append(dp)
         parts.append(dn)
+    if mp_col is not None:
+        # v4 teacher: minute-prior column from the TEACHER's own sidecar
+        # (the caller builds the closure) — the live table drifts nightly.
+        parts.append(mp_col(uuid, T))
     return np.hstack(parts).astype(np.float32)
 
 
@@ -1765,7 +1842,8 @@ def main():
     ap.add_argument("--head-arch",
                     choices=["logreg", "mlp32-channel",
                              "mlp32-channel-whisper",
-                             "mlp32-channel-whisper-temporal"],
+                             "mlp32-channel-whisper-temporal",
+                             "mlp32-channel-whisper-temporal-mp"],
                     default="logreg",
                     help="head architecture to deploy. "
                          "'logreg' = legacy linear head (size-detected). "
@@ -1794,7 +1872,16 @@ def main():
                          "mlp32-channel-whisper). Requires the Go inference "
                          "side (internal/signals/nn.go) to compute the same "
                          "deltas at serve time — deployed in tandem, see "
-                         "nn.go's v3 header support.")
+                         "nn.go's v3 header support. "
+                         "'mlp32-channel-whisper-temporal-mp' = MLP4 v4 = adds "
+                         "1 more column: P(ad | minute-of-hour) from the "
+                         "per-channel wall-clock prior histogram (requires "
+                         "--with-minute-prior so the table exists). Migration "
+                         "2026-07-22 after a 3-night shadow series "
+                         "(+0.021/+0.021/+0.016 vs the cwt replica). Ships a "
+                         "head.minute-prior.json sidecar; the Go side "
+                         "(nn.go v4) + the daemon's --start-ts flag look up "
+                         "the same prior at serve time — deployed in tandem.")
     ap.add_argument("--shadow-eval", action="store_true",
                     help="after the production LogReg fit + eval, also "
                          "train + evaluate three architectural variants "
@@ -2716,6 +2803,15 @@ def main():
         "dvr-vox-1783357200",          # 78min, zero-block GT
         "dvr-prosieben-1780544100",    # Call Me Kat — GT=[1320,1920.56] to EOF
         "dvr-prosieben-1781406105",    # Die Goldbergs — GT=[1291,1592] to EOF
+        # 2026-07-22: Let's Dance 05-22 — dead rec whose cached source is
+        # truncated (12570s) vs its frozen features (14056s), so the
+        # signals cache is permanently tombstoned and eval falls back to
+        # the naive threshold path — which ignores the per-show nn-heavy
+        # override this logo-hiding show REQUIRES. Scores IoU/F1 0.00
+        # forever (production would cut it fine), and its title classifies
+        # as "movie", so it alone floored OVERALL(movies) to 0.32. No user
+        # labels; can never be re-verified.
+        "dvr-rtl-1779473700",          # Let's Dance — truncated source, naive-fallback-only
     }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────
@@ -2872,10 +2968,11 @@ def main():
     # head. Capped per-recording so a broken teacher can't nuke
     # everything.
     teacher_w = teacher_b = None
-    teacher_mlp = None        # v2/v3 MLP teacher (predict_proba) when available
+    teacher_mlp = None        # v2/v3/v4 MLP teacher (predict_proba) when available
     teacher_chan_idx = None   # slug→col from the TEACHER's own channel-map
     teacher_whisper = False
     teacher_temporal = False
+    teacher_mp_col = None     # v4 teacher: minute-prior closure from ITS sidecar
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
         try:
@@ -2895,7 +2992,33 @@ def main():
                 slugs = (json.loads(cmap_path.read_text()).get("slugs", [])
                          if cmap_path.exists() else [])
                 n_chan = len(slugs)
-                if mlp.input_dim == feat_dim + n_chan + 1 + 2:
+                if mlp.input_dim == feat_dim + n_chan + 1 + 2 + 1:
+                    teacher_whisper = True
+                    teacher_temporal = True
+                    # v4 teacher — minute-prior column from the teacher's
+                    # OWN sidecar (deployed alongside its head.bin).
+                    _mp_side = Path(args.output).with_suffix(
+                        ".minute-prior.json")
+                    _tpriors, _tneutral = {}, 0.25
+                    try:
+                        _side = json.loads(_mp_side.read_text())
+                        _tpriors = {k: np.array(v, dtype=np.float32)
+                                    for k, v in
+                                    (_side.get("priors") or {}).items()}
+                        _tneutral = float(_side.get("neutral", 0.25))
+                    except Exception:
+                        pass
+
+                    def teacher_mp_col(uuid, T, _p=_tpriors, _n=_tneutral):
+                        slug = uuid_slug.get(uuid, "")
+                        start = uuid_start.get(uuid, 0)
+                        if start and slug in _p:
+                            minutes = ((start + np.arange(T)
+                                        / args.fps_extract)
+                                       // 60 % 60).astype(int)
+                            return _p[slug][minutes].reshape(-1, 1)
+                        return np.full((T, 1), _n, dtype=np.float32)
+                elif mlp.input_dim == feat_dim + n_chan + 1 + 2:
                     teacher_whisper = True
                     teacher_temporal = True
                 elif mlp.input_dim == feat_dim + n_chan + 1:
@@ -2951,7 +3074,7 @@ def main():
             if teacher_mlp is not None:
                 Xa = _augment_teacher_feats(r[3], uuid_slug.get(r[0], ""),
                                             teacher_chan_idx, r[0], teacher_whisper,
-                                            teacher_temporal)
+                                            teacher_temporal, teacher_mp_col)
                 proba = teacher_mlp.predict_proba(Xa)[:, 1]
             else:
                 logits = r[3] @ teacher_w + teacher_b
@@ -3269,10 +3392,41 @@ def main():
     mlp_prod_in_dim = 0
     wants_mlp = args.head_arch in ("mlp32-channel",
                                     "mlp32-channel-whisper",
-                                    "mlp32-channel-whisper-temporal")
+                                    "mlp32-channel-whisper-temporal",
+                                    "mlp32-channel-whisper-temporal-mp")
     wants_whisper = args.head_arch in ("mlp32-channel-whisper",
-                                       "mlp32-channel-whisper-temporal")
-    wants_temporal = args.head_arch == "mlp32-channel-whisper-temporal"
+                                       "mlp32-channel-whisper-temporal",
+                                       "mlp32-channel-whisper-temporal-mp")
+    wants_temporal = args.head_arch in ("mlp32-channel-whisper-temporal",
+                                        "mlp32-channel-whisper-temporal-mp")
+    wants_minuteprior = args.head_arch == "mlp32-channel-whisper-temporal-mp"
+    # Corpus-wide neutral fill for the minute-prior column (recordings
+    # with no start_ts / channels with no histogram): mean of all prior
+    # buckets ≈ base ad rate, so the column carries no signal instead of
+    # a false one. Persisted in the sidecar so Go uses the SAME value.
+    mp_neutral = 0.25
+    if wants_minuteprior:
+        if not minute_prior:
+            raise SystemExit("--head-arch mlp32-channel-whisper-temporal-mp "
+                             "requires --with-minute-prior (the prior table "
+                             "is the feature source)")
+        _all_p = [v for arr in minute_prior.values() for v in arr]
+        if _all_p:
+            mp_neutral = float(sum(_all_p) / len(_all_p))
+
+    def _minuteprior_col(uuid, T):
+        """Per-frame P(ad | minute-of-hour) column for one recording —
+        THE production feature definition; every consumer (train fit,
+        eval augment, all-data refit, shadow, teacher) must go through
+        here so train/serve columns can't drift apart."""
+        slug = uuid_slug.get(uuid, "")
+        start = uuid_start.get(uuid, 0)
+        if start and slug in minute_prior:
+            prior_arr = np.array(minute_prior[slug], dtype=np.float32)
+            minutes = ((start + np.arange(T) / args.fps_extract)
+                       // 60 % 60).astype(int)
+            return prior_arr[minutes].reshape(-1, 1)
+        return np.full((T, 1), mp_neutral, dtype=np.float32)
     if wants_mlp and test_recs:
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -3333,6 +3487,18 @@ def main():
             temporal_train = (np.concatenate(temporal_parts)
                               if temporal_parts else np.empty((0, 2), dtype=np.float32))
             prod_parts.append(temporal_train)
+        # Optional minute-prior column (mlp32-channel-whisper-temporal-mp
+        # only), appended LAST. Computed per rec on the RAW frame count,
+        # then the same hygiene mask as the other columns.
+        if wants_minuteprior:
+            mp_parts = []
+            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
+                if n <= 0:
+                    continue
+                mp_parts.append(_minuteprior_col(r[0], r[3].shape[0])[mask])
+            mp_train = (np.concatenate(mp_parts)
+                        if mp_parts else np.empty((0, 1), dtype=np.float32))
+            prod_parts.append(mp_train)
         X_train_ch = np.hstack(prod_parts)
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
@@ -3370,6 +3536,8 @@ def main():
                         dn[:-1, 0] = d
                     parts.append(dp)
                     parts.append(dn)
+                if wants_minuteprior:
+                    parts.append(_minuteprior_col(r[0], T))
                 X_new = np.hstack(parts).astype(np.float32)
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
@@ -4185,6 +4353,8 @@ def main():
                     dn[:-1, 0] = d
                 parts.append(dp)
                 parts.append(dn)
+            if wants_minuteprior:
+                parts.append(_minuteprior_col(r[0], T))
             X_parts.append(np.hstack(parts).astype(np.float32))
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
@@ -4752,7 +4922,16 @@ def main():
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs)
-        if wants_temporal:
+        if wants_minuteprior:
+            write_mlp_head_v4(path, clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1, n_temporal=2,
+                              n_minuteprior=1)
+        elif wants_temporal:
             write_mlp_head_v3(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=32, backbone_dim=1280,
@@ -4877,6 +5056,24 @@ def main():
                   f"({len(chan_slugs)} slugs)")
         except Exception as e:
             print(f"  channel-map sidecar err: {e}")
+        # Minute-prior sidecar (v4 heads): the per-channel P(ad | minute-
+        # of-hour) table + the neutral fill, version-locked next to
+        # head.bin so Go inference looks up the SAME prior the head was
+        # trained with (the live table drifts nightly). Written whenever
+        # the table exists so a later arch flip finds it in place.
+        if minute_prior:
+            try:
+                mp_path = Path(args.output).with_suffix(".minute-prior.json")
+                mp_path.write_text(json.dumps({
+                    "ts": ts,
+                    "version": 1,
+                    "neutral": round(mp_neutral, 4),
+                    "priors": minute_prior,
+                }, indent=2))
+                print(f"  minute-prior sidecar: {mp_path.name} "
+                      f"({len(minute_prior)} slugs, neutral {mp_neutral:.3f})")
+            except Exception as e:
+                print(f"  minute-prior sidecar err: {e}")
         # Archive the FULL bundle (head + its sidecars) under the same ts, so
         # any past champion is restorable as a unit. The live sidecars next to
         # head.bin get overwritten on every deploy, so an archived head.<ts>.bin
@@ -4886,7 +5083,7 @@ def main():
         # head.bin was archived, the champion's 10-slug channel-map was gone.
         try:
             for suffix in (".calibration.json", ".test-set.json",
-                           ".channel-map.json"):
+                           ".channel-map.json", ".minute-prior.json"):
                 live = Path(args.output).with_suffix(suffix)
                 if live.exists():
                     (archive_dir / f"head.{ts}{suffix}").write_text(

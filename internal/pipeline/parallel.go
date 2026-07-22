@@ -19,43 +19,44 @@ import (
 
 // Opts configures a parallel run.
 type Opts struct {
-	Input          string
-	Workers        int     // number of parallel chunk workers (>= 1)
-	DecodeWidth    int     // 0 = native
-	DecodeHeight   int     // 0 = native
+	Input        string
+	Workers      int // number of parallel chunk workers (>= 1)
+	DecodeWidth  int // 0 = native
+	DecodeHeight int // 0 = native
 	// FFmpegExtraInputArgs are injected before -i in the decode
 	// subprocess. Use for error-tolerance flags on corrupt IPTV
 	// streams: ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt"]
 	// keeps frames flowing through h264 PPS / packet-loss errors.
 	FFmpegExtraInputArgs []string
-	BlackframeDurS float64
-	SceneThreshold float64
-	LogoTemplate    *logotemplate.Template // nil = skip logo
-	LogoYOffset     int                    // shift template y-coords by N pixels (letterbox correction)
-	LogoEdgeThresh  int                    // Sobel |Gx|+|Gy| above which a frame pixel counts as edge. 0 = use defaultEdgeThresh (80). Raise per-channel for visually-busy channels where ad content scores false-positive logo-conf at the default — VOX/Nick/RTL ads have high edge density everywhere, so the asymmetric "fraction of template-edges with frame-edge" metric trips at 1.0 even when logo absent. Higher threshold = fewer frame pixels qualify as edge = harder for non-logo content to match.
-	LogoCNNPath     string                 // path to per-channel CNN ONNX (= scripts/train_logo_cnn.py output). When set + LogoTemplate also set, the CNN replaces the edge-template Sobel signal but keeps the template's bbox for the same crop region. CNN is trained on user-labeled show vs ad frames cropped to bbox+margin and gives 87-100% per-channel accuracy on hard channels (vs ~50% random for edge-template).
-	LogoCNNMargin   int                    // padding (px) around the template bbox before cropping for CNN input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX (= 50) used to build the training set.
-	BumperTemplates      []string          // PNG paths for END-of-ad-block reference frames; nil/empty = skip
-	BumperStartTemplates []string          // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
-	BumperStride         int               // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
-	WithAudio            bool              // extract per-second audio RMS once at pipeline start and pass into NN.ConfidenceBatch as the (rms) feature. Required for +AUDIO heads (1282/1288 weights). Skipped when the loaded head doesn't have an audio dim — caller can leave this false to save the ffmpeg pass.
-	NNBackbonePath  string                 // "" = skip NN
-	NNHeadPath      string                 // ignored if backbone is empty
-	NNChannelSlug   string                 // for +CHAN heads — set the per-recording one-hot input
-	NNWhisperJSON   string                 // optional path to ~/.cache/tv-whisper/<uuid>.whisper.json. Loaded into the NNDetector via SetWhisperProbs when the head is MLP2 v2 (= n_whisper>0). Other formats ignore the data; missing file → neutral 0.5 fallback at inference.
+	BlackframeDurS       float64
+	SceneThreshold       float64
+	LogoTemplate         *logotemplate.Template // nil = skip logo
+	LogoYOffset          int                    // shift template y-coords by N pixels (letterbox correction)
+	LogoEdgeThresh       int                    // Sobel |Gx|+|Gy| above which a frame pixel counts as edge. 0 = use defaultEdgeThresh (80). Raise per-channel for visually-busy channels where ad content scores false-positive logo-conf at the default — VOX/Nick/RTL ads have high edge density everywhere, so the asymmetric "fraction of template-edges with frame-edge" metric trips at 1.0 even when logo absent. Higher threshold = fewer frame pixels qualify as edge = harder for non-logo content to match.
+	LogoCNNPath          string                 // path to per-channel CNN ONNX (= scripts/train_logo_cnn.py output). When set + LogoTemplate also set, the CNN replaces the edge-template Sobel signal but keeps the template's bbox for the same crop region. CNN is trained on user-labeled show vs ad frames cropped to bbox+margin and gives 87-100% per-channel accuracy on hard channels (vs ~50% random for edge-template).
+	LogoCNNMargin        int                    // padding (px) around the template bbox before cropping for CNN input. Must match scripts/extract_logo_dataset.py LOGO_MARGIN_PX (= 50) used to build the training set.
+	BumperTemplates      []string               // PNG paths for END-of-ad-block reference frames; nil/empty = skip
+	BumperStartTemplates []string               // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
+	BumperStride         int                    // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
+	WithAudio            bool                   // extract per-second audio RMS once at pipeline start and pass into NN.ConfidenceBatch as the (rms) feature. Required for +AUDIO heads (1282/1288 weights). Skipped when the loaded head doesn't have an audio dim — caller can leave this false to save the ffmpeg pass.
+	NNBackbonePath       string                 // "" = skip NN
+	NNHeadPath           string                 // ignored if backbone is empty
+	NNChannelSlug        string                 // for +CHAN heads — set the per-recording one-hot input
+	NNWhisperJSON        string                 // optional path to ~/.cache/tv-whisper/<uuid>.whisper.json. Loaded into the NNDetector via SetWhisperProbs when the head is MLP2 v2 (= n_whisper>0). Other formats ignore the data; missing file → neutral 0.5 fallback at inference.
+	NNStartTS            int64                  // recording wall-clock start (unix s, = DVR start_real). Feeds the MLP4 minute-of-hour prior; 0 → neutral fallback.
 }
 
 // Result is the merged output across all chunks.
 type Result struct {
-	FPS         float64
-	Width       int
-	Height      int
-	FrameCount  int // total frames processed (sum of chunk frame counts)
-	Blackframes []signals.BlackEvent
-	SceneCuts   []signals.SceneCut
-	IFrames     []float64 // ascending I-frame timestamps from ffprobe
-	LogoConfs   []float64 // per-frame confidences in original order, nil if no logo
-	NNConfs     []float64 // per-frame NN ad-confidence, nil if NN disabled
+	FPS              float64
+	Width            int
+	Height           int
+	FrameCount       int // total frames processed (sum of chunk frame counts)
+	Blackframes      []signals.BlackEvent
+	SceneCuts        []signals.SceneCut
+	IFrames          []float64 // ascending I-frame timestamps from ffprobe
+	LogoConfs        []float64 // per-frame confidences in original order, nil if no logo
+	NNConfs          []float64 // per-frame NN ad-confidence, nil if NN disabled
 	BumperConfs      []float64 // per-frame max END-bumper match score, nil if no templates
 	BumperStartConfs []float64 // per-frame max START-bumper match score, nil if no start templates
 	Letterbox        []signals.LetterboxEvent
@@ -77,17 +78,17 @@ type chunkPlan struct {
 
 // chunkRes is what a worker produces; frame indices are LOCAL to the chunk.
 type chunkRes struct {
-	index       int
-	startS      float64
-	frameCount  int
-	blackframes []signals.BlackEvent
-	sceneCuts   []signals.SceneCut
-	logoConfs   []float64
-	nnConfs     []float64
+	index            int
+	startS           float64
+	frameCount       int
+	blackframes      []signals.BlackEvent
+	sceneCuts        []signals.SceneCut
+	logoConfs        []float64
+	nnConfs          []float64
 	bumperConfs      []float64
 	bumperStartConfs []float64
 	letterbox        []signals.LetterboxEvent
-	err         error
+	err              error
 	// Per-phase cumulative wall-time for THIS chunk's worker. Summed
 	// across chunks at merge time + emitted as a "pipeline-timing:"
 	// line so a single-detect log shows where the budget went. Useful
@@ -253,6 +254,9 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		// Optional per-recording whisper-prob feed (MLP2 v2 heads).
 		// Loader is best-effort: missing file or parse error → no-op,
 		// the head's forward pass falls back to neutral 0.5 per frame.
+		if opts.NNStartTS > 0 {
+			nn.SetStartTS(opts.NNStartTS)
+		}
 		if opts.NNWhisperJSON != "" {
 			if probs, err := signals.LoadWhisperPerSecond(opts.NNWhisperJSON); err == nil {
 				nn.SetWhisperProbs(probs)

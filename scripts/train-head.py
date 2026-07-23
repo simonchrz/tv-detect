@@ -4981,7 +4981,8 @@ def main():
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
         if is_mlp_write:
-            fmt = ("MLP3 v3" if wants_temporal else
+            fmt = ("MLP4 v4" if wants_minuteprior else
+                   "MLP3 v3" if wants_temporal else
                    "MLP2 v2" if wants_whisper else "MLP1 v1")
         else:
             fmt = "LogReg packed"

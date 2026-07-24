@@ -27,7 +27,7 @@ func TestBoundaryDetectorRealFile(t *testing.T) {
 			embeds[i][k] = r.Float32()
 		}
 	}
-	scores := d.BoundaryScores(embeds)
+	scores := d.BoundaryScores(embeds, 1.0)
 	if len(scores) != 60 {
 		t.Fatalf("scores len %d != 60", len(scores))
 	}

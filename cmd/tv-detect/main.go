@@ -257,7 +257,11 @@ func main() {
 		NNChannelSlug:        *nnChannelSlug,
 		NNWhisperJSON:        *nnWhisperJSON,
 		NNStartTS:            *nnStartTS,
-		BoundaryHead:         *boundarySnapS > 0,
+		// Compute boundary confs when the caller will snap on them OR when
+		// dumping signals (so the replay/sweep can vary --boundary-snap
+		// against a fixed dump without re-decoding). Cheap enough to always
+		// include in the dump; no-op if the sibling head is absent.
+		BoundaryHead: *boundarySnapS > 0 || *emitSignalsJSON != "",
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)

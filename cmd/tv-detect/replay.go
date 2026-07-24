@@ -36,6 +36,7 @@ type signalsDump struct {
 	NNConfs          []float64                `json:"nn_confs"`
 	BumperConfs      []float64                `json:"bumper_confs"`
 	BumperStartConfs []float64                `json:"bumper_start_confs"`
+	BoundaryConfs    []float64                `json:"boundary_confs,omitempty"`
 	Blackframes      []signals.BlackEvent     `json:"blackframes"`
 	Silences         []signals.SilenceEvent   `json:"silences"`
 	SceneCuts        []signals.SceneCut       `json:"scene_cuts"`
@@ -48,7 +49,8 @@ func writeSignalsJSON(path string, res *pipeline.Result, silences []signals.Sile
 		FPS: res.FPS, FrameCount: res.FrameCount,
 		LogoConfs: res.LogoConfs, NNConfs: res.NNConfs,
 		BumperConfs: res.BumperConfs, BumperStartConfs: res.BumperStartConfs,
-		Blackframes: res.Blackframes, Silences: silences,
+		BoundaryConfs: res.BoundaryConfs,
+		Blackframes:   res.Blackframes, Silences: silences,
 		SceneCuts: res.SceneCuts, Letterbox: res.Letterbox, IFrames: res.IFrames,
 	}
 	b, err := json.Marshal(d)
@@ -126,12 +128,12 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output string, buildOpts 
 		speakerConfFrames = signals.ExpandSpeakerToFrames(ws, d.FPS, d.FrameCount)
 	}
 
-	// boundaryConf = nil: the boundary head runs off backbone embeddings,
-	// which the signals dump doesn't carry, so the replay/sweep path can't
-	// reconstruct it (yet). Boundary snap is validated on the live path.
+	// boundary_confs are dumped at emit time (small per-frame scalars, unlike
+	// the 1280-dim embeddings they're computed from), so the sweep can vary
+	// --boundary-snap against a fixed dump. nil in older dumps → snap no-op.
 	blockList := blocks.Form(buildOpts(d.FPS),
 		d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs, speakerConfFrames,
-		nil, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
+		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
 
 	switch output {
 	case "summary":

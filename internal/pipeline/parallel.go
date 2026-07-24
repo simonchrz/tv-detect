@@ -445,7 +445,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 				for i := 0; i < nFrames; i++ {
 					embs[i] = nnEmbeds[i*1280 : (i+1)*1280]
 				}
-				if s := boundary.BoundaryScores(embs); len(s) == nFrames {
+				if s := boundary.BoundaryScores(embs, d.FPS); len(s) == nFrames {
 					bc = s
 				}
 			}

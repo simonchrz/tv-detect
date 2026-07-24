@@ -131,7 +131,11 @@ def replay(cache_path, nn_csv, params):
            "--scene-cut-snap", str(params["scene_cut_snap"]),
            "--min-absent-open", str(params["min_absent_open"]),
            "--max-ad-gap", str(params["max_ad_gap"]),
-           "--nn-smooth", str(params.get("nn_smooth", 10))]
+           "--nn-smooth", str(params.get("nn_smooth", 10)),
+           # Boundary-head snap reads boundary_confs straight from the dump
+           # (present only in caches re-emitted after the BNDR wiring), so a
+           # value > 0 is a no-op on older caches — safe to always pass.
+           "--boundary-snap", str(params.get("boundary_snap", 0))]
     if params.get("max_block_s"):
         cmd += ["--max-block-sec", str(params["max_block_s"])]
     if params.get("start_extend_s"):
@@ -211,6 +215,13 @@ def main():
                          "speaker CSV — answers 'does the live "
                          "SPEAKER_WEIGHT=0.3 help, and would another "
                          "weight be better?' per show/channel")
+    ap.add_argument("--sweep-boundary", action="store_true",
+                    help="sweep ONLY --boundary-snap [0, 10, 15] (everything "
+                         "else at production baseline) — the A/B that decides "
+                         "whether the BNDR head's snap earns being turned on per "
+                         "channel. Needs caches RE-EMITTED after the boundary "
+                         "wiring (older dumps carry no boundary_confs → snap is a "
+                         "silent no-op, all three values score identically).")
     ap.add_argument("--uuids", default="",
                     help="comma-separated uuid list — sweep only these "
                          "(e.g. all cached recordings of ONE SHOW, for "
@@ -221,6 +232,8 @@ def main():
     global GRID
     if args.sweep_speaker:
         GRID = {"speaker_weight": [0.0, 0.3, 0.5]}
+    if args.sweep_boundary:
+        GRID = {"boundary_snap": [0, 10, 15]}
 
     if not TVD_BIN.is_file():
         sys.exit(f"tv-detect binary missing at {TVD_BIN} — run make build")

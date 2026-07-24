@@ -32,12 +32,12 @@ type BoundaryDetector struct {
 	loaded    bool
 	headMtime int64
 
-	inDim     int       // = boundaryWindowSize × nnFeatDim (3840 in v1)
-	hidden    int       // hidden-layer width (64 in v1)
-	w1        []float32 // (inDim, hidden) row-major
-	b1        []float32 // hidden
-	w2        []float32 // (hidden, 1)
-	b2        float32   // output bias
+	inDim  int       // = boundaryWindowSize × nnFeatDim (3840 in v1)
+	hidden int       // hidden-layer width (64 in v1)
+	w1     []float32 // (inDim, hidden) row-major
+	b1     []float32 // hidden
+	w2     []float32 // (hidden, 1)
+	b2     float32   // output bias
 }
 
 // Window offsets used at training and inference: t-1s, t, t+1s
@@ -168,7 +168,12 @@ func (d *BoundaryDetector) MaybeReloadHead() {
 // Reuses the NNDetector's already-extracted embeddings — does NOT run
 // ONNX. Caller is responsible for getting the embeds via the existing
 // backbone pass (Phase 4 wires this into the pipeline).
-func (d *BoundaryDetector) BoundaryScores(embeds [][]float32) []float64 {
+// fps is the embedding frame rate: the training window is ±1 SECOND
+// (WINDOW_OFFSETS at fps_extract=1.0), so at the pipeline's 25 fps the
+// per-frame stride must be round(fps) frames, NOT 1 — otherwise the head
+// sees a ±40 ms context instead of the ±1 s it was trained on (same
+// 25×-too-small temporal-scale class as the 2026-07-18 nn.go delta fix).
+func (d *BoundaryDetector) BoundaryScores(embeds [][]float32, fps float64) []float64 {
 	if d == nil {
 		return nil
 	}
@@ -178,16 +183,20 @@ func (d *BoundaryDetector) BoundaryScores(embeds [][]float32) []float64 {
 		return nil
 	}
 	n := len(embeds)
+	step := int(fps + 0.5) // frames per 1 s window unit; ≥1
+	if step < 1 {
+		step = 1
+	}
 	out := make([]float64, n)
 	x := make([]float32, d.inDim)
 	hidden := make([]float32, d.hidden)
 	for i := 0; i < n; i++ {
-		// Build the temporal context input: concat embeds[i+offset]
-		// for each offset in boundaryWindowOffsets. Out-of-range
-		// neighbours mirror to the nearest in-range frame (= same
-		// padding scheme as train-boundary-head.py).
+		// Build the temporal context input: concat embeds[i+offset*step]
+		// for each offset in boundaryWindowOffsets. step scales the ±1 unit
+		// to ±1 second at the actual fps. Out-of-range neighbours mirror to
+		// the nearest in-range frame (= same padding scheme as the trainer).
 		for w, off := range boundaryWindowOffsets {
-			j := i + off
+			j := i + off*step
 			if j < 0 {
 				j = 0
 			} else if j >= n {

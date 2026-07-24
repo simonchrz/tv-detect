@@ -41,7 +41,7 @@ type Opts struct {
 	LogoCrossRefineS  float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
 	SceneCutSnapS     float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
 	LetterboxSnapS    float64 // post-refine snap to the nearest letterbox transition (onset for START, offset for END) within ±this seconds. 0 = off (default 5). Deterministic geometric signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI) — overrides scene-cut/I-frame for the boundary it covers. No-op when LetterboxEvents is empty.
-	BoundarySnapS     float64 // COARSE pull each rough boundary toward the nearest boundary-head (BNDR) peak within ±this seconds, applied BEFORE the deterministic snaps refine it. 0 = off (default 0). A learned, channel-agnostic transition detector — like BumperSnap but without needing a per-channel template, so it covers the shows/channels bumper templates miss (the dominant missed_bumper failure mode: block position right, edge off by seconds → IoU drag). Only moves an existing edge to a confident learned peak; never adds/removes blocks. Off by default until validated per the realistic-eval; enable via detect-config once a channel shows a net gain.
+	BoundarySnapS     float64 // FALLBACK snap to the nearest boundary-head (BNDR) peak within ±this seconds, applied LAST and ONLY to an edge that no deterministic snap (iframe/scene/letterbox/logo-cross/bumper) moved. 0 = off (default 0). A learned, channel-agnostic transition detector for the missed_bumper class: edges where the deterministic anchors found nothing (no bumper template for the channel, no black/silence/scene near the cut). Strictly additive by construction — it can never overrule a deterministic anchor. Do NOT move it earlier in the chain: as a coarse pre-pull it measured +0.016 on prosieben against bumper-less dumps but -0.015 when re-measured faithfully with the real bumper set (2026-07-24). Never adds/removes blocks. Enable per channel via detect-config once a FAITHFUL A/B shows a net gain.
 	BoundaryThreshold float64 // boundary-head score required for a BoundarySnap (default 0.5). The BNDR head's recall is ~85% at ~2.7s precision on bootstrap labels; a moderate threshold keeps spurious peaks from pulling a good boundary.
 }
 
@@ -207,21 +207,21 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 	for _, r := range raw {
 		startS := float64(r.startF) / opts.FPS
 		endS := float64(r.endF) / opts.FPS
+		// Did the multi-signal vote find ANY anchor (black/silence/scene/
+		// letterbox) near this ROUGH edge? No anchor = the missed_bumper case
+		// the boundary-head fallback at the end of this loop targets. Asked on
+		// the rough edge (same input the vote sees) rather than by comparing
+		// before/after positions: the snaps below routinely move an edge by a
+		// few seconds even when a good anchor WAS found, so a positional test
+		// never identifies the real no-anchor case.
+		startHasAnchor := hasVotingAnchor(startS, opts.RefineWindowS,
+			black, silence, scenes, letterbox, true)
+		endHasAnchor := hasVotingAnchor(endS, opts.RefineWindowS,
+			black, silence, scenes, letterbox, false)
 		startS = refineBoundaryVoting(startS, opts.RefineWindowS,
 			black, silence, scenes, letterbox, true)
 		endS = refineBoundaryVoting(endS, opts.RefineWindowS,
 			black, silence, scenes, letterbox, false)
-		// Boundary-head COARSE pull FIRST — corrects a badly-voted edge
-		// (the missed_bumper case where no black/silence/scene sat near
-		// the true cut) toward the learned transition peak, which the
-		// deterministic snaps below then refine to sub-second. Off unless
-		// BoundarySnapS > 0. Never adds/removes blocks; only moves an edge.
-		if opts.BoundarySnapS > 0 && len(boundaryConf) > 0 {
-			startS = snapToBoundary(startS, boundaryConf,
-				opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
-			endS = snapToBoundary(endS, boundaryConf,
-				opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
-		}
 		if iFrameSnap > 0 && len(iFrames) > 0 {
 			startS = snapToIFrame(startS, iFrames, iFrameSnap)
 			endS = snapToIFrame(endS, iFrames, iFrameSnap)
@@ -267,6 +267,29 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 		if opts.BumperSnapS > 0 && len(startBumperConf) > 0 {
 			startS = snapToBumperStart(startS, startBumperConf,
 				opts.FPS, opts.BumperSnapS, opts.BumperThreshold)
+		}
+		// Boundary-head FALLBACK — last, and only for an edge that NO
+		// deterministic snap above moved (still exactly at the voted
+		// position). Rationale (2026-07-24 A/B): as a coarse pull BEFORE the
+		// deterministic snaps it measured +0.016 on prosieben, but that was an
+		// artifact of dumps emitted without bumper templates. Re-measured
+		// faithfully (logo-cnn + 1035 bumpers + whisper) it scored -0.015: the
+		// bumper snap already places those edges well, and a learned coarse
+		// pull only drags them off. The head's real value is the
+		// missed_bumper class — edges where the deterministic anchors found
+		// NOTHING (no bumper template for the channel, no black/silence/scene
+		// near the cut). Restricting it to unmoved edges makes it strictly
+		// additive: it can never overrule a deterministic anchor, only fill a
+		// gap that would otherwise keep the raw state-machine boundary.
+		if opts.BoundarySnapS > 0 && len(boundaryConf) > 0 {
+			if !startHasAnchor {
+				startS = snapToBoundary(startS, boundaryConf,
+					opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
+			}
+			if !endHasAnchor {
+				endS = snapToBoundary(endS, boundaryConf,
+					opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
+			}
 		}
 		if endS-startS < opts.MinBlockS {
 			continue
@@ -576,6 +599,60 @@ func abs(x float64) float64 {
 // Direction handling matches the legacy refineBoundary: for ad-start
 // the real cut is typically AFTER the rough boundary (logo fades a
 // few seconds before the cut); for ad-end it's BEFORE.
+// hasVotingAnchor reports whether refineBoundaryVoting would find at least
+// one candidate anchor for this rough boundary — i.e. whether ANY
+// blackframe / silence / scene-cut / letterbox event survives the same
+// directional + radius gating. False means the deterministic signals have
+// nothing to say about this edge (the missed_bumper case), which is the only
+// situation the learned boundary-head fallback is allowed to act on.
+//
+// Deliberately duplicates the gating rather than refactoring the voter to
+// return a flag: the voter is load-bearing for every boundary and its
+// tie-breaking is subtle, so a read-only probe is the safer coupling.
+func hasVotingAnchor(roughS, radiusS float64,
+	black []signals.BlackEvent, silence []signals.SilenceEvent,
+	scenes []signals.SceneCut, letterbox []signals.LetterboxEvent,
+	isStart bool) bool {
+	const backTolerance = 5.0
+	inWindow := func(anchor float64) bool {
+		d := anchor - roughS
+		if isStart {
+			if d < 0 && -d > backTolerance {
+				return false
+			}
+		} else {
+			if d > 0 && d > backTolerance {
+				return false
+			}
+		}
+		return abs(d) <= radiusS
+	}
+	for _, e := range black {
+		if isStart && inWindow(e.EndS) || !isStart && inWindow(e.StartS) {
+			return true
+		}
+	}
+	for _, e := range silence {
+		if isStart && inWindow(e.EndS) || !isStart && inWindow(e.StartS) {
+			return true
+		}
+	}
+	for _, c := range scenes {
+		if inWindow(c.TimeS) {
+			return true
+		}
+	}
+	for _, e := range letterbox {
+		if isStart != e.Onset {
+			continue
+		}
+		if inWindow(e.TimeS) {
+			return true
+		}
+	}
+	return false
+}
+
 func refineBoundaryVoting(roughS, radiusS float64,
 	black []signals.BlackEvent, silence []signals.SilenceEvent,
 	scenes []signals.SceneCut, letterbox []signals.LetterboxEvent,

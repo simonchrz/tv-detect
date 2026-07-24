@@ -1805,6 +1805,16 @@ def process_detect(uuid):
     nn_smooth = cfg.get("nn_smooth", -1)
     if nn_smooth is not None and nn_smooth >= 0:
         cmd += ["--nn-smooth", str(nn_smooth)]
+    # boundary_snap: per-channel BNDR boundary-head snap window (sentinel
+    # -1 = off). Validated per channel: prosieben +0.016 @thr 0.5, disney
+    # ~flat @0.5 but needs thr 0.85. Passing --boundary-snap>0 makes
+    # tv-detect load boundary_head.bin (sibling of --nn-head) and snap.
+    boundary_snap = cfg.get("boundary_snap", -1)
+    if boundary_snap is not None and boundary_snap >= 0:
+        cmd += ["--boundary-snap", str(boundary_snap)]
+        boundary_threshold = cfg.get("boundary_threshold", -1)
+        if boundary_threshold is not None and boundary_threshold >= 0:
+            cmd += ["--boundary-threshold", str(boundary_threshold)]
     # --with-audio when the deployed head was trained with audio
     # (gateway tells us via the cfg flag; based on head.bin size).
     # Adds ~5-10 s ffmpeg pass per recording but unlocks the audio

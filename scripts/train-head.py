@@ -1426,7 +1426,8 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     half_w = int(smooth_s * fps_extract / 2) if smooth_s > 0 else 0
     n_realistic = n_fallback = 0
     per_rec_stats = []  # (uuid, title, n_frames, n_errors) for the GT-outlier guard
-    for uuid, title, ads, X, y, *_ in recs:
+    for uuid, title, ads, X, y, *_rest in recs:
+        has_user = bool(_rest[0]) if _rest else False
         proba = clf.predict_proba(X)[:, 1]
         if half_w > 0:
             proba = smooth_mean(proba, half_w)
@@ -1466,7 +1467,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         b["n_recs"] += 1
         overall_frames += n
         overall_correct += correct
-        per_rec_stats.append((uuid, title, n, n - correct))
+        per_rec_stats.append((uuid, title, n, n - correct, has_user))
     # GT-outlier guard (2026-07-15): a healthy head doesn't fail at
     # 47-65% on individual recordings while scoring ~96% overall — when
     # it does, the recording's frozen ground truth is the likely
@@ -1479,11 +1480,19 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     # per-rec error rate >= 25% AND >= 5x the corpus-wide rate.
     if overall_frames:
         _corpus_err = 1.0 - overall_correct / overall_frames
-        _suspects = [(u, t, e / n) for u, t, n, e in per_rec_stats
-                     if n > 0 and e / n >= 0.25
+        # User-reviewed recordings are EXCLUDED from the suspect list: their
+        # GT is verified ground truth, so a high frame-error there is a model
+        # weakness (or a frame-vs-block scoring quirk), NOT bad GT — suggesting
+        # TEST_SET_EXCLUDE for them would drop a good, hand-checked test rec.
+        # 2026-07-24: Rubble & Crew (dvr-toggo-plus-1780640400) kept re-flagging
+        # at err 28-70% for two nights AFTER the user reviewed it, though its
+        # block-IoU is a healthy 0.79 — pure false alarm. The heuristic exists
+        # to surface UNreviewed recs with likely-broken frozen auto-GT.
+        _suspects = [(u, t, e / n) for u, t, n, e, rev in per_rec_stats
+                     if n > 0 and not rev and e / n >= 0.25
                      and e / n >= 5 * max(_corpus_err, 0.01)]
         if _suspects:
-            print(f"  ⚠ GT-outlier suspects (err-rate >=25% and >=5x "
+            print(f"  ⚠ GT-outlier suspects (unreviewed, err-rate >=25% and >=5x "
                   f"corpus mean {100*_corpus_err:.1f}% — check the "
                   f"recording's frozen ads list before blaming the "
                   f"model; candidates for TEST_SET_EXCLUDE):")

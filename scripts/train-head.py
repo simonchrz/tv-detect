@@ -2859,6 +2859,33 @@ def main():
         # as "movie", so it alone floored OVERALL(movies) to 0.32. No user
         # labels; can never be re-verified.
         "dvr-rtl-1779473700",          # Let's Dance — truncated source, naive-fallback-only
+        # 2026-07-24 label audit (prosieben-1779878100 was 0.00/0.00 on BOTH
+        # heads in the both-heads-cold report): a whole BATCH of archive npz
+        # written 06-02 07:41 — i.e. BEFORE the 06-04 source-cache truncation
+        # guard ([[source_cache_truncation_silent]]) — were extracted from a
+        # source truncated at ~40-45min. Signature (swept across all archives):
+        # the meta "ads" list carries a block whose END is BEYOND the label
+        # horizon while labels are all-zero (ad_frac 0.000). The recording's
+        # sole ad break lives in the missing tail, so the frozen GT is
+        # incomplete: as a TEST target it can only score 0.00 (any FP in the
+        # genuinely-ad-free first 40min vs an empty GT) and drag the mean —
+        # exactly the phantom the paired gate is blind to. Train role kept
+        # (the first-40min all-show labels are correct, just missing one
+        # block's positives). 11 recs, all 2.5-Men / Big Bang / Charmed
+        # midday reruns. (The 12th truncation-signature hit, Galileo
+        # dvr-prosieben-1780506300, is a real 65min rec with ad_frac 0.311 and
+        # only a minor tail overrun — NOT truncated, left in.)
+        "dvr-prosieben-1779870300",    # Two and a Half Men — trunc 40min
+        "dvr-prosieben-1779871800",    # Two and a Half Men — trunc 45min
+        "dvr-prosieben-1779873600",    # Two and a Half Men — trunc 40min
+        "dvr-prosieben-1779875100",    # The Big Bang Theory — trunc 40min
+        "dvr-prosieben-1779878100",    # The Big Bang Theory — trunc 40min (was 0.00/0.00)
+        "dvr-prosieben-1779884400",    # Two and a Half Men — trunc 40min
+        "dvr-prosieben-1779885900",    # Two and a Half Men — trunc 45min
+        "dvr-prosieben-1779889301",    # The Big Bang Theory — trunc 42min
+        "dvr-sixx-1779894000",         # Charmed — trunc 40min
+        "dvr-sixx-1779980700",         # Charmed — trunc 40min
+        "dvr-sixx-1780069500",         # Charmed — trunc 45min
     }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────

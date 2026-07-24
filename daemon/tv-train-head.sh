@@ -175,6 +175,7 @@ done
     --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper-temporal-mp \
     --shadow-eval \
+    --ablate-minute-prior \
     ${TVH_TRAIN_EXTRA_ARGS:-}
 # 2026-07-22: --head-arch auf -mp (MLP4 v4) migriert nach 3 positiven
 # Shadow-Nächten (+0.021/+0.021/+0.016). Erste Nacht: dim-change →

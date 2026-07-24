@@ -1942,6 +1942,44 @@ def main():
     ap.add_argument("--rollback-acc-drop", type=float, default=0.03,
                     help="same as --rollback-iou-drop but for per-frame "
                          "test accuracy. Either trigger fires rejection.")
+    ap.add_argument("--reviewed-regression-veto", type=float, default=0.30,
+                    help="paired head-to-head guard: if ANY user-REVIEWED "
+                         "(ground-truth) test rec drops by more than this vs "
+                         "the champion AND falls below --reviewed-regression-floor "
+                         "in absolute terms, block the deploy — even when the "
+                         "median delta is a tie. The median gate deliberately "
+                         "ignores the asymmetric negative tail; this catches a "
+                         "silent big loss (e.g. −0.50 IoU) on a rec we KNOW is "
+                         "labelled correctly. Only reviewed recs count (auto-labels "
+                         "can themselves be wrong, so a drop there isn't trusted). "
+                         "Set to 1.0 to disable.")
+    ap.add_argument("--reviewed-regression-floor", type=float, default=0.50,
+                    help="absolute-IoU floor for the reviewed-regression veto: a "
+                         "big drop only vetoes if the candidate ALSO lands below "
+                         "this (i.e. the rec became genuinely bad, not just "
+                         "relatively worse). Stops boundary-jitter on already-good "
+                         "recs (0.95→0.60) from re-creating the 2026-07-02..06 "
+                         "rejection deadlock, while still catching real breakage "
+                         "(0.35→0.00, 0.75→0.20).")
+    ap.add_argument("--reviewed-regression-severe", type=float, default=0.45,
+                    help="a SINGLE reviewed rec dropping by at least this much (and "
+                         "below the floor) is enough to veto on its own. Below this, "
+                         "it takes a PATTERN (≥2 reviewed regressions) to block — so "
+                         "one moderate drop (possibly a degenerate/stale-label rec) "
+                         "is logged loudly but still deploys, avoiding a single-rec "
+                         "deadlock.")
+    ap.add_argument("--both-cold-floor", type=float, default=0.40,
+                    help="both-heads-cold report threshold: test recs where BOTH "
+                         "the candidate AND the champion score below this IoU are "
+                         "systematic blind spots the paired gate can never see "
+                         "(champion equally bad → delta ≈ 0). Written to "
+                         "<output>.both-cold.jsonl for the review/feature queue.")
+    ap.add_argument("--ablate-minute-prior", action="store_true",
+                    help="diagnostic: after the test-set eval, re-score the "
+                         "deployed head with the minute-of-hour prior column "
+                         "neutralised (set to its per-channel mean) and print the "
+                         "IoU delta. Confirms the MLP4 minute column actually "
+                         "earns its complexity. Does not affect the deploy.")
     ap.add_argument("--hygiene-disagree-conf", type=float, default=0.9,
                     help="if the existing head.bin (used as 'teacher') "
                          "predicts the OPPOSITE label with confidence "
@@ -3560,6 +3598,37 @@ def main():
         # deployed run; what gets compared must match what gets
         # written to head.bin.
         metrics_smooth = metrics_smooth_mlp
+        # Minute-prior ablation diagnostic: re-score the SAME candidate head on a
+        # copy of the test set where the minute-of-hour column (appended LAST by
+        # _aug_test) is flattened to its neutral fill. The IoU delta is the column's
+        # marginal contribution — confirms the MLP4 migration earns its complexity
+        # (or flags it as dead weight). Read-only; never touches the deploy.
+        if args.ablate_minute_prior and wants_minuteprior:
+            def _med_iou(m):
+                return m.get("iou_tv_median",
+                             m.get("iou_median", m.get("iou", 0.0)))
+            ablated = []
+            for r in test_recs_ch:
+                Xa = r[3].copy()
+                Xa[:, -1] = mp_neutral  # neutralise the minute-prior column
+                ablated.append((r[0], r[1], r[2], Xa, r[4]) + tuple(r[5:]))
+            print("\n=== minute-prior ABLATION (candidate, column neutralised) ===")
+            m_abl = eval_split(mlp_prod_clf, ablated, args.fps_extract, smooth_s=10)
+            _with, _without = _med_iou(metrics_smooth_mlp), _med_iou(m_abl)
+            # Per-rec: how many recs the column actually moves, and by how much.
+            _pw = metrics_smooth_mlp.get("per_rec_iou") or {}
+            _po = m_abl.get("per_rec_iou") or {}
+            _sh = [u for u in _pw if u in _po]
+            _moved = sorted(((_pw[u] - _po[u], u) for u in _sh
+                             if abs(_pw[u] - _po[u]) > 0.02),
+                            key=lambda x: -abs(x[0]))
+            print(f"  median-IoU with minute-prior {_with:.3f}  vs neutralised "
+                  f"{_without:.3f}  → Δ {_with - _without:+.3f}")
+            print(f"  recs moved >0.02 by the column: {len(_moved)}/{len(_sh)}")
+            for d, u in _moved[:8]:
+                t, c = uuid_cohort.get(u, ("", ""))
+                lbl = f"{t} / {c}" if t else u
+                print(f"    {d:+.3f}  {lbl}  ({u})")
         mlp_prod_chan_slugs = prod_chan_slugs
         mlp_prod_in_dim = X_train_ch.shape[1]
         # Snapshot the TRAIN-ONLY head now, before --final-on-all rebinds
@@ -4709,6 +4778,30 @@ def main():
                 # changes (|Δ|>0.02), so a ≥2× worse-lean with a clear margin is a
                 # real broad regression the robust median misses — keep champion.
                 broad_margin = max(5, round(0.15 * len(shared)))
+                # Reviewed-regression veto: the median gate is robust to the
+                # asymmetric negative tail BY DESIGN, so a candidate can silently
+                # lose a big chunk of IoU on a handful of recs and still deploy on
+                # median Δ 0 (2026-07-24: −0.50 / −0.35 / −0.32 movers, all sailed
+                # through). That is acceptable when the loss is on AUTO-labelled
+                # recs (their ground truth is itself model output — a "drop" may
+                # just be the labels changing). It is NOT acceptable on a rec the
+                # user REVIEWED: there the ground truth is trusted, so a >veto drop
+                # is a genuine local regression the median must not paper over.
+                reviewed = {r[0] for r in per_rec if len(r) > 5 and r[5]}
+                rev_regr = sorted(
+                    ((cand_pr[u] - dep_pr[u], u) for u in shared
+                     if u in reviewed
+                     and dep_pr[u] - cand_pr[u] > args.reviewed_regression_veto
+                     and cand_pr[u] < args.reviewed_regression_floor),
+                    key=lambda x: x[0])
+                # Fire on a PATTERN (≥2 reviewed regressions) or a single
+                # CATASTROPHIC one (≥ severe). A lone moderate drop is logged but
+                # deploys — it may be a degenerate no-ad / stale-label rec, and
+                # blocking on one rec risks the single-rec deadlock.
+                severe = [(d, u) for d, u in rev_regr
+                          if -d >= args.reviewed_regression_severe]
+                veto_fires = (args.reviewed_regression_veto < 1.0
+                              and (len(rev_regr) >= 2 or bool(severe)))
                 if hi < -PAIRED_SLACK:  # 95%-confident the candidate is worse
                     deploy = False
                     reason = base + " — confident regression, keeping current head"
@@ -4717,8 +4810,70 @@ def main():
                     deploy = False
                     reason = base + (f" — broad regression ({n_worse}≥2×{n_better}, "
                                      f"margin≥{broad_margin}), keeping current head")
+                elif veto_fires:
+                    # Median gate would deploy, but a trusted-ground-truth
+                    # regression pattern/catastrophe overrides it.
+                    deploy = False
+                    worst_d, worst_u = rev_regr[0]
+                    wt, wc = uuid_cohort.get(worst_u, ("", ""))
+                    wlabel = f"{wt} / {wc}" if wt else worst_u
+                    trig = ("catastrophic" if severe and len(rev_regr) < 2
+                            else f"pattern ({len(rev_regr)} recs)")
+                    reason = base + (
+                        f" — REVIEWED-REGRESSION VETO [{trig}]: reviewed rec(s) "
+                        f"dropped >{args.reviewed_regression_veto:.2f} vs champion "
+                        f"AND below {args.reviewed_regression_floor:.2f} "
+                        f"(worst {worst_d:+.2f} on {wlabel}), keeping current head")
+                    print("  REVIEWED-REGRESSION VETO — trusted ground-truth recs "
+                          "that regressed:")
+                    for d, u in rev_regr:
+                        t, c = uuid_cohort.get(u, ("", ""))
+                        lbl = f"{t} / {c}" if t else u
+                        print(f"    {d:+.3f}  cand={cand_pr[u]:.3f} "
+                              f"champ={dep_pr[u]:.3f}  {lbl}  ({u})")
                 else:
                     reason = base + " — not a confident regression, deploy"
+                    if rev_regr:
+                        # Moderate lone regression: logged, not blocking.
+                        print("  note: 1 moderate reviewed regression (not a "
+                              "pattern, not catastrophic) — logged, deploying:")
+                        for d, u in rev_regr:
+                            t, c = uuid_cohort.get(u, ("", ""))
+                            lbl = f"{t} / {c}" if t else u
+                            print(f"    {d:+.3f}  cand={cand_pr[u]:.3f} "
+                                  f"champ={dep_pr[u]:.3f}  {lbl}  ({u})")
+
+                # Both-heads-cold report: recs where BOTH heads score below the
+                # floor are systematic blind spots — the paired gate is structurally
+                # blind to them (champion equally bad → Δ≈0), so they never improve
+                # on their own. Surface them for label review / feature work.
+                both_cold = sorted(
+                    ((min(cand_pr[u], dep_pr[u]), u) for u in shared
+                     if cand_pr[u] < args.both_cold_floor
+                     and dep_pr[u] < args.both_cold_floor),
+                    key=lambda x: x[0])
+                if both_cold:
+                    print(f"  BOTH-HEADS-COLD ({len(both_cold)} recs < "
+                          f"{args.both_cold_floor:.2f} on BOTH heads — systematic "
+                          f"blind spots invisible to the paired gate):")
+                    for io, u in both_cold[:12]:
+                        t, c = uuid_cohort.get(u, ("", ""))
+                        lbl = f"{t} / {c}" if t else u
+                        rev = " [reviewed]" if u in reviewed else ""
+                        print(f"    cand={cand_pr[u]:.3f} champ={dep_pr[u]:.3f}  "
+                              f"{lbl}{rev}  ({u})")
+                    try:
+                        _bc = Path(args.output).with_suffix(".both-cold.jsonl")
+                        with open(_bc, "w") as f:
+                            for io, u in both_cold:
+                                t, c = uuid_cohort.get(u, ("", ""))
+                                f.write(json.dumps({
+                                    "uuid": u, "title": t, "channel": c,
+                                    "cand_iou": round(cand_pr[u], 4),
+                                    "champ_iou": round(dep_pr[u], 4),
+                                    "reviewed": u in reviewed}) + "\n")
+                    except Exception as e:
+                        print(f"  both-cold persist failed: {e}")
                 # Rejection diagnostic — auto-surface WHERE a regression
                 # concentrates instead of leaving that to manual per-rec-iou
                 # archaeology (2026-07-09 cohort-trust incident took ~20min
@@ -4776,6 +4931,8 @@ def main():
                                 "median_delta": round(med_d, 4),
                                 "deploy": deploy,
                                 "champion_src": _dep_src.name,
+                                "n_reviewed_regr": len(rev_regr),
+                                "n_both_cold": len(both_cold),
                                 "candidate": {u: round(cand_pr[u], 4) for u in shared},
                                 "champion": {u: round(dep_pr[u], 4) for u in shared},
                             }) + "\n")

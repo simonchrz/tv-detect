@@ -10,12 +10,22 @@ logo-cnn + bumper templates + whisper + start-ts). Dumps emitted without them
 measure a pipeline that does not exist — see the 2026-07-24 boundary-head
 incident where non-faithful dumps read +0.016 and faithful read -0.015.
 
-FINDINGS (2026-07-24, user-reviewed GT):
+FINDINGS (2026-07-24, user-reviewed GT, faithful dumps):
 
-  prosieben (nn_weight=1.0, emission IS the calibrated head probability)
-    n=8   production 0.856 -> HMM 0.910   (+0.054, 6 better / 2 worse)
-  rtl (nn_weight=0.3, emission is a hand-blended logo/NN score)
-    n=3   production 0.840 -> HMM 0.807   (-0.033, 1 better / 2 worse)
+  Per channel, production pipeline vs HMM:
+    prosieben (nn_weight=1.0)  n=8  0.856 -> 0.910   +0.054   6 better / 2 worse
+    vox       (nn_weight=1.0)  n=3  0.840 -> 0.830   -0.009   1 / 2
+    rtl       (nn_weight=0.3)  n=3  0.840 -> 0.807   -0.033   1 / 2
+
+  So the win is so far PROSIEBEN-ONLY, not a general property. A first
+  hypothesis — "the HMM wins wherever the emission is a calibrated head
+  probability (nn_weight=1.0), and fails where Form hand-blends logo
+  confidence" — was DISPROVEN by vox, which also runs nn_weight=1.0 and still
+  does not win. Do not resurrect that explanation without new evidence.
+  Untested alternative: prosieben simply has the strongest NN (163 corpus recs
+  vs vox 71 / rtl 46), and the HMM leans entirely on the NN while production
+  still draws on logo + bumper. n=3 on vox/rtl is too small to conclude either
+  way — more faithful dumps per channel are the gating item.
 
   Ablation on prosieben, all on the SAME input:
     state machine raw ......... 0.660   (precision 0.975 / recall 0.659:
@@ -27,7 +37,7 @@ FINDINGS (2026-07-24, user-reviewed GT):
     HMM Viterbi ............... 0.916-0.927
     full production pipeline .. 0.866   (state machine + ALL snaps)
 
-  Two things the prototype disproved:
+  Two hypotheses the prototype disproved:
   1. Duration priors do NOT matter. Sweeping mean-ad 2-8min x mean-show
      8-25min gives a constant 0.916 — the gain comes from the transition
      penalty (suppresses state flicker, lets blocks reach full extent), not
@@ -37,14 +47,6 @@ FINDINGS (2026-07-24, user-reviewed GT):
      cost -0.158 (the +-90s bumper snap drags an already-correct edge up to
      90s away; ~5000 frames per recording exceed the 0.85 bumper threshold).
      With tight windows they are merely neutral (scene +-2s: 0.928 vs 0.927).
-
-  Interpretation of the prosieben/rtl split: the HMM treats its emission as a
-  probability (log p / log(1-p)). That is exactly true only where the emission
-  IS the calibrated head output (nn_weight=1.0). Where blocks.Form hand-blends
-  logo template-match confidence into the score, the log treatment is not
-  justified. Next step is therefore NOT "tune the HMM" but "give it a proper
-  emission model": per-channel calibrated probability, or logo as a separate
-  emission channel with its own likelihood.
 """
 
 import json, glob, os, subprocess, sys

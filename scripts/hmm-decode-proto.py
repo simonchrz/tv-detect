@@ -10,22 +10,38 @@ logo-cnn + bumper templates + whisper + start-ts). Dumps emitted without them
 measure a pipeline that does not exist — see the 2026-07-24 boundary-head
 incident where non-faithful dumps read +0.016 and faithful read -0.015.
 
-FINDINGS (2026-07-24, user-reviewed GT, faithful dumps):
+FINDINGS (2026-07-24, user-reviewed GT, faithful dumps, learned per-channel
+drift applied to the production baseline — omitting it understates production):
 
-  Per channel, production pipeline vs HMM:
-    prosieben (nn_weight=1.0)  n=8  0.856 -> 0.910   +0.054   6 better / 2 worse
-    vox       (nn_weight=1.0)  n=3  0.840 -> 0.830   -0.009   1 / 2
-    rtl       (nn_weight=0.3)  n=3  0.840 -> 0.807   -0.033   1 / 2
+  Channel     n   PRODUCTION   HMM(pure NN)   delta
+  prosieben   8       0.822        0.912      +0.091
+  rtl         3       0.750        0.901      +0.151
+  vox         3       0.840        0.833      -0.006
 
-  So the win is so far PROSIEBEN-ONLY, not a general property. A first
-  hypothesis — "the HMM wins wherever the emission is a calibrated head
-  probability (nn_weight=1.0), and fails where Form hand-blends logo
-  confidence" — was DISPROVEN by vox, which also runs nn_weight=1.0 and still
-  does not win. Do not resurrect that explanation without new evidence.
-  Untested alternative: prosieben simply has the strongest NN (163 corpus recs
-  vs vox 71 / rtl 46), and the HMM leans entirely on the NN while production
-  still draws on logo + bumper. n=3 on vox/rtl is too small to conclude either
-  way — more faithful dumps per channel are the gating item.
+  KEY: feed the HMM the RAW NN probability, not blocks.Form's gated blend.
+  rtl's nn_gate=0.3 routes 10.7% of frames to a logo fallback, and its logo is
+  weak (AUC 0.827 vs NN 0.973) — the blend degrades a good signal. Switching
+  the emission from blended score to pure NN takes rtl from 0.831 to 0.901.
+  prosieben (gate=0) is unaffected because nothing falls back.
+
+  vox is neutral and NOT explained by: gate (1.1% fallback), NN quality (AUC
+  0.993, same as prosieben), block structure (2.0 blocks/rec, same lengths),
+  or min_block (0.833 flat over 30-120s). Its HMM blocks sit correctly; only
+  edges differ by 20-90s in both directions. vox is simply the channel where
+  the existing pipeline already performs at HMM level.
+
+  A first hypothesis — "HMM wins wherever the emission is the calibrated head
+  probability (nn_weight=1.0)" — was DISPROVEN by vox (also nn_weight=1.0, no
+  win). Do not resurrect it. The gate/blend explanation above is what actually
+  separates rtl, and it is measured, not assumed.
+
+  SIDE FINDING, suspicion only (n=11): the learned per-channel drift makes
+  things WORSE on user-labelled recordings (prosieben 0.856 -> 0.822, rtl
+  0.840 -> 0.750 when --start-extend/--end-extend are applied). Counter-
+  intuitive since the drift is learned FROM user corrections. Either stale,
+  overshooting, or encoding a preference the GT does not carry. Needs its own
+  investigation — potentially a bigger lever than anything else here because it
+  affects every channel that has drift.
 
   Ablation on prosieben, all on the SAME input:
     state machine raw ......... 0.660   (precision 0.975 / recall 0.659:
@@ -35,17 +51,13 @@ FINDINGS (2026-07-24, user-reviewed GT, faithful dumps):
     + 30s gap merge ........... 0.789
     + 10s smoothing ........... 0.881   (smoothing is the biggest single win)
     HMM Viterbi ............... 0.916-0.927
-    full production pipeline .. 0.866   (state machine + ALL snaps)
 
-  Two hypotheses the prototype disproved:
-  1. Duration priors do NOT matter. Sweeping mean-ad 2-8min x mean-show
-     8-25min gives a constant 0.916 — the gain comes from the transition
-     penalty (suppresses state flicker, lets blocks reach full extent), not
-     from learned block lengths.
+  Two more hypotheses the prototype disproved:
+  1. Duration priors do NOT matter (constant 0.916 across mean-ad 2-8min x
+     mean-show 8-25min). The gain is the transition penalty suppressing state
+     flicker, not learned block lengths.
   2. The deterministic snaps are COMPENSATION for weak block forming, not
-     independent value. Applied to HMM edges with production windows they
-     cost -0.158 (the +-90s bumper snap drags an already-correct edge up to
-     90s away; ~5000 frames per recording exceed the 0.85 bumper threshold).
+     independent value: on HMM edges with production windows they cost -0.158.
      With tight windows they are merely neutral (scene +-2s: 0.928 vs 0.927).
 """
 

@@ -37,6 +37,7 @@ import concurrent.futures as cf
 import importlib.util
 import itertools
 import json
+import re
 import ssl
 import subprocess
 import sys
@@ -238,6 +239,34 @@ def main():
     print(f"champion head: input_dim={mlp.input_dim}, "
           f"{len(chan_idx)} channels")
 
+    # v4 (MLP4) heads carry a minute-of-hour prior column appended LAST. Fetch
+    # the head's OWN sidecar (the live table drifts nightly) and rebuild that
+    # column exactly like train-head's _minuteprior_col, so the replay scores
+    # what production scores. Without this the augment is 1 dim short and every
+    # rec fails "feature dim 1298 != head 1299" (the 2026-07-24 sweep block was
+    # NOT stale cache — the tool just predated MLP4).
+    mp_priors, mp_neutral = {}, 0.25
+    try:
+        _mp = http_json(
+            f"{GATEWAY}/api/internal/detect-models/head.minute-prior.json")
+        mp_priors = _mp.get("priors", {})
+        mp_neutral = float(_mp.get("neutral", 0.25))
+        print(f"  minute-prior sidecar: {len(mp_priors)} slugs, "
+              f"neutral {mp_neutral:.3f}")
+    except Exception as e:
+        print(f"  no minute-prior sidecar ({e}) — assuming v3 head")
+
+    def mp_col(uuid, T):
+        # Features are extracted at 1 fps (fps100), so frame i is second i.
+        arr = mp_priors.get(slug_of(uuid))
+        m = re.match(r"dvr-.+-(\d+)$", uuid)
+        start = int(m.group(1)) if m else 0
+        if start and arr:
+            a = np.array(arr, dtype=np.float32)
+            minutes = ((start + np.arange(T)) // 60 % 60).astype(int)
+            return a[minutes].reshape(-1, 1)
+        return np.full((T, 1), mp_neutral, dtype=np.float32)
+
     # Collect sweepable recordings.
     only_uuids = ({u.strip() for u in args.uuids.split(",") if u.strip()}
                   if args.uuids else None)
@@ -279,6 +308,12 @@ def main():
             Xa = th._augment_teacher_feats(
                 X, slug, chan_idx, uuid,
                 wants_whisper=True, wants_temporal=True)
+            # v4 head: append the minute-prior column when the head expects
+            # exactly one more dim than the v3 augment produced. Auto-detects
+            # v3 vs v4 so the tool works across a migration.
+            if Xa.shape[1] == mlp.input_dim - 1 and mp_priors:
+                Xa = np.hstack(
+                    [Xa, mp_col(uuid, Xa.shape[0])]).astype(np.float32)
             if Xa.shape[1] != mlp.input_dim:
                 return (uuid, slug, None,
                         f"feature dim {Xa.shape[1]} != head {mlp.input_dim}")

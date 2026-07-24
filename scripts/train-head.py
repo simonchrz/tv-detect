@@ -2928,6 +2928,18 @@ def main():
     # `not _ledger` would flip to False after the first assignment.
     _ledger_seeding = not _ledger
     _ledger_dirty = [False]
+    # GOLDEN-EVAL pin: a frozen set of held-out recs (golden-eval-set.json) that
+    # are FORCED to test every run so the golden-median trend is both leakage-free
+    # AND composition-constant (see the GOLDEN-EVAL print near the deploy line).
+    # Pinning is free here — the set was built from recs already reliably in test.
+    _golden_pin = set()
+    if args.train_archive:
+        _gp = Path(args.train_archive) / "golden-eval-set.json"
+        if _gp.is_file():
+            try:
+                _golden_pin = set(json.loads(_gp.read_text()).get("uuids", []))
+            except Exception:
+                _golden_pin = set()
     # Retire dead machine-labelled recordings from TEST (see the
     # dead_machine_labelled comment at the archive-injection site).
     # Runs against the ledger only — on the seeding run the set is
@@ -2955,6 +2967,13 @@ def main():
     def _is_test(uuid_str):
         if uuid_str in TEST_SET_EXCLUDE:
             return False
+        if uuid_str in _golden_pin:
+            # Frozen golden-eval rec: always test (never train → leakage-free,
+            # never churned out → the golden-median stays comparable).
+            if _ledger.get(uuid_str) != "test":
+                _ledger[uuid_str] = "test"
+                _ledger_dirty[0] = True
+            return True
         if uuid_str in _ledger:
             return _ledger[uuid_str] == "test"
         if uuid_str in dead_machine_labelled:
@@ -5207,6 +5226,38 @@ def main():
                   f"test, smooth=10s): acc {metrics_smooth.get('acc', 0)*100:.1f}%  "
                   f"IoU mean {metrics_smooth.get('iou', 0):.2f}  "
                   f"IoU median {_prod_med:.2f}")
+            # GOLDEN-EVAL: composition-CONSTANT median over a frozen set of
+            # pinned held-out recs (golden-eval-set.json). The PRODUCTION METRIC
+            # above is over WHICHEVER recs the sticky split put in test tonight —
+            # its median swings ±3-5pp on composition alone (n=68↔104 over July),
+            # so it's unreadable as a trend (2026-07-24: user asked why the curve
+            # doesn't look like improvement — because the noise buries the ~+6pp
+            # real climb). This number is over the SAME recs every night, so its
+            # movement is the model's, not the sample's. Pinned to test in
+            # _is_test so it's always leakage-free. Persisted to golden-trend.jsonl.
+            try:
+                _gpath = (Path(args.train_archive) / "golden-eval-set.json"
+                          if args.train_archive else None)
+                _gpr = metrics_smooth.get("per_rec_iou") or {}
+                if _gpath and _gpath.exists() and _gpr:
+                    _golden = set(json.loads(_gpath.read_text()).get("uuids", []))
+                    _gvals = [_gpr[u] for u in _golden if u in _gpr]
+                    if _gvals:
+                        _gmed = float(np.median(_gvals))
+                        _gmean = float(np.mean(_gvals))
+                        print(f"  GOLDEN-EVAL (composition-constant, "
+                              f"{len(_gvals)}/{len(_golden)} pinned recs): "
+                              f"median {_gmed:.3f}  mean {_gmean:.3f}  "
+                              f"← compare night-to-night, this is the real trend")
+                        with open(Path(args.train_archive) /
+                                  "golden-trend.jsonl", "a") as _gf:
+                            _gf.write(json.dumps({
+                                "ts": ts, "n": len(_gvals),
+                                "golden_median": round(_gmed, 4),
+                                "golden_mean": round(_gmean, 4),
+                                "deployed": deploy}) + "\n")
+            except Exception as _ge:
+                print(f"  golden-eval failed: {_ge}")
         # Calibration sidecar: read by the gateway's active-learning
         # endpoints and (eventually) by the Go detector. Written
         # next to head.bin so it stays version-locked with the head

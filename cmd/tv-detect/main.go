@@ -39,6 +39,8 @@ func main() {
 		logoCrossS       = flag.Float64("logo-cross-refine", 2, "post-refine snap each boundary to the precise frame where logoConf crosses --logo-threshold within ±N seconds. 0 = off. Sub-frame precision (40 ms) using the existing 25-fps logo signal — no extra decode.")
 		sceneCutSnapS    = flag.Float64("scene-cut-snap", 0, "post-refine snap each boundary to the nearest hard scene cut within ±N seconds. 0 = off (default — empirical test showed regressions on some shows when the I-frame snap was authoritative for those broadcasters). Set 1.5 to enable.")
 		letterboxSnapS   = flag.Float64("letterbox-snap", 5, "post-refine snap each boundary to the nearest letterbox transition (onset for START, offset for END) within ±N seconds. 0 = off. Geometric deterministic signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI/VOX). No-op when no letterbox transitions detected.")
+		boundarySnapS    = flag.Float64("boundary-snap", 0, "COARSE-pull each rough boundary toward the nearest boundary-head (BNDR) peak within ±N seconds, BEFORE the deterministic snaps refine it. 0 = off (default — must clear the realistic-eval before touching production). Learned channel-agnostic transition detector; auto-loaded as boundary_head.bin sibling of --nn-head. Never adds/removes blocks.")
+		boundaryThresh   = flag.Float64("boundary-threshold", 0.5, "boundary-head score required for a --boundary-snap (default 0.5).")
 		minAbsentS       = flag.Float64("min-absent-open", 5, "seconds of continuous logo-absent before a candidate block opens (filters single-frame flickers in the show)")
 		refineWindowS    = flag.Float64("refine-window", 90, "search radius (s) for snapping rough block boundaries to a blackframe / silence")
 		logoThreshold    = flag.Float64("logo-threshold", 0.10, "logo absent below this confidence")
@@ -94,28 +96,30 @@ func main() {
 	// formation thresholds.
 	buildOpts := func(fps float64) blocks.Opts {
 		return blocks.Opts{
-			FPS:              fps,
-			MinBlockS:        *minBlockSec,
-			MaxBlockS:        *maxBlockSec,
-			MaxBlockFraction: *maxBlockFrac,
-			MinShowSegmentS:  *minShowSegSec,
-			MinAbsentToOpenS: *minAbsentS,
-			LogoThreshold:    *logoThreshold,
-			RefineWindowS:    *refineWindowS,
-			NNWeight:         *nnWeight,
-			NNGate:           *nnGate,
-			NNSmoothS:        *nnSmoothS,
-			LogoSmoothS:      *logoSmoothS,
-			MaxAdGapS:        *maxAdGapSec,
-			StartExtendS:     *startExtendS,
-			EndExtendS:       *endExtendS,
-			IFrameSnapS:      *iframeSnapS,
-			LogoCrossRefineS: *logoCrossS,
-			SceneCutSnapS:    *sceneCutSnapS,
-			BumperSnapS:      *bumperSnapS,
-			BumperThreshold:  *bumperThresh,
-			LetterboxSnapS:   *letterboxSnapS,
-			SpeakerWeight:    *speakerWeight,
+			FPS:               fps,
+			MinBlockS:         *minBlockSec,
+			MaxBlockS:         *maxBlockSec,
+			MaxBlockFraction:  *maxBlockFrac,
+			MinShowSegmentS:   *minShowSegSec,
+			MinAbsentToOpenS:  *minAbsentS,
+			LogoThreshold:     *logoThreshold,
+			RefineWindowS:     *refineWindowS,
+			NNWeight:          *nnWeight,
+			NNGate:            *nnGate,
+			NNSmoothS:         *nnSmoothS,
+			LogoSmoothS:       *logoSmoothS,
+			MaxAdGapS:         *maxAdGapSec,
+			StartExtendS:      *startExtendS,
+			EndExtendS:        *endExtendS,
+			IFrameSnapS:       *iframeSnapS,
+			LogoCrossRefineS:  *logoCrossS,
+			SceneCutSnapS:     *sceneCutSnapS,
+			BumperSnapS:       *bumperSnapS,
+			BumperThreshold:   *bumperThresh,
+			LetterboxSnapS:    *letterboxSnapS,
+			BoundarySnapS:     *boundarySnapS,
+			BoundaryThreshold: *boundaryThresh,
+			SpeakerWeight:     *speakerWeight,
 		}
 	}
 
@@ -253,6 +257,7 @@ func main() {
 		NNChannelSlug:        *nnChannelSlug,
 		NNWhisperJSON:        *nnWhisperJSON,
 		NNStartTS:            *nnStartTS,
+		BoundaryHead:         *boundarySnapS > 0,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pipeline:", err)
@@ -388,7 +393,7 @@ func main() {
 	// classifier has no primary signal and returns an empty list.
 	blockList := blocks.Form(buildOpts(res.FPS),
 		res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
-		res.Blackframes, sil.events,
+		res.BoundaryConfs, res.Blackframes, sil.events,
 		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
 
 	switch *output {

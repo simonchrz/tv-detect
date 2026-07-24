@@ -28,7 +28,7 @@ func TestFormBasicAdBlock(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 15000}, {22500, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(blocks), blocks)
 	}
@@ -44,7 +44,7 @@ func TestFormFiltersShortBlocks(t *testing.T) {
 	logo := makeLogo(nFrames,
 		[][2]int{{0, 25 * 600}, {25 * 630, nFrames}})
 
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("30s gap should be filtered, got %+v", blocks)
 	}
@@ -65,7 +65,7 @@ func TestFormBoundaryRefineToBlackframe(t *testing.T) {
 		{StartS: 897.0, EndS: 897.5, DurationS: 0.5},
 	}
 
-	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, nil, nil, black, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps, RefineWindowS: 10}, logo, nil, nil, nil, nil, nil, black, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %+v", blocks)
 	}
@@ -88,10 +88,10 @@ func near(a, b, eps float64) bool {
 func TestSnapToIFrame(t *testing.T) {
 	iframes := []float64{10.0, 22.5, 60.0, 600.0}
 	cases := []struct {
-		name    string
-		t       float64
-		radius  float64
-		wantT   float64
+		name   string
+		t      float64
+		radius float64
+		wantT  float64
 	}{
 		{"exact match", 22.5, 5, 22.5},
 		{"snap forward", 21.0, 5, 22.5},
@@ -238,7 +238,7 @@ func TestMaxBlockFractionDropsRunaway(t *testing.T) {
 	// Logo only present in the first and last 30 s — everything in
 	// between is "absent" (= washout).
 	logo := makeLogo(nFrames, [][2]int{{0, 25 * 30}, {25 * 1770, nFrames}})
-	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	blocks := Form(Opts{FPS: fps}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 0 {
 		t.Errorf("runaway block (>50%% of recording) must be dropped, got %+v", blocks)
 	}
@@ -246,7 +246,7 @@ func TestMaxBlockFractionDropsRunaway(t *testing.T) {
 	// exactly the runaway block — proves the only thing changed is
 	// the new filter, not some other behaviour.
 	blocks = Form(Opts{FPS: fps, MaxBlockFraction: 1.0},
-		logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+		logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("with cap loosened, want 1 block, got %d", len(blocks))
 	}
@@ -268,7 +268,7 @@ func TestStartEndExtendCappedToNeighbours(t *testing.T) {
 		StartExtendS: 50,
 		EndExtendS:   50,
 		MinBlockS:    50, // allow shorter blocks for the test
-	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 1 {
 		t.Fatalf("want 1 block, got %d", len(blocks))
 	}
@@ -295,7 +295,7 @@ func TestStartEndExtendCappedAtBoundaries(t *testing.T) {
 		StartExtendS: 60,
 		EndExtendS:   60,
 		MinBlockS:    50,
-	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
+	}, logo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nFrames)
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks, got %d", len(blocks))
 	}
@@ -361,8 +361,12 @@ func TestLogoCrossingRefinePrefersClosestCrossing(t *testing.T) {
 	// rough = frame 180 (= 7.2s). Closest START crossing is frame 200 (= 8.0s).
 	fps := 25.0
 	logo := make([]float64, 300)
-	for i := 0; i < 50; i++ { logo[i] = 0.9 }
-	for i := 150; i < 200; i++ { logo[i] = 0.9 }
+	for i := 0; i < 50; i++ {
+		logo[i] = 0.9
+	}
+	for i := 150; i < 200; i++ {
+		logo[i] = 0.9
+	}
 	got := logoCrossingRefine(7.2, 2.0, logo, 0.10, fps, true)
 	want := 200.0 / fps // = 8.0
 	if !near(got, want, 0.05) {

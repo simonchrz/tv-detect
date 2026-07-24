@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -44,6 +45,7 @@ type Opts struct {
 	NNChannelSlug        string                 // for +CHAN heads — set the per-recording one-hot input
 	NNWhisperJSON        string                 // optional path to ~/.cache/tv-whisper/<uuid>.whisper.json. Loaded into the NNDetector via SetWhisperProbs when the head is MLP2 v2 (= n_whisper>0). Other formats ignore the data; missing file → neutral 0.5 fallback at inference.
 	NNStartTS            int64                  // recording wall-clock start (unix s, = DVR start_real). Feeds the MLP4 minute-of-hour prior; 0 → neutral fallback.
+	BoundaryHead         bool                   // load boundary_head.bin (sibling of NNHeadPath) and score per-frame boundary confidences into Result.BoundaryConfs. Set only when the caller intends to use them (--boundary-snap > 0), since the BNDR forward pass costs a second MLP per frame. No-op if the sibling file is absent.
 }
 
 // Result is the merged output across all chunks.
@@ -59,6 +61,7 @@ type Result struct {
 	NNConfs          []float64 // per-frame NN ad-confidence, nil if NN disabled
 	BumperConfs      []float64 // per-frame max END-bumper match score, nil if no templates
 	BumperStartConfs []float64 // per-frame max START-bumper match score, nil if no start templates
+	BoundaryConfs    []float64 // per-frame BNDR boundary-head score, nil unless the boundary head loaded (opts.BoundarySnap)
 	Letterbox        []signals.LetterboxEvent
 	// Per-phase wall-time SUMMED across all chunk workers. Wall-time
 	// not CPU-time, so parallel chunks stack — divide by Workers for
@@ -87,6 +90,7 @@ type chunkRes struct {
 	nnConfs          []float64
 	bumperConfs      []float64
 	bumperStartConfs []float64
+	boundaryConfs    []float64
 	letterbox        []signals.LetterboxEvent
 	err              error
 	// Per-phase cumulative wall-time for THIS chunk's worker. Summed
@@ -158,7 +162,8 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 		opts.LogoTemplate != nil,
 		opts.NNBackbonePath != "",
 		len(opts.BumperTemplates) > 0,
-		len(opts.BumperStartTemplates) > 0), nil
+		len(opts.BumperStartTemplates) > 0,
+		opts.BoundaryHead), nil
 }
 
 func planChunks(totalS float64, workers int) []chunkPlan {
@@ -266,6 +271,17 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 					err)
 			}
 		}
+	}
+
+	// Boundary head (BNDR): loaded only when the caller intends to snap
+	// (opts.BoundaryHead == --boundary-snap>0). Sibling of the NN head; a
+	// nil detector (file absent / load error) degrades to neutral scores so
+	// Result.BoundaryConfs stays length-aligned with the frame timeline.
+	// Reuses the NN backbone embeddings below — no second ONNX pass.
+	var boundary *signals.BoundaryDetector
+	if nn != nil && opts.BoundaryHead {
+		boundary, _ = signals.NewBoundaryDetector(
+			filepath.Join(filepath.Dir(opts.NNHeadPath), "boundary_head.bin"))
 	}
 
 	count := 0
@@ -418,6 +434,23 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 					nFrames, d.FPS, p.startS))...)
 		}
 		out.nnNs += time.Since(tNN).Nanoseconds()
+		// Boundary scores off the SAME backbone embeddings (zero-copy
+		// per-frame views). Neutral 0 when the head is absent or the
+		// backbone failed — keeps the per-chunk length == nFrames so the
+		// merged timeline never desyncs.
+		if opts.BoundaryHead {
+			bc := make([]float64, nFrames)
+			if boundary != nil && !nnEmbedFail && len(nnEmbeds) == nFrames*1280 {
+				embs := make([][]float32, nFrames)
+				for i := 0; i < nFrames; i++ {
+					embs[i] = nnEmbeds[i*1280 : (i+1)*1280]
+				}
+				if s := boundary.BoundaryScores(embs); len(s) == nFrames {
+					bc = s
+				}
+			}
+			out.boundaryConfs = append(out.boundaryConfs, bc...)
+		}
 	}
 	black.Finish()
 	if err := d.Err(); err != nil {
@@ -442,7 +475,7 @@ func toNNConfs(in []float64) []float64 { return in }
 // chunk boundary are reunited; suspicious scene-cuts at the very
 // first frame of chunks 2..N are dropped (they're artifacts of the
 // decoder starting fresh, not real content changes).
-func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBumperStart bool) *Result {
+func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBumperStart, hasBoundary bool) *Result {
 	r := &Result{
 		FPS:    info.FPS,
 		Width:  info.Width,
@@ -488,6 +521,9 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBu
 		}
 		if hasBumperStart {
 			r.BumperStartConfs = append(r.BumperStartConfs, c.bumperStartConfs...)
+		}
+		if hasBoundary {
+			r.BoundaryConfs = append(r.BoundaryConfs, c.boundaryConfs...)
 		}
 		// Drop the very first letterbox event of chunks 2..N — the
 		// detector emits a state-confirmation as soon as it has seen

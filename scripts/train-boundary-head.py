@@ -544,6 +544,12 @@ def main():
     ap.add_argument("--with-audio", action="store_true",
                     help="#7: audio RMS windowed cols + variance summary. "
                          "Boundaries often have brief audio transitions.")
+    ap.add_argument("--with-logo-col", action="store_true",
+                    help="append a center-frame logo column (+1 dim). OFF by "
+                         "default: the Go BNDR loader reads exactly window*1280 "
+                         "dims and has no logo input, so enabling this without a "
+                         "matching Go change produces an unloadable head "
+                         "(input_dim 3841 != 3840).")
     ap.add_argument("--intra-ad-negs-ratio", type=float, default=0.0,
                     help="#1: bias negative sampling toward in-ad frames. "
                          "0.0 = random sampling (default). 0.5 = half of "
@@ -626,7 +632,14 @@ def main():
             embeds, window_offsets,
             main_nn_probs=nn_probs,
             audio_per_frame=audio_pf if args.with_audio else None,
-            logo_per_frame=logo_pf,  # always include center logo (cheap)
+            # Logo center column is OFF by default: the Go BNDR loader
+            # (internal/signals/boundary.go) reads exactly window*1280 dims
+            # and has no logo input, so a logo column desyncs the head from
+            # the consumer (input_dim 3841 != 3840). Kept behind a flag for a
+            # future coordinated both-sides extension. Logo is already the
+            # primary block-formation signal downstream, so dropping it here
+            # costs the boundary head little.
+            logo_per_frame=(logo_pf if args.with_logo_col else None),
             channel_onehot=chan_vec,
             with_summary=args.with_summary,
         )

@@ -19,28 +19,30 @@ func (b Block) Duration() float64 { return b.EndS - b.StartS }
 
 // Opts configures the formation thresholds.
 type Opts struct {
-	FPS              float64
-	MinBlockS        float64 // ignore blocks shorter than this (default 60)
-	MaxBlockS        float64 // split blocks longer than this (default 900)
-	MaxBlockFraction float64 // 0..1; reject any block longer than this fraction of total recording duration (default 0.5; pass a large value like 1.0 to effectively disable). Catches state-machine runaway false-positives where a sustained logo washout (e.g. white sixx logo over white sky for several minutes) opens a block that never closes — splitLongBlocks can only split when blackframes exist inside, so a pure-show stretch with no internal cuts stays as one giant block. Real ad blocks essentially never exceed 50 % of a recording, so dropping anything bigger is safe.
-	MinShowSegmentS  float64 // merge ad blocks separated by less show than this (default 60)
-	MinAbsentToOpenS float64 // require this many seconds of continuous logo-absent to open a block (default 5)
-	LogoThreshold    float64 // per-frame logo confidence < this counts as "absent" (default 0.10)
-	RefineWindowS    float64 // search radius for blackframe/silence snap (default 90)
-	NNWeight         float64 // 0..1 weight of NN evidence vs logo (default 0). When > 0 and NNConfs supplied to Form, the per-frame ad-likelihood is a weighted blend.
-	NNGate           float64 // 0..0.5: ignore NN where |conf - 0.5| < NNGate (default 0 = always use NN). Set to e.g. 0.3 to only let NN vote when it's confident (conf < 0.2 or > 0.8) — keeps logo-only behaviour when NN is unsure.
-	NNSmoothS        float64 // rolling-mean window (in seconds, total) applied to nnConf before blending. 0 = off. A 10s mean (NNSmoothS=10) collapses single-frame backbone noise so the gating doesn't flip-flop boundaries; the deployed state machine already does temporal hysteresis but smoothing the raw NN signal recovers a much cleaner block-level result (per-frame acc stays similar, block-IoU jumps).
-	LogoSmoothS      float64 // rolling-mean window (s, total) applied to logoConf. 0 = off. Some channels (ProSieben/Galileo) show constant lower-third graphics that intermittently cover or noise-up the logo ROI — sub-second absent flickers prevent the state machine from ever satisfying its consecutive-present hysteresis, so a 5s mean kills the flicker without smearing real (minutes-long) ad transitions.
-	MaxAdGapS        float64 // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this (default 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
-	StartExtendS     float64 // pull each block's StartS back by this many seconds. Channel-specific systematic correction: users on some channels (RTL) consistently shift block-starts earlier than auto-detected, suggesting tv-detect's logo-loss latency runs late at the head of an ad break. Set per-channel from boundary-drift feedback; capped at the previous block's end (or 0 for the first block) so blocks never overlap.
-	EndExtendS       float64 // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
-	BumperSnapS      float64 // post-refine snap each block boundary to the bumper-match peak within ±this seconds. 0 = off (default 10). Strongest deterministic boundary signal — a per-channel bumper template ("WIE SIXX IST DAS DENN?", "Mein RTL", etc) is a programmer-placed semantic marker, not statistical inference. Used for BOTH ends: end-bumpers (passed via the bumperConf positional arg) snap block END to the LATEST high-conf frame; start-bumpers (passed via startBumperConf) snap block START to the EARLIEST high-conf frame. Same window/threshold for both kinds — the distinction is only which boundary they target.
-	BumperThreshold  float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Applied to both end- and start-bumper-conf streams.
-	SpeakerWeight   float64  // 0..1 weight of speaker-fingerprint evidence vs logo+NN (default 0; pass --speaker-weight 0.3 to engage). When > 0 and SpeakerConfs is len(logoConf), per-frame "show-likelihood" is re-blended:  score = (1-SpeakerWeight)*old_score + SpeakerWeight*speaker — orthogonal signal to logo/NN/letterbox. Useful for shows with persistent recurring speakers (soap operas, court shows) where ad voice-overs are reliably distinct from the show's cast.
-	IFrameSnapS      float64 // post-refine snap each boundary to the nearest I-frame within ±this seconds. 0 = off (default 5). Real ad-inserts almost always align with encoder I-frames; snapping here gives sub-second precision regardless of how coarse the rough boundary was.
-	LogoCrossRefineS float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
-	SceneCutSnapS    float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
-	LetterboxSnapS   float64 // post-refine snap to the nearest letterbox transition (onset for START, offset for END) within ±this seconds. 0 = off (default 5). Deterministic geometric signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI) — overrides scene-cut/I-frame for the boundary it covers. No-op when LetterboxEvents is empty.
+	FPS               float64
+	MinBlockS         float64 // ignore blocks shorter than this (default 60)
+	MaxBlockS         float64 // split blocks longer than this (default 900)
+	MaxBlockFraction  float64 // 0..1; reject any block longer than this fraction of total recording duration (default 0.5; pass a large value like 1.0 to effectively disable). Catches state-machine runaway false-positives where a sustained logo washout (e.g. white sixx logo over white sky for several minutes) opens a block that never closes — splitLongBlocks can only split when blackframes exist inside, so a pure-show stretch with no internal cuts stays as one giant block. Real ad blocks essentially never exceed 50 % of a recording, so dropping anything bigger is safe.
+	MinShowSegmentS   float64 // merge ad blocks separated by less show than this (default 60)
+	MinAbsentToOpenS  float64 // require this many seconds of continuous logo-absent to open a block (default 5)
+	LogoThreshold     float64 // per-frame logo confidence < this counts as "absent" (default 0.10)
+	RefineWindowS     float64 // search radius for blackframe/silence snap (default 90)
+	NNWeight          float64 // 0..1 weight of NN evidence vs logo (default 0). When > 0 and NNConfs supplied to Form, the per-frame ad-likelihood is a weighted blend.
+	NNGate            float64 // 0..0.5: ignore NN where |conf - 0.5| < NNGate (default 0 = always use NN). Set to e.g. 0.3 to only let NN vote when it's confident (conf < 0.2 or > 0.8) — keeps logo-only behaviour when NN is unsure.
+	NNSmoothS         float64 // rolling-mean window (in seconds, total) applied to nnConf before blending. 0 = off. A 10s mean (NNSmoothS=10) collapses single-frame backbone noise so the gating doesn't flip-flop boundaries; the deployed state machine already does temporal hysteresis but smoothing the raw NN signal recovers a much cleaner block-level result (per-frame acc stays similar, block-IoU jumps).
+	LogoSmoothS       float64 // rolling-mean window (s, total) applied to logoConf. 0 = off. Some channels (ProSieben/Galileo) show constant lower-third graphics that intermittently cover or noise-up the logo ROI — sub-second absent flickers prevent the state machine from ever satisfying its consecutive-present hysteresis, so a 5s mean kills the flicker without smearing real (minutes-long) ad transitions.
+	MaxAdGapS         float64 // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this (default 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
+	StartExtendS      float64 // pull each block's StartS back by this many seconds. Channel-specific systematic correction: users on some channels (RTL) consistently shift block-starts earlier than auto-detected, suggesting tv-detect's logo-loss latency runs late at the head of an ad break. Set per-channel from boundary-drift feedback; capped at the previous block's end (or 0 for the first block) so blocks never overlap.
+	EndExtendS        float64 // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
+	BumperSnapS       float64 // post-refine snap each block boundary to the bumper-match peak within ±this seconds. 0 = off (default 10). Strongest deterministic boundary signal — a per-channel bumper template ("WIE SIXX IST DAS DENN?", "Mein RTL", etc) is a programmer-placed semantic marker, not statistical inference. Used for BOTH ends: end-bumpers (passed via the bumperConf positional arg) snap block END to the LATEST high-conf frame; start-bumpers (passed via startBumperConf) snap block START to the EARLIEST high-conf frame. Same window/threshold for both kinds — the distinction is only which boundary they target.
+	BumperThreshold   float64 // bumper match score required for a snap (default 0.85). Above all observed show-content false-positive levels in validation, well below the 0.95+ peak of an actual bumper. Applied to both end- and start-bumper-conf streams.
+	SpeakerWeight     float64 // 0..1 weight of speaker-fingerprint evidence vs logo+NN (default 0; pass --speaker-weight 0.3 to engage). When > 0 and SpeakerConfs is len(logoConf), per-frame "show-likelihood" is re-blended:  score = (1-SpeakerWeight)*old_score + SpeakerWeight*speaker — orthogonal signal to logo/NN/letterbox. Useful for shows with persistent recurring speakers (soap operas, court shows) where ad voice-overs are reliably distinct from the show's cast.
+	IFrameSnapS       float64 // post-refine snap each boundary to the nearest I-frame within ±this seconds. 0 = off (default 5). Real ad-inserts almost always align with encoder I-frames; snapping here gives sub-second precision regardless of how coarse the rough boundary was.
+	LogoCrossRefineS  float64 // post-refine snap each boundary to the precise frame where the per-frame logoConf crosses LogoThreshold within ±this seconds. 0 = off (default 2). Uses the existing 25-fps logo signal — sub-frame precision (40 ms) without any extra decode. Falls through silently when the crossing is ambiguous.
+	SceneCutSnapS     float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
+	LetterboxSnapS    float64 // post-refine snap to the nearest letterbox transition (onset for START, offset for END) within ±this seconds. 0 = off (default 5). Deterministic geometric signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI) — overrides scene-cut/I-frame for the boundary it covers. No-op when LetterboxEvents is empty.
+	BoundarySnapS     float64 // COARSE pull each rough boundary toward the nearest boundary-head (BNDR) peak within ±this seconds, applied BEFORE the deterministic snaps refine it. 0 = off (default 0). A learned, channel-agnostic transition detector — like BumperSnap but without needing a per-channel template, so it covers the shows/channels bumper templates miss (the dominant missed_bumper failure mode: block position right, edge off by seconds → IoU drag). Only moves an existing edge to a confident learned peak; never adds/removes blocks. Off by default until validated per the realistic-eval; enable via detect-config once a channel shows a net gain.
+	BoundaryThreshold float64 // boundary-head score required for a BoundarySnap (default 0.5). The BNDR head's recall is ~85% at ~2.7s precision on bootstrap labels; a moderate threshold keeps spurious peaks from pulling a good boundary.
 }
 
 // Form combines per-frame logo confidences and (optionally) NN
@@ -58,7 +60,7 @@ type Opts struct {
 // so NNWeight=0 reproduces the logo-only behaviour and NNWeight=1
 // makes the NN authoritative. Length of nnConf must match logoConf
 // (the pipeline guarantees this when both detectors run).
-func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf []float64,
+func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf, boundaryConf []float64,
 	black []signals.BlackEvent,
 	silence []signals.SilenceEvent, scenes []signals.SceneCut,
 	letterbox []signals.LetterboxEvent,
@@ -147,8 +149,8 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf 
 		startF, endF int
 	}
 	var raw []run
-	openStart := -1                  // first absent frame of the candidate run, -1 = closed
-	pendingStart := -1               // first absent frame of an unconfirmed run
+	openStart := -1    // first absent frame of the candidate run, -1 = closed
+	pendingStart := -1 // first absent frame of an unconfirmed run
 	consecutiveAbsent := 0
 	consecutivePresent := 0
 	for i := 0; i < len(present); i++ {
@@ -209,6 +211,17 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf 
 			black, silence, scenes, letterbox, true)
 		endS = refineBoundaryVoting(endS, opts.RefineWindowS,
 			black, silence, scenes, letterbox, false)
+		// Boundary-head COARSE pull FIRST — corrects a badly-voted edge
+		// (the missed_bumper case where no black/silence/scene sat near
+		// the true cut) toward the learned transition peak, which the
+		// deterministic snaps below then refine to sub-second. Off unless
+		// BoundarySnapS > 0. Never adds/removes blocks; only moves an edge.
+		if opts.BoundarySnapS > 0 && len(boundaryConf) > 0 {
+			startS = snapToBoundary(startS, boundaryConf,
+				opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
+			endS = snapToBoundary(endS, boundaryConf,
+				opts.FPS, opts.BoundarySnapS, opts.BoundaryThreshold)
+		}
 		if iFrameSnap > 0 && len(iFrames) > 0 {
 			startS = snapToIFrame(startS, iFrames, iFrameSnap)
 			endS = snapToIFrame(endS, iFrames, iFrameSnap)
@@ -531,6 +544,12 @@ func defaults(o *Opts) {
 	if o.LetterboxSnapS <= 0 {
 		o.LetterboxSnapS = 5
 	}
+	// BoundarySnapS is deliberately NOT defaulted (stays 0 = OFF) — the
+	// BNDR head must clear the realistic-eval before it touches production
+	// boundaries. Only the threshold gets a default, harmless while off.
+	if o.BoundaryThreshold <= 0 {
+		o.BoundaryThreshold = 0.5
+	}
 	// IFrameSnapS, LogoCrossRefineS, MaxAdGapS, *SmoothS all use
 	// "0 = off, positive = on" semantics. Production defaults live
 	// at the CLI flag declarations in cmd/tv-detect/main.go so test
@@ -787,6 +806,38 @@ func snapToBumper(t float64, bumperConf []float64, fps, r, threshold float64) fl
 		}
 	}
 	return t
+}
+
+// snapToBoundary pulls a rough boundary to the HIGHEST-scoring boundary-head
+// frame within ±r seconds, provided it clears threshold. Unlike the bumper
+// snaps (earliest/latest above threshold — a bumper is a sustained template
+// match), a boundary-head peak is a single-frame transition estimate, so we
+// take the argmax in the window. Returns t unchanged when no frame clears the
+// threshold (the common case away from a real transition), so a confident
+// deterministic boundary is never dragged by a flat/absent boundary signal.
+func snapToBoundary(t float64, boundaryConf []float64, fps, r, threshold float64) float64 {
+	if len(boundaryConf) == 0 || r <= 0 || fps <= 0 {
+		return t
+	}
+	iCenter := int(t * fps)
+	iLo := iCenter - int(r*fps)
+	iHi := iCenter + int(r*fps)
+	if iLo < 0 {
+		iLo = 0
+	}
+	if iHi >= len(boundaryConf) {
+		iHi = len(boundaryConf) - 1
+	}
+	best, bestScore := -1, threshold
+	for i := iLo; i <= iHi; i++ {
+		if boundaryConf[i] > bestScore {
+			best, bestScore = i, boundaryConf[i]
+		}
+	}
+	if best < 0 {
+		return t
+	}
+	return float64(best) / fps
 }
 
 // or t unchanged if no I-frame falls inside the window. iFrames is

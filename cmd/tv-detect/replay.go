@@ -126,9 +126,12 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output string, buildOpts 
 		speakerConfFrames = signals.ExpandSpeakerToFrames(ws, d.FPS, d.FrameCount)
 	}
 
+	// boundaryConf = nil: the boundary head runs off backbone embeddings,
+	// which the signals dump doesn't carry, so the replay/sweep path can't
+	// reconstruct it (yet). Boundary snap is validated on the live path.
 	blockList := blocks.Form(buildOpts(d.FPS),
 		d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs, speakerConfFrames,
-		d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
+		nil, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
 
 	switch output {
 	case "summary":

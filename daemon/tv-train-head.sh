@@ -190,6 +190,22 @@ done
 # und +temporal=Produktion / MLP3 v3.)
 rc=$?
 
+# Boundary head (BNDR): a SECOND head that scores "is this frame an ad
+# boundary?" — targets the dominant missed_bumper/boundary-drift failure
+# mode the per-frame classifier can't fix (block position right, edge off
+# by seconds → IoU drag). Reuses the feature cache train-head.py just
+# populated (no re-extract) + ad-start/end frames from ads_user.json.
+# Non-fatal: a failure here never blocks the main head deploy. Only after
+# a successful main run (rc==0) so the feature cache is fresh.
+if [ "$rc" -eq 0 ]; then
+  echo "training boundary head…"
+  "$VENV_PY" "$HOME/src/tv-detect/scripts/train-boundary-head.py" \
+      --hls-root "$SNAPSHOT_DIR" \
+      --feature-cache "$HOME/.cache/tvd-features" \
+      --output "$TRAIN_OUT/boundary_head.bin" 2>&1 | sed 's/^/  /' \
+    || echo "  boundary-head train FAILED (non-fatal, main head unaffected)"
+fi
+
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to
 # the gateway. Pi extracts atomically into /mnt/tv/hls/.tvd-models/
 # (head.bin written LAST so daemons never see a half-deploy).
@@ -199,7 +215,8 @@ if [ "$rc" -eq 0 ]; then
   echo "bundling + uploading head to gateway…"
   BUNDLE="/tmp/tv-train-head-bundle.tar.gz"
   ( cd "$TRAIN_OUT" && tar czf "$BUNDLE" \
-      head.bin head.gate.bin head.*.json head.*.txt archive 2>/dev/null )
+      head.bin head.gate.bin boundary_head.bin boundary_head.history.json \
+      head.*.json head.*.txt archive 2>/dev/null )
   size_mb=$(du -m "$BUNDLE" | cut -f1)
   echo "  bundle: ${size_mb} MB"
   resp=$($CURL -X POST --data-binary "@$BUNDLE" \

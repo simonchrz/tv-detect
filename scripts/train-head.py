@@ -2865,27 +2865,35 @@ def main():
         # guard ([[source_cache_truncation_silent]]) — were extracted from a
         # source truncated at ~40-45min. Signature (swept across all archives):
         # the meta "ads" list carries a block whose END is BEYOND the label
-        # horizon while labels are all-zero (ad_frac 0.000). The recording's
-        # sole ad break lives in the missing tail, so the frozen GT is
-        # incomplete: as a TEST target it can only score 0.00 (any FP in the
-        # genuinely-ad-free first 40min vs an empty GT) and drag the mean —
-        # exactly the phantom the paired gate is blind to. Train role kept
-        # (the first-40min all-show labels are correct, just missing one
-        # block's positives). 11 recs, all 2.5-Men / Big Bang / Charmed
-        # midday reruns. (The 12th truncation-signature hit, Galileo
-        # dvr-prosieben-1780506300, is a real 65min rec with ad_frac 0.311 and
-        # only a minor tail overrun — NOT truncated, left in.)
-        "dvr-prosieben-1779870300",    # Two and a Half Men — trunc 40min
-        "dvr-prosieben-1779871800",    # Two and a Half Men — trunc 45min
-        "dvr-prosieben-1779873600",    # Two and a Half Men — trunc 40min
-        "dvr-prosieben-1779875100",    # The Big Bang Theory — trunc 40min
-        "dvr-prosieben-1779878100",    # The Big Bang Theory — trunc 40min (was 0.00/0.00)
-        "dvr-prosieben-1779884400",    # Two and a Half Men — trunc 40min
-        "dvr-prosieben-1779885900",    # Two and a Half Men — trunc 45min
-        "dvr-prosieben-1779889301",    # The Big Bang Theory — trunc 42min
-        "dvr-sixx-1779894000",         # Charmed — trunc 40min
-        "dvr-sixx-1779980700",         # Charmed — trunc 40min
-        "dvr-sixx-1780069500",         # Charmed — trunc 45min
+        # horizon while labels are all-zero (ad_frac 0.000).
+        #
+        # These entries are now BELT-AND-SUSPENDERS: the 11 npz themselves were
+        # QUARANTINED out of the corpus (~/.cache/tvd-train-archive-quarantine/)
+        # because — contrary to the first read of this audit — the all-zero
+        # labels are POISON in TRAIN, not merely incomplete negatives. Proof:
+        # moving prosieben-1779878100 test→train in the 07-24 15:37 run (via an
+        # earlier TEST_SET_EXCLUDE-only fix that kept them train-eligible)
+        # crashed the sibling reviewed BBT dvr-prosieben-1782482508 from a stable
+        # 0.88 (3 prior runs) to 0.45 — the deterministic MLP (random_state=0)
+        # learned "BBT = no ad" from the mislabelled rec. A truncated sitcom with
+        # its ad-break cut off and labelled all-show is an unrepresentative
+        # negative that biases the whole show's prior. Unfixable (no source to
+        # re-detect), so they're removed from BOTH roles. If a quarantined npz is
+        # ever restored, these keep it out of TEST too. 11 recs, 2.5-Men / Big
+        # Bang / Charmed midday reruns. (Galileo dvr-prosieben-1780506300 hit the
+        # truncation signature too but is a real 65min rec, ad_frac 0.311, minor
+        # tail overrun — NOT truncated, left in the corpus.)
+        "dvr-prosieben-1779870300",    # Two and a Half Men — trunc 40min, quarantined
+        "dvr-prosieben-1779871800",    # Two and a Half Men — trunc 45min, quarantined
+        "dvr-prosieben-1779873600",    # Two and a Half Men — trunc 40min, quarantined
+        "dvr-prosieben-1779875100",    # The Big Bang Theory — trunc 40min, quarantined
+        "dvr-prosieben-1779878100",    # The Big Bang Theory — trunc 40min, quarantined (crashed sibling)
+        "dvr-prosieben-1779884400",    # Two and a Half Men — trunc 40min, quarantined
+        "dvr-prosieben-1779885900",    # Two and a Half Men — trunc 45min, quarantined
+        "dvr-prosieben-1779889301",    # The Big Bang Theory — trunc 42min, quarantined
+        "dvr-sixx-1779894000",         # Charmed — trunc 40min, quarantined
+        "dvr-sixx-1779980700",         # Charmed — trunc 40min, quarantined
+        "dvr-sixx-1780069500",         # Charmed — trunc 45min, quarantined
     }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────

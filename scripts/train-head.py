@@ -1961,6 +1961,13 @@ def main():
                          "recs (0.95→0.60) from re-creating the 2026-07-02..06 "
                          "rejection deadlock, while still catching real breakage "
                          "(0.35→0.00, 0.75→0.20).")
+    ap.add_argument("--stability-window", type=int, default=10,
+                    help="how many recent per-rec-iou.jsonl runs the veto's "
+                         "bistability check looks back over. A rec whose own IoU "
+                         "spans more than --reviewed-regression-veto across this "
+                         "window is flip-flopping between block-boundary "
+                         "attractors, so a single-run drop on it says nothing "
+                         "about the model and must not veto a deploy.")
     ap.add_argument("--reviewed-regression-severe", type=float, default=0.45,
                     help="a SINGLE reviewed rec dropping by at least this much (and "
                          "below the floor) is enough to veto on its own. Below this, "
@@ -4842,12 +4849,51 @@ def main():
                 # user REVIEWED: there the ground truth is trusted, so a >veto drop
                 # is a genuine local regression the median must not paper over.
                 reviewed = {r[0] for r in per_rec if len(r) > 5 and r[5]}
+                # BISTABLE recs are excluded as veto sources. Some recordings sit
+                # exactly on a block-boundary decision edge and flip between two
+                # attractors run to run — 2ff4df28 alternates between ~0.48 and
+                # ~0.97 with nothing in between, 0a9ddd3e between ~0.47 and ~0.99.
+                # A veto that trusts a single run's drop fires whenever the
+                # champion landed on the good side and the candidate on the bad
+                # one: on 2026-07-25 that blocked a candidate whose overall metric
+                # was BETTER (mean 0.81 vs 0.80), and the same pattern would have
+                # fired on 07-20 and 07-24 — roughly every third night, i.e. the
+                # deadlock this veto was explicitly designed to avoid. Read the
+                # per-rec history we already persist and drop any rec whose OWN
+                # spread across recent runs exceeds the veto threshold: for such a
+                # rec a large delta carries no information about the model.
+                unstable = set()
+                try:
+                    if args.train_archive:
+                        _h = Path(args.train_archive) / "per-rec-iou.jsonl"
+                        if _h.exists():
+                            hist = {}
+                            for _ln in _h.read_text().splitlines()[-args.stability_window:]:
+                                if not _ln.strip():
+                                    continue
+                                for _u, _v in (json.loads(_ln).get("candidate") or {}).items():
+                                    hist.setdefault(_u, []).append(_v)
+                            for _u, _vs in hist.items():
+                                if len(_vs) >= 3 and (max(_vs) - min(_vs)) > args.reviewed_regression_veto:
+                                    unstable.add(_u)
+                except Exception as _e:
+                    print(f"  veto stability check unavailable ({_e}) — "
+                          f"treating all recs as stable")
                 rev_regr = sorted(
                     ((cand_pr[u] - dep_pr[u], u) for u in shared
-                     if u in reviewed
+                     if u in reviewed and u not in unstable
                      and dep_pr[u] - cand_pr[u] > args.reviewed_regression_veto
                      and cand_pr[u] < args.reviewed_regression_floor),
                     key=lambda x: x[0])
+                _skipped = [u for u in shared if u in reviewed and u in unstable
+                            and dep_pr[u] - cand_pr[u] > args.reviewed_regression_veto]
+                if _skipped:
+                    print(f"  veto: ignoring {len(_skipped)} BISTABLE rec(s) whose "
+                          f"own history spans >{args.reviewed_regression_veto:.2f} "
+                          f"(flip-flop, not regression):")
+                    for u in _skipped:
+                        t, c = uuid_cohort.get(u, ("", ""))
+                        print(f"    {cand_pr[u] - dep_pr[u]:+.3f}  {t or u} / {c}")
                 # Fire on a PATTERN (≥2 reviewed regressions) or a single
                 # CATASTROPHIC one (≥ severe). A lone moderate drop is logged but
                 # deploys — it may be a degenerate no-ad / stale-label rec, and

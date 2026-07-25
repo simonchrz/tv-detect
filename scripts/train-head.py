@@ -5229,6 +5229,48 @@ def main():
                 f.write(struct.pack("<f", float(w)))
             f.write(struct.pack("<f", bias))
 
+    # GOLDEN-EVAL: composition-CONSTANT median over a frozen set of pinned
+    # held-out recs (golden-eval-set.json). The PRODUCTION METRIC printed below is
+    # over WHICHEVER recs the sticky split put in test tonight — its median swings
+    # ±3-5pp on composition alone (n=68↔104 over July), so it is unreadable as a
+    # trend (2026-07-24: the curve looked flat because the noise buried a ~+6pp
+    # real climb). This number is over the SAME recs every night, so its movement
+    # is the model's, not the sample's. Pinned to test in _is_test → leakage-free.
+    #
+    # Defined here and called from BOTH the deploy and the reject branch: it lived
+    # inside `if deploy:` on its first night (2026-07-25) and that run was
+    # rejected, so the trend recorded nothing — a gap exactly on the nights where
+    # you most want to know whether the candidate really was worse on the stable
+    # set. The persisted `deployed` flag distinguishes "this shipped" from "this is
+    # what the rejected candidate would have scored".
+    def report_golden_eval():
+        try:
+            _gpath = (Path(args.train_archive) / "golden-eval-set.json"
+                      if args.train_archive else None)
+            _gpr = (metrics_smooth or {}).get("per_rec_iou") or {}
+            if not (_gpath and _gpath.exists() and _gpr):
+                return
+            _golden = set(json.loads(_gpath.read_text()).get("uuids", []))
+            _gvals = [_gpr[u] for u in _golden if u in _gpr]
+            if not _gvals:
+                return
+            _gmed = float(np.median(_gvals))
+            _gmean = float(np.mean(_gvals))
+            _tag = "this model" if deploy else "REJECTED candidate"
+            print(f"  GOLDEN-EVAL ({_tag}, composition-constant, "
+                  f"{len(_gvals)}/{len(_golden)} pinned recs): "
+                  f"median {_gmed:.3f}  mean {_gmean:.3f}"
+                  + ("  ← compare night-to-night, this is the real trend"
+                     if deploy else "  (production keeps its previous value)"))
+            with open(Path(args.train_archive) / "golden-trend.jsonl", "a") as _gf:
+                _gf.write(json.dumps({
+                    "ts": ts, "n": len(_gvals),
+                    "golden_median": round(_gmed, 4),
+                    "golden_mean": round(_gmean, 4),
+                    "deployed": deploy}) + "\n")
+        except Exception as _ge:
+            print(f"  golden-eval failed: {_ge}")
+
     if deploy:
         if is_mlp_write:
             _write_head(args.output)
@@ -5272,38 +5314,7 @@ def main():
                   f"test, smooth=10s): acc {metrics_smooth.get('acc', 0)*100:.1f}%  "
                   f"IoU mean {metrics_smooth.get('iou', 0):.2f}  "
                   f"IoU median {_prod_med:.2f}")
-            # GOLDEN-EVAL: composition-CONSTANT median over a frozen set of
-            # pinned held-out recs (golden-eval-set.json). The PRODUCTION METRIC
-            # above is over WHICHEVER recs the sticky split put in test tonight —
-            # its median swings ±3-5pp on composition alone (n=68↔104 over July),
-            # so it's unreadable as a trend (2026-07-24: user asked why the curve
-            # doesn't look like improvement — because the noise buries the ~+6pp
-            # real climb). This number is over the SAME recs every night, so its
-            # movement is the model's, not the sample's. Pinned to test in
-            # _is_test so it's always leakage-free. Persisted to golden-trend.jsonl.
-            try:
-                _gpath = (Path(args.train_archive) / "golden-eval-set.json"
-                          if args.train_archive else None)
-                _gpr = metrics_smooth.get("per_rec_iou") or {}
-                if _gpath and _gpath.exists() and _gpr:
-                    _golden = set(json.loads(_gpath.read_text()).get("uuids", []))
-                    _gvals = [_gpr[u] for u in _golden if u in _gpr]
-                    if _gvals:
-                        _gmed = float(np.median(_gvals))
-                        _gmean = float(np.mean(_gvals))
-                        print(f"  GOLDEN-EVAL (composition-constant, "
-                              f"{len(_gvals)}/{len(_golden)} pinned recs): "
-                              f"median {_gmed:.3f}  mean {_gmean:.3f}  "
-                              f"← compare night-to-night, this is the real trend")
-                        with open(Path(args.train_archive) /
-                                  "golden-trend.jsonl", "a") as _gf:
-                            _gf.write(json.dumps({
-                                "ts": ts, "n": len(_gvals),
-                                "golden_median": round(_gmed, 4),
-                                "golden_mean": round(_gmean, 4),
-                                "deployed": deploy}) + "\n")
-            except Exception as _ge:
-                print(f"  golden-eval failed: {_ge}")
+            report_golden_eval()
         # Calibration sidecar: read by the gateway's active-learning
         # endpoints and (eventually) by the Go detector. Written
         # next to head.bin so it stays version-locked with the head
@@ -5444,6 +5455,7 @@ def main():
                   f"{metrics_smooth.get('acc', 0)*100:.1f}%  "
                   f"IoU mean {metrics_smooth.get('iou', 0):.2f}  "
                   f"IoU median {_cand_med:.2f}")
+            report_golden_eval()
 
     # n_features for the history entry: in MLP1 mode the input dim
     # includes the channel one-hot block (= mlp_prod_in_dim = 1290

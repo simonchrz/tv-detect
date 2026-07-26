@@ -2055,13 +2055,16 @@ def process_detect(uuid):
     # Transcript production (for /search) runs for ALL recordings; the cutlist
     # refiner stays gated + recent/test-only (its IoU gain is marginal on old
     # recordings vs the ~50 s cost). One get_source() feeds both.
+    # Only the refiner may run before the upload — it rewrites the cutlist.
+    # Transcript production is a pure side effect for /search and used to sit
+    # here too, delaying every user-visible cutlist by the whisper step (up to
+    # its full 300 s timeout, which long recordings hit every time). It now
+    # runs after the upload; see the call below.
     need_refine = WHISPER_ENABLE and (is_recent or is_test_uuid)
-    if WHISPER_TRANSCRIBE or need_refine:
+    if need_refine:
         local_ts = get_source(uuid)
         if local_ts:
-            _maybe_whisper_transcribe(uuid, str(local_ts))
-            if need_refine:
-                cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
+            cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
     try:
         http_post_stream(
             f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}",
@@ -2083,6 +2086,15 @@ def process_detect(uuid):
     print(f"  detect {uuid}: {n_blocks} blocks, "
           f"{time.time()-t0:.0f}s", flush=True)
     _record_detect_success(uuid)
+    # Transcript for /search — after the upload, so a slow or failing whisper
+    # can no longer hold back the cutlist. get_source is a stat() here (the
+    # source was fetched for the detect itself). Still inside the detect slot,
+    # so its 300 s timeout stays a real cost on long recordings; giving it a
+    # length-scaled budget needs a worker outside the slot accounting first.
+    if WHISPER_TRANSCRIBE:
+        local_ts = get_source(uuid)
+        if local_ts:
+            _maybe_whisper_transcribe(uuid, str(local_ts))
     return True
 
 

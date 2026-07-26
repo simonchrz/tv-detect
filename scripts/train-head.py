@@ -2132,6 +2132,8 @@ def main():
     # ones go to the worker pool.
     cached, todo = [], []  # cached: (rec_info, cache_path); todo: (rec_info, src, cache_path)
     corpus_no_ts = 0       # recovered from feature cache because the .ts was dedup'd
+    resurrect_seen = []    # (uuid, n) — auto blocks kept alongside a user list
+    resurrect_vetoed = []  # (uuid, n) — of those, dropped by confirmed_show
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
         uuid = rec_dir.name[5:]
         user = rec_dir / "ads_user.json"
@@ -2190,6 +2192,21 @@ def main():
             surviving = [a for a in auto_ads
                          if not any(_overlaps(a, x) for x in user_ads)
                          and not any(_overlaps(a, d) for d in deleted)]
+            # An auto block the reviewer removed only stays out if the removal
+            # was recorded in "deleted"; a client that just omits the block lets
+            # it survive here and become a label the human already rejected.
+            # tv-recorder derives the missing entry since 2026-07-26, but an
+            # explicit confirmed_show inside a surviving block is proof on its
+            # own — dvr-rtl-1781909700 scored IoU 0.000 on both heads because
+            # the model correctly followed the review and the label did not.
+            if confirmed_show and surviving:
+                vetoed = [a for a in surviving
+                          if any(a[0] <= t <= a[1] for t in confirmed_show)]
+                if vetoed:
+                    surviving = [a for a in surviving if a not in vetoed]
+                    resurrect_vetoed.append((uuid, len(vetoed)))
+            if surviving and user_raw is not None:
+                resurrect_seen.append((uuid, len(surviving)))
             ads = sorted(surviving + list(user_ads), key=lambda b: b[0])
             which = ("merged" if user.exists() and auto.exists()
                      else "user" if user.exists()
@@ -2315,6 +2332,23 @@ def main():
     if corpus_no_ts:
         print(f"corpus: recovered {corpus_no_ts} recording(s) from the feature "
               f"cache whose .ts was dedup'd (kept in corpus, no re-extract)")
+
+    if resurrect_vetoed:
+        n = sum(k for _, k in resurrect_vetoed)
+        print(f"label-merge: dropped {n} auto block(s) across "
+              f"{len(resurrect_vetoed)} recording(s) that a confirmed_show "
+              f"timestamp falls inside (reviewer rejected them; the client "
+              f"omitted the 'deleted' entry)")
+        for u, k in resurrect_vetoed[:10]:
+            print(f"    {u}  ({k})")
+    if resurrect_seen:
+        n = sum(k for _, k in resurrect_seen)
+        print(f"label-merge: {n} auto block(s) across {len(resurrect_seen)} "
+              f"reviewed recording(s) survive with no user counterpart — "
+              f"intended as un-refined blocks, but an unrecorded removal looks "
+              f"identical. Watch this count: it should not grow.")
+        for u, k in resurrect_seen[:10]:
+            print(f"    {u}  ({k})")
 
     # Pass 2 — extract uncached features in parallel. Each worker loads
     # its own ONNX session at init (~100 MB resident); 4 workers × that

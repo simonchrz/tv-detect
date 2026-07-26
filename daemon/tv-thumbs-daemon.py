@@ -1426,7 +1426,8 @@ def process_recording(uuid, do_hls, do_thumbs):
                 proc.kill(); proc.wait(); rc = -9
                 break
             time.sleep(1.0)
-        errf.seek(0); err_tail = errf.read()[-500:]; errf.close()
+        errf.seek(0); _err_all = errf.read(); errf.close()
+        err_tail = _err_all[-500:]
         encode_s = time.time() - t0
         if rc != 0:
             print(f"  ffmpeg {uuid} rc={rc} — last stderr:\n"
@@ -1471,6 +1472,20 @@ def process_recording(uuid, do_hls, do_thumbs):
                               f"ffmpeg rc=0, input was "
                               f"{'LOCAL ' + str(local) if local else 'HTTP ' + src_url}",
                               flush=True)
+                        # ffmpeg's stderr lives in the TemporaryDirectory and is
+                        # printed only on rc != 0 — so on exactly the runs that
+                        # matter it was being discarded. Whatever ffmpeg said
+                        # before deciding it was done is the missing evidence.
+                        drop = ("Packet corrupt", "corrupt input packet",
+                                "PES packet size mismatch", "Header missing",
+                                "Error submitting packet")
+                        interesting = [ln for ln in _err_all.splitlines()
+                                       if ln.strip() and not any(d in ln for d in drop)]
+                        print(f"  hls {uuid}: ffmpeg stderr — {len(_err_all.splitlines())} "
+                              f"lines, last 12 after dropping known decode noise:",
+                              flush=True)
+                        for ln in interesting[-12:]:
+                            print(f"      {ln}", flush=True)
                 except Exception as e:
                     print(f"  hls upload err: {e}", flush=True); ok_hls = False
         if do_thumbs:

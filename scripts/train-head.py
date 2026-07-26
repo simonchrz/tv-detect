@@ -2290,7 +2290,8 @@ def main():
             src_mt = int(src.stat().st_mtime)
             cache_path = cache_dir / f"{uuid}-{src_mt}{fps_tag}{suffix}.npy"
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
-                         pseudo_data, is_bootstrap)
+                         pseudo_data, is_bootstrap,
+                         confirmed_show, confirmed_ad_skips)
             if cache_path.exists():
                 # Re-extract if the cached features have a high NaN-rate in the
                 # logo column. Stale .npy from the pre-2026-05-23 tv-detect
@@ -2325,7 +2326,8 @@ def main():
             cache_path = hits[0]
             src_mt = int(cache_path.stat().st_mtime)  # proxy for rec_age_days
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), "",
-                         pseudo_data, is_bootstrap)
+                         pseudo_data, is_bootstrap,
+                         confirmed_show, confirmed_ad_skips)
             cached.append((rec_info, cache_path))
             corpus_no_ts += 1
 
@@ -2554,6 +2556,16 @@ def main():
         rec_dir_path = Path(rest[1]) if len(rest) > 1 else None
         pseudo_data = rest[3] if len(rest) > 3 else None
         is_bootstrap = rest[4] if len(rest) > 4 else False
+        # Carried through rec_info since 2026-07-26. Before that this loop read
+        # the pass-1 loop variables, which by now hold the LAST recording's
+        # values — so every recording in the corpus was assigned one arbitrary
+        # confirmed_show set (233 of 591 archive entries share the identical
+        # [22.0, 1281.0]) and all 54 real ones were ignored. confirmed_show only
+        # bumps a frame's weight to 1.2×, but confirmed_ad_skips FORCES label=1:
+        # had a recording with skip presses been last in the glob order, those
+        # timestamps would have become ad labels in every recording.
+        confirmed_show = rest[5] if len(rest) > 5 else []
+        confirmed_ad_skips = rest[6] if len(rest) > 6 else []
         bumpers = []
         if args.with_bumpers and rec_dir_path is not None:
             bj = rec_dir_path / "bumpers.json"

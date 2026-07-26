@@ -109,7 +109,13 @@ def block_iou(pred, gt):
 
 
 def gt_of(u):
-    z = np.load(f"{ARCH}/{u}.npz", allow_pickle=True)
+    """Ground truth from the train archive, or [] if the recording has none.
+    Fresh recordings get a dump before they are ever labelled, so a missing
+    .npz is normal — skip that recording, never abort the run."""
+    try:
+        z = np.load(f"{ARCH}/{u}.npz", allow_pickle=True)
+    except OSError:
+        return []
     return [tuple(b) for b in json.loads(str(z["meta"])).get("ads", [])]
 
 
@@ -221,7 +227,10 @@ def statemachine_raw(dump_path):
     return [(float(b[0]), float(b[1])) for b in json.loads(r.stdout).get("blocks", [])]
 
 
-DUMP_DIRS = ["/tmp/faithful-emit",
+# Dumps from different heads carry different nn_confs and must not be mixed.
+# HMM_DUMP_DIRS (colon-separated) restricts the set to one head's dumps.
+DUMP_DIRS = os.environ.get("HMM_DUMP_DIRS", "").split(":") if os.environ.get(
+    "HMM_DUMP_DIRS") else ["/tmp/faithful-emit",
              os.path.expanduser("~/.cache/tv-detect-daemon/emit-signals")]
 GATEWAY = "https://raspberrypi5lan:8443"
 

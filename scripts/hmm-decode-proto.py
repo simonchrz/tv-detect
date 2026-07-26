@@ -10,13 +10,36 @@ logo-cnn + bumper templates + whisper + start-ts). Dumps emitted without them
 measure a pipeline that does not exist — see the 2026-07-24 boundary-head
 incident where non-faithful dumps read +0.016 and faithful read -0.015.
 
-FINDINGS (2026-07-24, user-reviewed GT, faithful dumps, learned per-channel
-drift applied to the production baseline — omitting it understates production):
+SUPERSEDED 2026-07-26 — read this first.
 
-  Channel     n   PRODUCTION   HMM(pure NN)   delta
-  prosieben   8       0.822        0.912      +0.091
-  rtl         3       0.750        0.901      +0.151
-  vox         3       0.840        0.833      -0.006
+The 07-24 numbers below were taken while production still applied the phantom
+learned drift. The drift guards (tv-receiver 7559c24) removed it, start/end
+extends are now 0 on these recordings, and production got better by roughly the
+malus the HMM had been collecting. Re-measured with production_replay(), which
+mirrors tv-thumbs-daemon's flag resolution instead of being hand-assembled:
+
+  Channel     n    PRODUCTION   HMM(pure NN)   delta      (was)
+  prosieben   10      0.891        0.900       +0.009    (+0.091)
+  rtl          3      0.807        0.901       +0.093    (+0.151)
+  vox          3      0.738        0.833       +0.095    (-0.006)
+
+And the channel mean hides the thing that matters — the split is per SHOW:
+
+  Galileo          n=5   0.928 -> 0.845   -0.083
+  Galileo Stories  n=3   0.840 -> 0.981   +0.140
+
+Same channel, opposite directions. On three Galileo recordings production sits
+at 0.96-1.00 and the HMM drags them to 0.81-0.87. Whatever is left here is a
+per-show effect, exactly like the drift was, and a channel-wide switch would
+trade one half against the other.
+
+Two caveats on the re-measurement: these dumps carry nn_confs from the 07-24
+head while the config comes from today (internally consistent — PROD and HMM
+share the same confidences — but not mixable with fresher dumps), and the rtl
+n=3 is still two thirds Let's Dance, the one show where RTL hides its logo
+mid-programme and "pure NN instead of the blend" therefore wins by construction.
+
+ORIGINAL 07-24 FINDINGS (kept for the reasoning, numbers superseded):
 
   KEY: feed the HMM the RAW NN probability, not blocks.Form's gated blend.
   rtl's nn_gate=0.3 routes 10.7% of frames to a logo fallback, and its logo is
@@ -198,8 +221,82 @@ def statemachine_raw(dump_path):
     return [(float(b[0]), float(b[1])) for b in json.loads(r.stdout).get("blocks", [])]
 
 
+DUMP_DIRS = ["/tmp/faithful-emit",
+             os.path.expanduser("~/.cache/tv-detect-daemon/emit-signals")]
+GATEWAY = "https://raspberrypi5lan:8443"
+
+
+def detect_cfg(uuid):
+    """The recording's real per-job config, as the daemon would fetch it."""
+    import urllib.request, ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    url = f"{GATEWAY}/api/internal/detect-config/{uuid}"
+    with urllib.request.urlopen(url, context=ctx, timeout=20) as r:
+        return json.load(r)
+
+
+def production_replay(dump_path, cfg):
+    """Replay with the REAL production flags, mirroring tv-thumbs-daemon's
+    default resolution (process_detect). This is the only honest baseline:
+    statemachine_raw below has every snap OFF, so it scores far lower and any
+    comparison against it flatters the HMM — prosieben reads 0.632 there vs
+    0.822 in production. Measuring against the wrong baseline is exactly how
+    the 2026-07-24 boundary-head result came out backwards."""
+    nn_w = cfg.get("nn_weight", -1)
+    nn_w = nn_w if nn_w is not None and nn_w >= 0 else 0.3
+    cmd = [BIN, "--quiet", "--replay-signals", dump_path, "--output", "summary",
+           "--nn-weight", str(nn_w),
+           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0)]
+    for flag, key in (("--nn-gate", "nn_gate"), ("--nn-smooth", "nn_smooth"),
+                      ("--boundary-snap", "boundary_snap")):
+        v = cfg.get(key, -1)
+        if v is not None and v >= 0:
+            cmd += [flag, str(v)]
+    cmd += ["--letterbox-snap", "90",
+            "--bumper-snap", "90",
+            "--bumper-threshold", str(cfg.get("bumper_threshold", 0.85))]
+    if cfg.get("start_extend_s", 0):
+        cmd += ["--start-extend", str(cfg["start_extend_s"])]
+    if cfg.get("end_extend_s", 0):
+        cmd += ["--end-extend", str(cfg["end_extend_s"])]
+    if cfg.get("min_block_s") and cfg.get("max_block_s"):
+        cmd += ["--min-block-sec", str(cfg["min_block_s"]),
+                "--max-block-sec", str(cfg["max_block_s"])]
+    if cfg.get("channel_slug"):
+        cmd += ["--channel-slug", cfg["channel_slug"]]
+    if cfg.get("start_real"):
+        cmd += ["--start-ts", str(int(cfg["start_real"]))]
+    cmd += ["dummy"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    return [(float(b[0]), float(b[1]))
+            for b in json.loads(r.stdout).get("blocks", [])]
+
+
+def meta_of(u):
+    try:
+        z = np.load(f"{ARCH}/{u}.npz", allow_pickle=True)
+        return json.loads(str(z["meta"]))
+    except Exception:
+        return {}
+
+
+def agg(label, rows):
+    b = np.mean([r[1] for r in rows]); h = np.mean([r[2] for r in rows])
+    s = np.mean([r[3] for r in rows])
+    print(f"  {label:<32} n={len(rows):<3} PROD {b:.3f} | HMM {h:.3f} "
+          f"({h-b:+.3f}) | HSMM {s:.3f} ({s-b:+.3f})")
+
+
 def main():
-    files = sorted(glob.glob("/tmp/faithful-emit/dvr-*.json"))
+    seen, files = set(), []
+    for dd in DUMP_DIRS:
+        for f in sorted(glob.glob(os.path.join(dd, "dvr-*.json"))):
+            u = os.path.basename(f)[:-5]
+            if u not in seen:
+                seen.add(u)
+                files.append(f)
     rows = []
     for f in files:
         u = os.path.basename(f)[:-5]
@@ -210,18 +307,39 @@ def main():
         nn = np.array(d["nn_confs"], dtype=np.float64)
         fps = d["fps"]
         ps = to_seconds(nn, fps)
-        base = block_iou(statemachine_raw(f), gt)
+        try:
+            cfg = detect_cfg(u)
+        except Exception as e:
+            print(f"{u:29} ÜBERSPRUNGEN — keine detect-config ({e})")
+            continue
+        base = block_iou(production_replay(f, cfg), gt)
         hmm = block_iou(viterbi_hmm(ps, 12 * 60, 4 * 60, 1.0, 60), gt)
         hsmm = block_iou(viterbi_hsmm(ps, 4 * 60, 0.55, 12 * 60, 0.9,
                                       1.0, 60.0, 60, 15 * 60), gt)
-        rows.append((u, base, hmm, hsmm))
-        print(f"{u:30} statemachine {base:.3f} | HMM {hmm:.3f} ({hmm-base:+.3f}) "
-              f"| HSMM {hsmm:.3f} ({hsmm-base:+.3f})", flush=True)
-    if rows:
-        b = np.mean([r[1] for r in rows]); h = np.mean([r[2] for r in rows])
-        s = np.mean([r[3] for r in rows])
-        print(f"\nn={len(rows)}  statemachine {b:.3f} | HMM {h:.3f} ({h-b:+.3f}) "
-              f"| HSMM {s:.3f} ({s-b:+.3f})")
+        m = meta_of(u)
+        rows.append((u, base, hmm, hsmm,
+                     m.get("slug") or u.split("-")[1],
+                     (m.get("title") or cfg.get("show_title") or "?")[:28]))
+        print(f"{u:29} {rows[-1][5]:<28} PROD {base:.3f} | HMM {hmm:.3f} "
+              f"({hmm-base:+.3f}) | HSMM {hsmm:.3f} ({hsmm-base:+.3f})",
+              flush=True)
+    if not rows:
+        print("keine Dumps mit Ground Truth gefunden")
+        return
+    # Per-channel AND per-show. A channel mean hides show-level structure: the
+    # first rtl result (+0.151, n=3) rested on two Let's Dance recordings — the
+    # one show where RTL hides its logo mid-programme, and therefore the one
+    # where "pure NN instead of the logo blend" wins almost by construction.
+    print("\n=== pro Kanal ===")
+    for ch in sorted({r[4] for r in rows}):
+        agg(ch, [r for r in rows if r[4] == ch])
+    print("\n=== pro Sendung (n>=2) ===")
+    for sh in sorted({r[5] for r in rows}):
+        sub = [r for r in rows if r[5] == sh]
+        if len(sub) >= 2:
+            agg(sh, sub)
+    print()
+    agg("GESAMT", rows)
 
 
 if __name__ == "__main__":

@@ -2195,7 +2195,15 @@ def main():
                 # interactive curl against /recording/<uuid>/…, an analysis
                 # script, a shell one-liner. Kill only this job's own workers,
                 # never everything that merely mentions the recording.
-                own = ("tv-detect", "ffmpeg", "ffprobe", "tv-whisper",
+                #
+                # Deliberately NOT ffmpeg/ffprobe: an HLS remux of the same
+                # recording runs ffmpeg with the uuid in its argv, and killing
+                # it would truncate the VOD — the exact damage this stack spent
+                # today chasing. tv-detect's own ffmpeg children die with it or
+                # exit on their own; a stray one is cheap, a truncated VOD is
+                # not. The detect binary is the thing holding the slot, so it is
+                # the thing to kill.
+                own = ("tv-detect", "tv-whisper",
                        "extract-speaker", "compute-speaker", "update-show")
                 pids = []
                 for p in r.stdout.decode().split():

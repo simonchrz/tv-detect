@@ -878,6 +878,21 @@ def _invalidate_derived(uuid):
     return n
 
 
+def _playlist_duration_s(path):
+    """Sum of #EXTINF in an HLS playlist, 0 if unreadable."""
+    try:
+        total = 0.0
+        for ln in path.read_text().splitlines():
+            if ln.startswith("#EXTINF:"):
+                try:
+                    total += float(ln[len("#EXTINF:"):].rstrip(",").strip())
+                except ValueError:
+                    pass
+        return total
+    except Exception:
+        return 0.0
+
+
 def get_source(uuid):
     """Return local .ts path. Cached: serve from disk. Cold: HTTP-fetch
     + cache for next time. Falls back to None on any error — caller
@@ -1294,16 +1309,18 @@ def process_recording(uuid, do_hls, do_thumbs):
             try:
                 probe = subprocess.run(
                     [FFPROBE, "-v", "error", "-select_streams", "v:0",
-                     "-show_entries", "stream=codec_name,field_order",
+                     "-show_entries",
+                     "stream=codec_name,field_order:format=duration",
                      "-of", "json", src_url],
                     capture_output=True, text=True, timeout=30,
                     env=SPAWN_ENV)
-                vstream = (json.loads(probe.stdout or "{}")
-                           .get("streams") or [{}])[0]
+                pj = json.loads(probe.stdout or "{}")
+                vstream = (pj.get("streams") or [{}])[0]
                 vcodec = vstream.get("codec_name", "")
                 field_order = vstream.get("field_order", "")
+                src_dur = float((pj.get("format") or {}).get("duration") or 0)
             except Exception:
-                vcodec, field_order = "", ""
+                vcodec, field_order, src_dur = "", "", 0.0
             # Interlaced broadcast never goes out as copy: Comedy Central
             # flipped its encoder ~2026-07 to Main/interlaced h264 that also
             # violates its own SPS ref-frame limit — ffmpeg decodes it with
@@ -1439,6 +1456,21 @@ def process_recording(uuid, do_hls, do_thumbs):
                     print(f"  hls {uuid}: {len(segs)+1} files "
                           f"({size_mb:.0f} MB), encode {encode_s:.0f}s "
                           f"+ tail {time.time()-t1:.0f}s", flush=True)
+                    # A truncated remux exits 0 and looks like a success — that
+                    # is how VODs holding a quarter of their recording shipped
+                    # silently for weeks. Say it out loud, with the two facts
+                    # that identify the cause: how much of the source made it
+                    # into the playlist, and whether ffmpeg read a local file
+                    # or streamed from the Pi (the fallback when get_source
+                    # returns None, and ~20x slower, so a mid-stream cut reads
+                    # as a clean EOF).
+                    vod_s = _playlist_duration_s(playlist)
+                    if src_dur > 0 and vod_s < 0.9 * src_dur:
+                        print(f"  hls {uuid}: TRUNCATED — playlist {vod_s:.0f}s "
+                              f"of {src_dur:.0f}s source ({vod_s/src_dur*100:.0f}%), "
+                              f"ffmpeg rc=0, input was "
+                              f"{'LOCAL ' + str(local) if local else 'HTTP ' + src_url}",
+                              flush=True)
                 except Exception as e:
                     print(f"  hls upload err: {e}", flush=True); ok_hls = False
         if do_thumbs:

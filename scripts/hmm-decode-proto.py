@@ -10,7 +10,35 @@ logo-cnn + bumper templates + whisper + start-ts). Dumps emitted without them
 measure a pipeline that does not exist — see the 2026-07-24 boundary-head
 incident where non-faithful dumps read +0.016 and faithful read -0.015.
 
-SUPERSEDED 2026-07-26 — read this first.
+SETTLED 2026-07-26 — the HMM is dead. Do not reopen.
+
+Final measurement on 16 fresh dumps (current head throughout, emitted by the
+daemon itself, baseline verified identical to the shipped cutlists):
+
+  Channel     n    PRODUCTION   HMM      delta     (07-24 claimed)
+  rtl         8      0.922     0.921    -0.001     (+0.151)
+  vox         8      0.938     0.931    -0.007     (-0.006)
+  TOTAL      16      0.930     0.926    -0.004
+
+No advantage — a hair of a deficit. The HMM is not more accurate, it is lower
+variance: it lands at 0.87-0.99 almost regardless of input, raising floors and
+lowering ceilings. Every recording where production reaches 1.000 loses
+(Batman Begins -0.171, Das perfekte Dinner -0.134, Die Beet-Brueder n=3
+-0.098). Production sits at 0.930 over 16 recordings; a swap would trade
+perfect recordings for rescued bad ones.
+
+The snap windows are exhausted too: sweeping 90/60/30/15/5/0 over 12
+recordings, 90 is optimal (0.930) and narrowing costs a lot (30s -> 0.790,
+5s -> 0.710). The "snaps cost -0.158" note below is about HMM edges, NOT
+production edges.
+
+One live lead remains: dvr-rtl-1782090300 (CSI Vegas) reads 0.674 in
+production and 0.996 under HSMM on identical signals, and no snap window helps
+— 0.674 is already its best. The signal carries 88-91% above 0.5; production
+overshoots both block ENDS by 80-107 s. Pure block-forming, one recording, not
+the channel.
+
+The intermediate 07-26 numbers below are themselves superseded.
 
 The 07-24 numbers below were taken while production still applied the phantom
 learned drift. The drift guards (tv-receiver 7559c24) removed it, start/end

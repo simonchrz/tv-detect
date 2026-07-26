@@ -121,8 +121,52 @@ DETECT_NICE = max(0, int(os.environ.get("DETECT_NICE", "5")))
 # HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.
 # 30 min comfortably above worst-case detect+whisper combined runtime.
 IN_FLIGHT_STUCK_S = 30 * 60
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
-FFPROBE = "/opt/homebrew/bin/ffprobe"
+def _ffmpeg_version():
+    try:
+        out = subprocess.run([FFMPEG, "-version"], capture_output=True,
+                             text=True, timeout=10).stdout
+        return out.splitlines()[0].replace("ffmpeg version ", "")[:40]
+    except Exception:
+        return "unbekannt"
+
+
+def _resolve_ffmpeg():
+    """Pick a RELEASE ffmpeg over the git-master keg when one is installed.
+
+    2026-07-26: master git-2026-07-20-c231236 silently drops ~56% of video
+    frames as soon as a second output stream is mapped. Video alone encodes
+    247448 frames; video+audio yields ~100000, a different count on every run,
+    with no `drop=` in the stats line, no Non-monotonic warning and rc=0. Both
+    master builds on this machine reproduce it, release 8.1.1 does not
+    (247448, and an HLS playlist of 4950s/4950s instead of 1990s). Every VOD
+    remuxed while master was in use holds about 40% of its recording, which is
+    also what drove the cutlist-guard into an unbounded re-detect loop.
+
+    The project otherwise tracks latest upstream master on purpose, so this is
+    deliberately narrow, loud and reversible: FFMPEG_BIN overrides it, and
+    removing the release keg falls back to whatever /opt/homebrew/bin points
+    at. Revisit once upstream fixes the regression.
+    """
+    env = os.environ.get("FFMPEG_BIN")
+    if env and os.path.isfile(env):
+        return env
+    import glob as _glob
+    rel = []
+    for c in _glob.glob("/opt/homebrew/Cellar/ffmpeg/[0-9]*/bin/ffmpeg"):
+        ver = c.split("/ffmpeg/")[1].split("/")[0]
+        try:
+            rel.append((tuple(int(x) for x in ver.split(".")), c))
+        except ValueError:
+            continue
+    if rel:
+        return max(rel)[1]
+    return "/opt/homebrew/bin/ffmpeg"
+
+
+FFMPEG = _resolve_ffmpeg()
+FFPROBE = os.path.join(os.path.dirname(FFMPEG), "ffprobe")
+if not os.path.isfile(FFPROBE):
+    FFPROBE = "/opt/homebrew/bin/ffprobe"
 TVD = os.path.expanduser("~/.local/bin/tv-detect")
 SAFE_VIDEO = {"h264", "hevc"}
 
@@ -2148,6 +2192,7 @@ def process_detect(uuid):
 def main():
     print(f"tv-thumbs-daemon (HTTP, thumbs+hls) started, "
           f"gateway={GATEWAY}", flush=True)
+    print(f"  ffmpeg={FFMPEG} ({_ffmpeg_version()})", flush=True)
     # Detect concurrency: in-flight set of UUIDs currently being processed
     # by a worker thread. Avoids re-submitting the same recording on the
     # next poll cycle while it's still in progress. HLS/thumbs jobs stay

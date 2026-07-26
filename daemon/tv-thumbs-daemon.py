@@ -1940,6 +1940,17 @@ def process_detect(uuid):
         print(f"  detect {uuid[:8]}: speaker fingerprint engaged "
               f"(weight={SPEAKER_WEIGHT})", flush=True)
 
+    # Research hook: when the marker directory exists, this detect also dumps
+    # every per-frame signal Form() consumes, so block-formation experiments
+    # replay against the REAL production command instead of a reconstruction.
+    # Reconstructing it is how the 2026-07-24 boundary-head measurement read
+    # +0.016 where the faithful one read -0.015. No effect when the directory
+    # is absent, and the cutlist is identical either way — the flag only writes
+    # a side file.
+    emit_dir = Path.home() / ".cache" / "tv-detect-daemon" / "emit-signals"
+    if emit_dir.is_dir():
+        cmd += ["--emit-signals-json", str(emit_dir / f"{uuid}.json")]
+
     cmd += ["--output", "cutlist", src_url]
     # Run detect below an on-demand HLS remux in CPU priority (children
     # inherit the niceness). No-op-safe if /usr/bin/nice is missing.

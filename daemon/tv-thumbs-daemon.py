@@ -2147,10 +2147,29 @@ def main():
                 hard = 2 * detect_timeout_s(uuid) + 600
                 if now - started <= hard:
                     continue
-                pids = [p for p in r.stdout.decode().split() if p.isdigit()]
+                # pgrep -f matches ANY process carrying the uuid in argv — an
+                # interactive curl against /recording/<uuid>/…, an analysis
+                # script, a shell one-liner. Kill only this job's own workers,
+                # never everything that merely mentions the recording.
+                own = ("tv-detect", "ffmpeg", "ffprobe", "tv-whisper",
+                       "extract-speaker", "compute-speaker", "update-show")
+                pids = []
+                for p in r.stdout.decode().split():
+                    if not p.isdigit() or int(p) == os.getpid():
+                        continue
+                    try:
+                        cmd = subprocess.run(
+                            ["ps", "-o", "command=", "-p", p],
+                            capture_output=True, text=True,
+                            timeout=5).stdout
+                    except Exception:
+                        continue
+                    if any(w in cmd for w in own):
+                        pids.append(p)
                 print(f"  [watchdog] {uuid}: live {(now-started)/60:.0f} min, "
                       f"past hard bound {hard/60:.0f} min — killing "
-                      f"{len(pids)} pid(s) and freeing the slot", flush=True)
+                      f"{len(pids)} worker pid(s) and freeing the slot",
+                      flush=True)
                 for p in pids:
                     try:
                         os.kill(int(p), signal.SIGKILL)

@@ -23,9 +23,52 @@ Why HTTP instead of SMB:
 Triggered by launchd at boot via
 ~/Library/LaunchAgents/com.user.tv-thumbs-daemon.plist."""
 
-import io, json, os, re, ssl, subprocess, sys, tarfile, tempfile, threading, time
+import io, json, os, re, signal, ssl, subprocess, sys, tarfile, tempfile
+import threading, time
 import urllib.error, urllib.request
 from pathlib import Path
+
+
+class _StampedStream:
+    """Prefix each log line with a wall-clock stamp.
+
+    The log had none for its first year: 880k lines and no clock, so every
+    post-hoc question ("when did this recording fail?", "was that kill before
+    or after the deploy?") was guesswork. Wrapping the streams stamps every
+    existing print() and every Python traceback without touching ~300 call
+    sites. Subprocess output that inherits the fd bypasses this, which is
+    fine — those lines are the child's own.
+    """
+
+    def __init__(self, stream):
+        self._s = stream
+        self._at_line_start = True
+
+    def write(self, data):
+        if not data:
+            return 0
+        out = []
+        for part in data.splitlines(keepends=True):
+            if self._at_line_start and part.strip():
+                out.append(time.strftime("%m-%d %H:%M:%S "))
+            out.append(part)
+            self._at_line_start = part.endswith("\n")
+        self._s.write("".join(out))
+        return len(data)
+
+    def flush(self):
+        self._s.flush()
+
+    def isatty(self):
+        return self._s.isatty()
+
+    def fileno(self):
+        return self._s.fileno()
+
+
+if not sys.stdout.isatty():
+    sys.stdout = _StampedStream(sys.stdout)
+    sys.stderr = _StampedStream(sys.stderr)
 
 POLL_INTERVAL_S = 5
 TIMEOUT_S = 1800           # HLS-remux of 90-min recording can take ~30s
@@ -34,7 +77,17 @@ TIMEOUT_S = 1800           # HLS-remux of 90-min recording can take ~30s
 # interlaced fps ≈ 30 min) blows the flat TIMEOUT_S ceiling and fails
 # with no cutlist, while a genuinely stuck detect stays bounded by
 # DETECT_TIMEOUT_MAX_S. See detect_timeout_s().
-DETECT_TIMEOUT_MAX_S = 3600
+#
+# 2026-07-26: the cap was 3600 and re-imposed the very flat ceiling the
+# scaling exists to avoid. Measured wall time is ~0.113 x container seconds
+# (an rtl hour: pipeline-timing summed 1633887 ms over 4 parallel chunks =
+# 408 s wall). An 8.7h/10GB "Galileo 360 Ranking XXL" therefore needs ~59.3
+# min and got 60.0 — it timed out twice by a hair, shipped no cutlist, and
+# burned a full hour of a 3-slot pipeline per attempt. The 0.25 budget keeps
+# ~2.2x headroom over measured need, so let it govern and use the cap only as
+# a stuck-detect bound. Typical recordings are unaffected: a 1h recording
+# still gets max(1800, 900) = 1800 s.
+DETECT_TIMEOUT_MAX_S = 14400
 DETECT_TIMEOUT_PER_S = 0.25   # budget = this fraction of container seconds
 GATEWAY = os.environ.get("GATEWAY", "https://raspberrypi5lan:8443")  # Caddy; CTX below
 
@@ -227,13 +280,13 @@ def _whisper_ensure_and_push(uuid, src_path):
         if r.returncode != 0 or not whisper_path.is_file():
             err = r.stderr.decode(errors='replace') if r.stderr else ''
             out = r.stdout.decode(errors='replace') if r.stdout else ''
-            print(f"  detect {uuid[:8]} whisper-classify rc={r.returncode}\n"
+            print(f"  detect {uuid} whisper-classify rc={r.returncode}\n"
                   f"    stderr (last 600): {err[-600:]}\n"
                   f"    stdout (last 200): {out[-200:]}",
                   flush=True)
             return None
     except Exception as e:
-        print(f"  detect {uuid[:8]} whisper-classify err: {e}", flush=True)
+        print(f"  detect {uuid} whisper-classify err: {e}", flush=True)
         return None
     # Push the whisper.json to the gateway so /search can index it.
     # Best-effort — failure here doesn't affect cutlist refinement.
@@ -245,7 +298,7 @@ def _whisper_ensure_and_push(uuid, src_path):
             headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10, context=CTX).read()
     except Exception as e:
-        print(f"  detect {uuid[:8]} whisper-reindex push err: {e}",
+        print(f"  detect {uuid} whisper-reindex push err: {e}",
               flush=True)
     return whisper_path
 
@@ -291,14 +344,14 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
             n_ext = len(d.get("extended", []))
             n_add = len(d.get("added", []))
             if n_rm or n_ext or n_add:
-                print(f"  detect {uuid[:8]} whisper-refined: "
+                print(f"  detect {uuid} whisper-refined: "
                       f"−{n_rm}fp, ⤇{n_ext}ext, +{n_add}new",
                       flush=True)
         except Exception:
             pass
         return r.stdout.decode(errors="replace")
     except Exception as e:
-        print(f"  detect {uuid[:8]} whisper-postprocess err: {e}",
+        print(f"  detect {uuid} whisper-postprocess err: {e}",
               flush=True)
         return raw_cutlist
 
@@ -577,7 +630,7 @@ def _maybe_reap_autosched():
             print(f"  autosched-reap: deleted archived training rec {uuid} "
                   f"({e.get('title','')})", flush=True)
         except Exception as ex:
-            print(f"  autosched-reap: delete {uuid[:12]} failed: {ex}", flush=True)
+            print(f"  autosched-reap: delete {uuid} failed: {ex}", flush=True)
     if reaped:
         print(f"  autosched-reap: removed {reaped} archived auto-sched recording(s)",
               flush=True)
@@ -730,7 +783,7 @@ def _drop_pi_source(uuid):
             resp = json.loads(r.read())
         if resp.get("ok"):
             freed_mb = resp.get("deleted_bytes", 0) / 1e6
-            print(f"  drop-pi-source {uuid[:8]}: freed {freed_mb:.0f} MB "
+            print(f"  drop-pi-source {uuid}: freed {freed_mb:.0f} MB "
                   f"on Pi (age={resp.get('age_h')}h)", flush=True)
             return "dropped"
         # ok:False at HTTP 200 = already gone / no filename → nothing to retry
@@ -742,10 +795,10 @@ def _drop_pi_source(uuid):
             return "retry"
         if e.code == 404:           # unknown uuid → will never drop
             return "done"
-        print(f"  drop-pi-source {uuid[:8]}: HTTP {e.code}", flush=True)
+        print(f"  drop-pi-source {uuid}: HTTP {e.code}", flush=True)
         return "error"
     except Exception as e:
-        print(f"  drop-pi-source {uuid[:8]}: err {e}", flush=True)
+        print(f"  drop-pi-source {uuid}: err {e}", flush=True)
         return "error"
 
 
@@ -841,7 +894,7 @@ def get_source(uuid):
         cur = cache_path.stat().st_size
         pi_size = _pi_source_size(uuid)
         if pi_size is not None and abs(pi_size - cur) > 8192:
-            print(f"  source {uuid[:8]}: changed on Pi "
+            print(f"  source {uuid}: changed on Pi "
                   f"({cur}->{pi_size} bytes) — evicting stale cache + features",
                   flush=True)
             try: cache_path.unlink()
@@ -849,7 +902,7 @@ def get_source(uuid):
             ninv = _invalidate_derived(uuid)
             if ninv:
                 print(f"  invalidated {ninv} derived cache file(s) "
-                      f"for {uuid[:8]}", flush=True)
+                      f"for {uuid}", flush=True)
             # fall through to the cold-fetch path below
         else:
             try: cache_path.touch()  # update atime for LRU
@@ -884,7 +937,7 @@ def get_source(uuid):
         actual = tmp.stat().st_size
         if expected is not None and expected - actual > 8192:
             tmp.unlink()
-            print(f"  cache-fill TRUNCATED {uuid[:8]}: "
+            print(f"  cache-fill TRUNCATED {uuid}: "
                   f"{actual}/{expected} bytes "
                   f"({100*actual/expected:.1f}%), discarded", flush=True)
             return None
@@ -899,7 +952,7 @@ def get_source(uuid):
                 return cache_path
             raise
         size_mb = cache_path.stat().st_size / 1e6
-        print(f"  cached {uuid[:8]} ({size_mb:.0f} MB in "
+        print(f"  cached {uuid} ({size_mb:.0f} MB in "
               f"{time.time()-t0:.0f}s)", flush=True)
         _maybe_evict_source_cache()
         # T7 has it now → ask gateway to dedup the Pi-original .ts.
@@ -916,7 +969,7 @@ def get_source(uuid):
             # retry counter: this is a transient state, not a broken
             # recording. After cooldown the next cycle re-tries and will
             # succeed once sched_status flips to completed.
-            print(f"  source {uuid[:8]}: recording in progress (425), "
+            print(f"  source {uuid}: recording in progress (425), "
                   f"cooldown {FAIL_COOLDOWN_S}s", flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
             return None
@@ -927,7 +980,7 @@ def get_source(uuid):
             # it every cycle. Logged once; silent thereafter.
             if uuid not in _known_orphans:
                 _known_orphans.add(uuid)
-                print(f"  source {uuid[:8]}: 404 — HLS-VOD-only orphan, "
+                print(f"  source {uuid}: 404 — HLS-VOD-only orphan, "
                       f"skipping in future prefetch", flush=True)
             return None
         print(f"  cache-fill err: HTTP {e.code} {e.reason}", flush=True)
@@ -1005,7 +1058,7 @@ def _record_detect_failure(uuid, force=False):
     size = _detect_src_size(uuid)
     if (prev_n and prev_size is not None and size is not None
             and size != prev_size):
-        print(f"  detect {uuid[:8]}: source size changed "
+        print(f"  detect {uuid}: source size changed "
               f"({prev_size} → {size}) — resetting retry budget",
               flush=True)
         prev_n = 0
@@ -1013,7 +1066,7 @@ def _record_detect_failure(uuid, force=False):
     retries[uuid] = {"n": n, "size": size}
     _save_detect_retries(retries)
     if force or n >= MAX_DETECT_RETRIES:
-        print(f"  detect {uuid[:8]}: giving up after {n} failure(s)"
+        print(f"  detect {uuid}: giving up after {n} failure(s)"
               f"{' (unrecoverable)' if force else ''}, "
               f"asking gateway to clear marker", flush=True)
         try:
@@ -1226,7 +1279,7 @@ def process_recording(uuid, do_hls, do_thumbs):
                     timeout=5, context=CTX) as r:
                 src_size = int(r.headers.get("Content-Length") or 0)
         if 0 < src_size < 2 * 1024 * 1024:
-            print(f"  skipping {uuid[:8]}: source is stub "
+            print(f"  skipping {uuid}: source is stub "
                   f"({src_size} bytes, recording likely cut mid-stream)",
                   flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
@@ -1359,7 +1412,7 @@ def process_recording(uuid, do_hls, do_thumbs):
         errf.seek(0); err_tail = errf.read()[-500:]; errf.close()
         encode_s = time.time() - t0
         if rc != 0:
-            print(f"  ffmpeg {uuid[:8]} rc={rc} — last stderr:\n"
+            print(f"  ffmpeg {uuid} rc={rc} — last stderr:\n"
                   f"{err_tail}", flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
             return False
@@ -1367,7 +1420,7 @@ def process_recording(uuid, do_hls, do_thumbs):
         if do_hls:
             playlist = td_p / "index.m3u8"
             if not playlist.exists():
-                print(f"  no playlist for {uuid[:8]}", flush=True)
+                print(f"  no playlist for {uuid}", flush=True)
                 ok_hls = False
             else:
                 # Upload anything the stream missed (the in-flight last segment)
@@ -1383,7 +1436,7 @@ def process_recording(uuid, do_hls, do_thumbs):
                     http_post_stream(
                         f"{GATEWAY}/api/internal/hls-done/{uuid}",
                         b"")
-                    print(f"  hls {uuid[:8]}: {len(segs)+1} files "
+                    print(f"  hls {uuid}: {len(segs)+1} files "
                           f"({size_mb:.0f} MB), encode {encode_s:.0f}s "
                           f"+ tail {time.time()-t1:.0f}s", flush=True)
                 except Exception as e:
@@ -1391,14 +1444,14 @@ def process_recording(uuid, do_hls, do_thumbs):
         if do_thumbs:
             jpgs = sorted(td_p.glob("t*.jpg"))
             if not jpgs:
-                print(f"  no jpgs for {uuid[:8]}", flush=True)
+                print(f"  no jpgs for {uuid}", flush=True)
                 ok_thumbs = False
             else:
                 try:
                     _upload_tar(
                         f"{GATEWAY}/api/internal/thumbs-uploaded/{uuid}",
                         jpgs)
-                    print(f"  thumbs {uuid[:8]}: {len(jpgs)} jpgs",
+                    print(f"  thumbs {uuid}: {len(jpgs)} jpgs",
                           flush=True)
                 except Exception as e:
                     print(f"  thumbs upload err: {e}", flush=True)
@@ -1518,7 +1571,7 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
 
     # 1) Extract embeddings (once per recording)
     if not emb_path.exists():
-        print(f"  detect {uuid[:8]}: extracting speaker embeddings "
+        print(f"  detect {uuid}: extracting speaker embeddings "
               f"(~10-15min wallclock for 30min recording)", flush=True)
         t0 = time.time()
         try:
@@ -1534,13 +1587,13 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
                 # head truncation showed only the "loading audio from"
                 # progress line, hiding the actual traceback.
                 err_tail = (r.stderr or "")[-1500:]
-                print(f"  detect {uuid[:8]}: embedding extract failed "
+                print(f"  detect {uuid}: embedding extract failed "
                       f"(rc={r.returncode}):\n{err_tail}", flush=True)
                 return None
-            print(f"  detect {uuid[:8]}: embeddings extracted in "
+            print(f"  detect {uuid}: embeddings extracted in "
                   f"{time.time()-t0:.0f}s", flush=True)
         except Exception as e:
-            print(f"  detect {uuid[:8]}: embedding extract err: {e}",
+            print(f"  detect {uuid}: embedding extract err: {e}",
                   flush=True)
             return None
 
@@ -1560,11 +1613,11 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
             # cold-start shows. Run detect without speaker.
             return None
         if r.returncode != 0:
-            print(f"  detect {uuid[:8]}: centroid build failed "
+            print(f"  detect {uuid}: centroid build failed "
                   f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
             return None
     except Exception as e:
-        print(f"  detect {uuid[:8]}: centroid build err: {e}", flush=True)
+        print(f"  detect {uuid}: centroid build err: {e}", flush=True)
         return None
 
     # 3) Compute per-recording speaker.csv
@@ -1576,11 +1629,11 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
             capture_output=True, text=True, timeout=60,
             env=SPAWN_ENV)
         if r.returncode != 0:
-            print(f"  detect {uuid[:8]}: speaker-csv compute failed "
+            print(f"  detect {uuid}: speaker-csv compute failed "
                   f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
             return None
     except Exception as e:
-        print(f"  detect {uuid[:8]}: speaker-csv err: {e}", flush=True)
+        print(f"  detect {uuid}: speaker-csv err: {e}", flush=True)
         return None
 
     return csv_path
@@ -1618,7 +1671,7 @@ def process_detect(uuid):
         http_download(f"{GATEWAY}{cfg['head_url']}", head_path)
         http_download(f"{GATEWAY}{cfg['backbone_url']}", backbone_path)
     except Exception as e:
-        print(f"  detect {uuid[:8]}: model fetch err: {e}", flush=True)
+        print(f"  detect {uuid}: model fetch err: {e}", flush=True)
         return False
     # MLP1 head.bin needs the channel-map sidecar to resolve the
     # recording's channel slug to a one-hot column. Fetch alongside;
@@ -1635,7 +1688,7 @@ def process_detect(uuid):
         # Don't bail — LogReg path doesn't need the sidecar.
         msg = str(e)
         if "404" not in msg:
-            print(f"  detect {uuid[:8]}: channel-map sidecar fetch "
+            print(f"  detect {uuid}: channel-map sidecar fetch "
                   f"err (non-fatal): {e}", flush=True)
     # MLP4 heads additionally need the minute-prior sidecar (per-channel
     # P(ad | minute-of-hour) table). Same non-fatal semantics: 404 =
@@ -1648,7 +1701,7 @@ def process_detect(uuid):
     except Exception as e:
         msg = str(e)
         if "404" not in msg:
-            print(f"  detect {uuid[:8]}: minute-prior sidecar fetch "
+            print(f"  detect {uuid}: minute-prior sidecar fetch "
                   f"err (non-fatal): {e}", flush=True)
 
     # Per-channel logo. Resolution-aware: HD recordings (= width >=1280)
@@ -1681,7 +1734,7 @@ def process_detect(uuid):
         try:
             http_download(url, logo_path)
         except Exception as e:
-            print(f"  detect {uuid[:8]}: logo fetch err: {e}",
+            print(f"  detect {uuid}: logo fetch err: {e}",
                   flush=True)
             logo_path = None
         # Decode-resolution downscale (DETECT_DECODE_SCALE, see top of
@@ -1699,7 +1752,7 @@ def process_detect(uuid):
                 logo_path, decode_width, decode_height = rescale_logo_template(
                     logo_path, scaled_path, DETECT_DECODE_SCALE)
             except Exception as e:
-                print(f"  detect {uuid[:8]}: logo rescale err "
+                print(f"  detect {uuid}: logo rescale err "
                       f"(falling back to native decode): {e}", flush=True)
                 decode_width = decode_height = None
 
@@ -1718,7 +1771,7 @@ def process_detect(uuid):
             http_download(f"{GATEWAY}{cfg['cached_logo_cnn_url']}",
                           logo_cnn_path)
         except Exception as e:
-            print(f"  detect {uuid[:8]}: logo-cnn fetch err: {e}",
+            print(f"  detect {uuid}: logo-cnn fetch err: {e}",
                   flush=True)
             logo_cnn_path = None
 
@@ -1763,18 +1816,18 @@ def process_detect(uuid):
                     paths_list.append(str(local))
                     n_fetched += 1
                 except Exception as e:
-                    print(f"  detect {uuid[:8]}: bumper {kind}/{entry['name']} "
+                    print(f"  detect {uuid}: bumper {kind}/{entry['name']} "
                           f"err: {e}", flush=True)
             for entry in blist.get("templates", []):
                 _ensure_local(entry, "end", bumper_paths)
             for entry in blist.get("start_templates", []):
                 _ensure_local(entry, "start", bumper_start_paths)
             if n_fetched:
-                print(f"  detect {uuid[:8]}: {n_cached} cached + "
+                print(f"  detect {uuid}: {n_cached} cached + "
                       f"{n_fetched} fetched bumper(s) for {slug}",
                       flush=True)
         except Exception as e:
-            print(f"  detect {uuid[:8]}: bumper-list err: {e}",
+            print(f"  detect {uuid}: bumper-list err: {e}",
                   flush=True)
 
     # nn_gate/nn_weight: per-show or per-channel override from the gateway
@@ -1880,7 +1933,7 @@ def process_detect(uuid):
             if decode_width and decode_height:
                 y_off = round(y_off * DETECT_DECODE_SCALE)
             cmd += ["--logo-y-offset", str(y_off)]
-            print(f"  detect {uuid[:8]}: letterbox y-offset={y_off}",
+            print(f"  detect {uuid}: letterbox y-offset={y_off}",
                   flush=True)
         if logo_cnn_path and logo_cnn_path.exists() and logo_cnn_path.stat().st_size > 1024:
             # Pass alongside --logo so tv-detect keeps the bbox from
@@ -1896,7 +1949,7 @@ def process_detect(uuid):
             if decode_width and decode_height:
                 cmd += ["--logo-cnn-margin",
                         str(max(1, round(50 * DETECT_DECODE_SCALE)))]
-            print(f"  detect {uuid[:8]}: using CNN logo for {slug}",
+            print(f"  detect {uuid}: using CNN logo for {slug}",
                   flush=True)
     else:
         cmd += ["--auto-train", "5"]
@@ -1917,7 +1970,7 @@ def process_detect(uuid):
             cmd += ["--bumper-templates", ",".join(bumper_paths)]
         if bumper_start_paths:
             cmd += ["--bumper-templates-start", ",".join(bumper_start_paths)]
-        print(f"  detect {uuid[:8]}: {len(bumper_paths)} end + "
+        print(f"  detect {uuid}: {len(bumper_paths)} end + "
               f"{len(bumper_start_paths)} start bumper(s) for {slug}",
               flush=True)
 
@@ -1930,14 +1983,14 @@ def process_detect(uuid):
     try:
         spk_csv = spk_future.result(timeout=2400)
     except Exception as e:
-        print(f"  detect {uuid[:8]}: speaker future err: {e}", flush=True)
+        print(f"  detect {uuid}: speaker future err: {e}", flush=True)
         spk_csv = None
     finally:
         spk_executor.shutdown(wait=False)
     if spk_csv:
         cmd += ["--speaker-csv", str(spk_csv),
                 "--speaker-weight", str(SPEAKER_WEIGHT)]
-        print(f"  detect {uuid[:8]}: speaker fingerprint engaged "
+        print(f"  detect {uuid}: speaker fingerprint engaged "
               f"(weight={SPEAKER_WEIGHT})", flush=True)
 
     # Research hook: when the marker directory exists, this detect also dumps
@@ -1964,7 +2017,7 @@ def process_detect(uuid):
                               timeout=detect_timeout_s(uuid), env=SPAWN_ENV)
     if result.returncode != 0:
         stderr = result.stderr or ""
-        print(f"  detect {uuid[:8]} rc={result.returncode}: "
+        print(f"  detect {uuid} rc={result.returncode}: "
               f"{stderr[-300:]}", flush=True)
         # Unrecoverable source (corrupt H.264 → ffprobe can't read duration →
         # tv-detect "cannot plan chunks"): retrying never helps, and because
@@ -1982,7 +2035,7 @@ def process_detect(uuid):
     # re-running them by hand). Cheap grep over the captured stderr.
     for ln in (result.stderr or "").splitlines():
         if ln.startswith("pipeline-timing"):
-            print(f"  detect {uuid[:8]}: {ln}", flush=True)
+            print(f"  detect {uuid}: {ln}", flush=True)
             break
     cutlist = result.stdout
     # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
@@ -2027,7 +2080,7 @@ def process_detect(uuid):
         return False
     n_blocks = sum(1 for ln in cutlist.splitlines() if ln.strip()
                     and "\t" in ln and not ln.startswith("FILE"))
-    print(f"  detect {uuid[:8]}: {n_blocks} blocks, "
+    print(f"  detect {uuid}: {n_blocks} blocks, "
           f"{time.time()-t0:.0f}s", flush=True)
     _record_detect_success(uuid)
     return True
@@ -2069,7 +2122,7 @@ def main():
                      if now - t > IN_FLIGHT_STUCK_S]
         if not stale:
             return
-        freed = []
+        freed, killed = [], set()
         for uuid in stale:
             try:
                 r = subprocess.run(
@@ -2077,7 +2130,38 @@ def main():
             except Exception:
                 continue
             if r.returncode == 0 and r.stdout.strip():
-                continue  # live subprocess still running for this uuid
+                # Live subprocess — normally leave it alone. But "live" is not
+                # the same as "progressing": on 2026-07-26 a detect held a slot
+                # for 3.5 h under a 1 h subprocess timeout that never fired,
+                # the watchdog saw a live pid and passed, and the pipeline ran
+                # at 2 of 3 slots for hours. The file header promises a stuck
+                # detect stays bounded by DETECT_TIMEOUT_MAX_S; this is what
+                # actually enforces it. The bound is deliberately generous —
+                # twice the budget plus 10 min, and the budget already carries
+                # ~2.2x headroom over measured wall time — so it can only fire
+                # on a detect that is not going to finish.
+                with detect_lock:
+                    started = detect_in_flight_since.get(uuid)
+                if started is None:
+                    continue
+                hard = 2 * detect_timeout_s(uuid) + 600
+                if now - started <= hard:
+                    continue
+                pids = [p for p in r.stdout.decode().split() if p.isdigit()]
+                print(f"  [watchdog] {uuid}: live {(now-started)/60:.0f} min, "
+                      f"past hard bound {hard/60:.0f} min — killing "
+                      f"{len(pids)} pid(s) and freeing the slot", flush=True)
+                for p in pids:
+                    try:
+                        os.kill(int(p), signal.SIGKILL)
+                    except Exception:
+                        pass
+                killed.add(uuid)
+                _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+                try:
+                    _record_detect_failure(uuid)
+                except Exception:
+                    pass
             freed.append(uuid)
         if not freed:
             return
@@ -2086,8 +2170,9 @@ def main():
                 detect_in_flight.discard(uuid)
                 detect_in_flight_since.pop(uuid, None)
         for uuid in freed:
-            print(f"  [watchdog] in_flight stuck slot freed: {uuid[:8]} "
-                  f"(no live subprocess, > {IN_FLIGHT_STUCK_S//60} min)",
+            why = "killed past hard bound" if uuid in killed else (
+                f"no live subprocess, > {IN_FLIGHT_STUCK_S//60} min")
+            print(f"  [watchdog] in_flight stuck slot freed: {uuid} ({why})",
                   flush=True)
 
     def _run_detect(uuid):
@@ -2104,8 +2189,23 @@ def main():
             pass
         try:
             process_detect(uuid)
+        except subprocess.TimeoutExpired as e:
+            # The default str() of this one embeds the whole ~2 KB detect
+            # command line and omits the thing that matters: how the budget
+            # compared to the recording's length. Say that instead.
+            src = SOURCE_CACHE / f"{uuid}.ts"
+            gb = src.stat().st_size / 2**30 if src.is_file() else 0
+            print(f"  detect {uuid}: KILLED after {e.timeout:.0f}s "
+                  f"(budget = {DETECT_TIMEOUT_PER_S} x container secs, "
+                  f"capped {DETECT_TIMEOUT_MAX_S}s; source {gb:.1f} GB) "
+                  f"— no cutlist shipped", flush=True)
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            try:
+                _record_detect_failure(uuid)
+            except Exception:
+                pass
         except Exception as e:
-            print(f"  detect {uuid[:8]}: unhandled err: {e}", flush=True)
+            print(f"  detect {uuid}: unhandled err: {e}", flush=True)
             # A crash/timeout that escapes process_detect (e.g.
             # subprocess.TimeoutExpired when ffmpeg can't decode a corrupt source
             # within TIMEOUT_S) MUST count toward give-up + get a cooldown — else
@@ -2282,7 +2382,7 @@ def main():
             with detect_lock:
                 detect_in_flight.add(uuid)
                 detect_in_flight_since[uuid] = time.time()
-            print(f"  → {uuid[:8]} detect=True (parallel slot)", flush=True)
+            print(f"  → {uuid} detect=True (parallel slot)", flush=True)
             detect_executor.submit(_run_detect, uuid)
             available -= 1
         # V2 low-prio: fill remaining slots with bg jobs. Earlier
@@ -2302,7 +2402,7 @@ def main():
                     detect_in_flight.add(uuid)
                     detect_in_flight_since[uuid] = time.time()
                 already.add(uuid)
-                print(f"  → {uuid[:8]} detect=True (bg slot)", flush=True)
+                print(f"  → {uuid} detect=True (bg slot)", flush=True)
                 detect_executor.submit(_run_detect, uuid)
                 available -= 1
 
@@ -2314,7 +2414,7 @@ def main():
             try:
                 process_recording(uuid, do_hls, do_thumbs)
             except Exception as e:
-                print(f"  hls {uuid[:8]}: unhandled err: {e}", flush=True)
+                print(f"  hls {uuid}: unhandled err: {e}", flush=True)
             finally:
                 with hls_lock:
                     hls_in_flight.discard(uuid)
@@ -2330,7 +2430,7 @@ def main():
                 if len(hls_in_flight) >= HLS_PARALLEL:
                     break  # pool full, try again next cycle
                 hls_in_flight.add(uuid)
-            print(f"  → {uuid[:8]} hls={do_hls} thumbs={do_thumbs} "
+            print(f"  → {uuid} hls={do_hls} thumbs={do_thumbs} "
                   f"(pool {len(hls_in_flight)}/{HLS_PARALLEL})",
                   flush=True)
             hls_executor.submit(_run_hls, uuid, do_hls, do_thumbs)

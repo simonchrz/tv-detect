@@ -2158,8 +2158,14 @@ def process_detect(uuid):
     # +0.016 where the faithful one read -0.015. No effect when the directory
     # is absent, and the cutlist is identical either way — the flag only writes
     # a side file.
+    # Signal dump for offline decoder experiments, opt-in PER RECORDING:
+    # touch emit-signals/<uuid>.want and the next detect of that recording
+    # writes emit-signals/<uuid>.json beside it. The first version keyed off
+    # the directory alone, which meant every detect dumped ~2.8 MB — 301 MB in
+    # a day and still growing, for a measurement that needed a dozen files.
+    # The cutlist is identical either way; the flag only writes a side file.
     emit_dir = Path.home() / ".cache" / "tv-detect-daemon" / "emit-signals"
-    if emit_dir.is_dir():
+    if (emit_dir / f"{uuid}.want").is_file():
         cmd += ["--emit-signals-json", str(emit_dir / f"{uuid}.json")]
 
     cmd += ["--output", "cutlist", src_url]

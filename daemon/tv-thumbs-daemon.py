@@ -1788,7 +1788,24 @@ def process_detect(uuid):
     bug in production detection."""
     cfg = http_get_json(f"{GATEWAY}/api/internal/detect-config/{uuid}")
     local = get_source(uuid)
-    src_url = str(local) if local else f"{GATEWAY}{cfg['src_url']}"
+    if not local:
+        # No local cache and get_source could not fetch one, which for a
+        # recording whose Pi .ts is gone means 404. Falling through would hand
+        # ffmpeg an https:// URL it cannot even open (the gateway cert does not
+        # verify), so the detect fails on the probe, burns a slot and collects a
+        # strike — three times, then gives up anyway. An HLS-VOD-only orphan is
+        # not going to become detectable, so give up now rather than after three
+        # rounds. Seen on dvr-rtl-1779868800, a 2026-05-27 entry with
+        # filesize=0 whose source was pruned two months ago.
+        print(f"  detect {uuid}: no source (Pi 404, nothing cached) — "
+              f"HLS-VOD-only orphan, giving up", flush=True)
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        try:
+            _record_detect_failure(uuid, force=True)
+        except Exception:
+            pass
+        return False
+    src_url = str(local)
     slug = cfg.get("channel_slug") or ""
 
     # Phase D optimisation: kick off the speaker-fingerprint pipeline

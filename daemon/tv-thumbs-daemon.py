@@ -2251,7 +2251,9 @@ def main():
     # next poll cycle while it's still in progress. HLS/thumbs jobs stay
     # sequential (they're fast and contention-free).
     from concurrent.futures import ThreadPoolExecutor
-    import threading
+    # NB: no local "import threading" here — it is imported at module level,
+    # and a function-local import makes the name local for the WHOLE function,
+    # so anything using threading earlier in main() dies with UnboundLocalError.
     detect_executor = ThreadPoolExecutor(max_workers=DETECT_PARALLEL)
     detect_in_flight = set()
     detect_in_flight_since = {}  # uuid → time.time() at slot acquisition

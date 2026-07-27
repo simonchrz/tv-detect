@@ -23,7 +23,7 @@ Why HTTP instead of SMB:
 Triggered by launchd at boot via
 ~/Library/LaunchAgents/com.user.tv-thumbs-daemon.plist."""
 
-import io, json, os, re, signal, ssl, subprocess, sys, tarfile, tempfile
+import io, json, os, queue, re, signal, ssl, subprocess, sys, tarfile, tempfile
 import threading, time
 import urllib.error, urllib.request
 from pathlib import Path
@@ -290,6 +290,40 @@ WHISPER_MAX_CONCURRENT = max(1, int(os.environ.get("WHISPER_MAX_CONCURRENT", "1"
 _WHISPER_SEM = threading.Semaphore(WHISPER_MAX_CONCURRENT)
 
 
+def _whisper_timeout_s(src_path):
+    """Transcription budget scaled to the recording, floor 300 s, cap 1 h."""
+    try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(src_path)],
+            capture_output=True, text=True, timeout=30, env=SPAWN_ENV).stdout.strip()
+        dur = float(out) if out and out != "N/A" else 0.0
+    except Exception:
+        return 300
+    return max(300, min(3600, int(dur * 0.25)))
+
+
+# Transcript production runs on its own worker, NOT on the detect thread.
+# It used to run inline in process_detect, which meant a detect slot stayed
+# occupied for the whole transcription — up to the full timeout on recordings
+# where it failed. The slot is the scarce resource (3 of them), the transcript
+# is a best-effort side effect for /search, so the two do not belong on the
+# same thread. Bounded queue: if transcription cannot keep up, drop the oldest
+# request and say so rather than grow without limit.
+_WHISPER_QUEUE = queue.Queue(maxsize=64)
+
+
+def _whisper_worker():
+    while True:
+        uuid, src = _WHISPER_QUEUE.get()
+        try:
+            _whisper_ensure_and_push(uuid, src)
+        except Exception as e:
+            print(f"  whisper worker {uuid}: {e}", flush=True)
+        finally:
+            _WHISPER_QUEUE.task_done()
+
+
 def _whisper_ensure_and_push(uuid, src_path):
     """Ensure ~/.cache/tv-whisper/<uuid>.whisper.json exists (idempotent
     classify — ~50 s first run, ~0 s when fresh) and push it to the gateway
@@ -307,10 +341,17 @@ def _whisper_ensure_and_push(uuid, src_path):
         # pipeline (the semaphore blocks extra detect threads at their whisper
         # step, not their detect — detect stays primary).
         with _WHISPER_SEM:
+            # Length-scaled, same shape as detect_timeout_s. The flat 300 s
+            # this replaced was the same defect class as the old detect cap: a
+            # fixed budget for a variable-length input, so every long recording
+            # burned the full timeout and still produced no transcript. Now
+            # that this runs off the detect slot (see _whisper_worker) a longer
+            # budget costs nothing but the worker's own time.
             r = subprocess.run(
                 [WHISPER_PYTHON, str(classify_py),
                  "--src", str(src_path), "--output", str(whisper_path)],
-                capture_output=True, timeout=300, env=SPAWN_ENV)
+                capture_output=True, timeout=_whisper_timeout_s(src_path),
+                env=SPAWN_ENV)
         if r.returncode != 0 or not whisper_path.is_file():
             err = r.stderr.decode(errors='replace') if r.stderr else ''
             out = r.stdout.decode(errors='replace') if r.stdout else ''
@@ -338,13 +379,32 @@ def _whisper_ensure_and_push(uuid, src_path):
 
 
 def _maybe_whisper_transcribe(uuid, src_path):
-    """Decoupled transcript production for /api/recordings/search. Runs for
-    every recording regardless of WHISPER_ENABLE (the cutlist refiner), so
-    search coverage no longer depends on the active ad-classifier. No-op when
-    WHISPER_TRANSCRIBE is off or no local source is available."""
+    """Hand transcript production to the whisper worker and return at once.
+
+    Runs for every recording regardless of WHISPER_ENABLE (the cutlist
+    refiner), so search coverage does not depend on the active ad-classifier.
+    Decoupled in the real sense since 2026-07-27: this used to transcribe
+    inline on the detect thread, holding one of three detect slots for the
+    duration — up to the full timeout on recordings where it failed, which is
+    every long one under the old flat 300 s budget. Enqueuing costs the caller
+    nothing, so the cutlist is done when the cutlist is done.
+
+    Best effort by design: on a full queue the oldest pending request is
+    dropped rather than blocking a detect. The refiner path
+    (_maybe_whisper_refine) still calls _whisper_ensure_and_push directly,
+    because it needs the transcript before the cutlist upload."""
     if not WHISPER_TRANSCRIBE:
         return
-    _whisper_ensure_and_push(uuid, src_path)
+    try:
+        _WHISPER_QUEUE.put_nowait((uuid, src_path))
+    except queue.Full:
+        try:
+            dropped, _ = _WHISPER_QUEUE.get_nowait()
+            _WHISPER_QUEUE.task_done()
+            print(f"  whisper queue full — dropped {dropped}", flush=True)
+            _WHISPER_QUEUE.put_nowait((uuid, src_path))
+        except Exception:
+            print(f"  whisper queue full — skipped {uuid}", flush=True)
 
 
 def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
@@ -2183,6 +2243,9 @@ def main():
     print(f"tv-thumbs-daemon (HTTP, thumbs+hls) started, "
           f"gateway={GATEWAY}", flush=True)
     print(f"  ffmpeg={FFMPEG} ({_ffmpeg_version()})", flush=True)
+    if WHISPER_TRANSCRIBE:
+        threading.Thread(target=_whisper_worker, daemon=True,
+                         name="whisper").start()
     # Detect concurrency: in-flight set of UUIDs currently being processed
     # by a worker thread. Avoids re-submitting the same recording on the
     # next poll cycle while it's still in progress. HLS/thumbs jobs stay

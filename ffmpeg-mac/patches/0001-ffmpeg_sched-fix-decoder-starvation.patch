@@ -1,0 +1,75 @@
+From 90328709b997e99e9c7466669198f2f37fad676e Mon Sep 17 00:00:00 2001
+From: Simon Chrzanowski <simonch@gmx.de>
+Date: Mon, 27 Jul 2026 09:33:55 +0200
+Subject: [PATCH] fftools/ffmpeg_sched: fix decoder starvation in
+ unchoke_downstream()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+03dfac56 ("fftools/ffmpeg_sched: allow throttling decoder outputs") gated the
+downstream traversal on the decoder's own choked_next:
+
+    case SCH_NODE_TYPE_DEC:
+        dec = &sch->dec[dst->idx];
+        if (!dec->waiter.choked_next) {
+            for (int i = 0; i < dec->nb_outputs; i++)
+                unchoke_downstream(sch, dec->outputs[i].dst);
+        }
+        break;
+
+schedule_update_locked() resets every choked_next at the top of the pass and
+clears them one stream at a time as it walks the graph, so whether this gate
+lets the traversal through depends on whether this particular decoder happened
+to be cleared earlier in the same pass. When it blocks, everything downstream
+of the decoder stays choked, the decoder's output backs up and it stops
+draining its own overflow FIFO.
+
+With two output streams this starves one decoder for most of the run. On a
+4742 s MPEG-TS capture transcoded to video+audio, instrumenting the FIFO gives:
+
+    dec0 video  in=234477 parked=234387 served=103314 direct=90  dropped=0
+    dec1 audio  in=197582 parked=195399 served=195399 direct=2183 dropped=0
+
+Audio drains completely; video parks 234387 packets and is served 103314. The
+missing 131073 are never dropped anywhere — they sit in the FIFO until
+teardown, so ffmpeg exits 0, prints no warning and shows no drop= in the stats
+line while writing 42% of the frames. The count varies from run to run because
+the traversal order does.
+
+Remove the gate. Verified on the affected file (237062 frames, five runs,
+previously 96314-110064 varying), on an unaffected capture (207740, unchanged)
+and video-only (237062, unchanged). Reverting 03dfac56 wholesale gives the same
+237062, so this restores the pre-commit behaviour without giving up the
+decoder throttling the commit adds.
+---
+ fftools/ffmpeg_sched.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/fftools/ffmpeg_sched.c b/fftools/ffmpeg_sched.c
+index 8ec3bdaf80..cec60f111c 100644
+--- a/fftools/ffmpeg_sched.c
++++ b/fftools/ffmpeg_sched.c
+@@ -1338,10 +1338,15 @@ static void unchoke_downstream(Scheduler *sch, SchedulerNode *dst)
+     switch (dst->type) {
+     case SCH_NODE_TYPE_DEC:
+         dec = &sch->dec[dst->idx];
+-        if (!dec->waiter.choked_next) {
+-            for (int i = 0; i < dec->nb_outputs; i++)
+-                unchoke_downstream(sch, dec->outputs[i].dst);
+-        }
++        // Do NOT gate this on dec->waiter.choked_next. schedule_update_locked
++        // resets every choked_next at the top of the pass and clears them as it
++        // walks the graph, so gating here makes the traversal depend on the
++        // order streams happen to be visited in. When it blocks, everything
++        // downstream of the decoder stays choked, its output backs up and it
++        // stops draining its own overflow FIFO — measured as 131073 video
++        // packets parked and never served, while audio drained fully.
++        for (int i = 0; i < dec->nb_outputs; i++)
++            unchoke_downstream(sch, dec->outputs[i].dst);
+         break;
+     case SCH_NODE_TYPE_ENC:
+         enc = &sch->enc[dst->idx];
+-- 
+2.54.0 (Apple Git-157)
+

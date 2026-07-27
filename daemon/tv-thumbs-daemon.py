@@ -131,35 +131,25 @@ def _ffmpeg_version():
 
 
 def _resolve_ffmpeg():
-    """Pick a RELEASE ffmpeg over the git-master keg when one is installed.
+    """Back on /opt/homebrew/bin/ffmpeg — the local master build, now patched.
 
-    2026-07-26: master git-2026-07-20-c231236 silently drops ~56% of video
-    frames as soon as a second output stream is mapped. Video alone encodes
-    247448 frames; video+audio yields ~100000, a different count on every run,
-    with no `drop=` in the stats line, no Non-monotonic warning and rc=0. Both
-    master builds on this machine reproduce it, release 8.1.1 does not
-    (247448, and an HLS playlist of 4950s/4950s instead of 1990s). Every VOD
-    remuxed while master was in use holds about 40% of its recording, which is
-    also what drove the cutlist-guard into an unbounded re-detect loop.
+    Between 2026-07-26 and 07-27 this preferred a release keg, because master
+    silently dropped ~58% of video frames whenever a second output stream was
+    mapped (bisected to 03dfac56, "fftools/ffmpeg_sched: allow throttling
+    decoder outputs"). That is fixed locally: ~/ffmpeg-h3-mac/patches/ holds
+    the one-hunk fix for unchoke_downstream() and build.sh applies it after
+    checkout, aborting rather than producing an unpatched binary if it ever
+    stops applying — which is what will happen once the fix lands upstream.
 
-    The project otherwise tracks latest upstream master on purpose, so this is
-    deliberately narrow, loud and reversible: FFMPEG_BIN overrides it, and
-    removing the release keg falls back to whatever /opt/homebrew/bin points
-    at. Revisit once upstream fixes the regression.
+    So the correctness of every remux now depends on that patch being applied.
+    The startup line logs the resolved binary and version; if it ever reads a
+    plain master without the patch, expect VODs holding ~40% of their
+    recording. FFMPEG_BIN still overrides for a quick fallback to a release
+    keg (/opt/homebrew/Cellar/ffmpeg/<ver>/bin/ffmpeg).
     """
     env = os.environ.get("FFMPEG_BIN")
     if env and os.path.isfile(env):
         return env
-    import glob as _glob
-    rel = []
-    for c in _glob.glob("/opt/homebrew/Cellar/ffmpeg/[0-9]*/bin/ffmpeg"):
-        ver = c.split("/ffmpeg/")[1].split("/")[0]
-        try:
-            rel.append((tuple(int(x) for x in ver.split(".")), c))
-        except ValueError:
-            continue
-    if rel:
-        return max(rel)[1]
     return "/opt/homebrew/bin/ffmpeg"
 
 

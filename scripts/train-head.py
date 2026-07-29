@@ -2947,6 +2947,42 @@ def main():
         "dvr-sixx-1779894000",         # Charmed — trunc 40min, quarantined
         "dvr-sixx-1779980700",         # Charmed — trunc 40min, quarantined
         "dvr-sixx-1780069500",         # Charmed — trunc 45min, quarantined
+        # 2026-07-27 corpus-wide label audit (scripts/corpus-label-audit.py):
+        # 16 of 486 archived recordings carry labels that contradict their OWN
+        # per-second NN signal — the head is confidently "ad" for minutes in a
+        # stretch the labels call show, or the reverse. Same poison class as the
+        # 07-24 batch above, found systematically rather than by chance: the
+        # audit recomputes the deployed head over the archive's own features, so
+        # it needs no decode and covers every recording, not just the ones with
+        # a signals dump. Verified before use — its verdict matched the real
+        # dump on 35 of 35 recordings that had both.
+        #
+        # These seven are DEAD (no source, no VOD) and machine-labelled, so the
+        # labels can never be re-derived. Their npz are in
+        # ~/.cache/tvd-train-archive-quarantine/ ; these entries keep them out
+        # of TEST too should an npz ever be restored. Two of them carry ZERO ad
+        # blocks against 1254 s and 785 s of confident ad signal — the
+        # n_blocks=0-as-labels class that provably crashed a sibling recording
+        # from 0.88 to 0.45 on 07-24.
+        "dvr-sixx-1780040100",         # Charmed — 0 blocks vs 1254s ad signal
+        "dvr-sixx-1779954000",         # Charmed — 0 blocks vs 785s ad signal
+        "dvr-rtl-1780832400",          # Die Beet-Brüder — 826s ad outside labels
+        "dvr-sixx-1779951600",         # Charmed — 493s ad outside labels
+        "dvr-nick-1781033400",         # Futurama — 411s ad outside labels
+        "dvr-nick-1781031900",         # Futurama — 382s ad outside labels
+        "dvr-sixx-1780291500",         # Charmed — 374s ad outside labels
+        # 2026-07-28, second pass: these three carry HUMAN labels in the
+        # archive but none in the live system — ads.json is empty for all
+        # three, two are gone from the DVR grid entirely, and their npz are
+        # frozen at 25 June / 18 July because no npz is written for a
+        # label-less recording. So the archive is the ONLY place these labels
+        # still exist, and the head contradicts them over 250-460 s. Removing
+        # them is not overruling a reviewer: the reviewer's verdict is already
+        # gone everywhere else. dvr-kabel-eins-1779980100 — the same show, the
+        # same signature — was quarantined for exactly this on 07-15.
+        "dvr-vox-1781036100",          # Hot oder Schrott — 463s hole, dead
+        "dvr-kabel-eins-1780325700",   # Abenteuer Leben täglich — 391s hole, dead
+        "dvr-nick-1778954400",         # SpongeBob — 257s phantom, live ads empty
     }
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────
@@ -3072,6 +3108,47 @@ def main():
     test_recs  = [r for r in per_rec
                   if _is_test(r[0]) and not _is_bootstrap(r)
                                     and not _is_pseudo(r)]
+
+    # Golden pins that did NOT make it into test_recs, with the reason.
+    #
+    # The golden set is pinned to test precisely so its membership cannot
+    # drift, but the pin only forces _is_test — a pinned recording can still
+    # fall out via the bootstrap/pseudo filters above, or by never reaching
+    # per_rec at all (no archive entry, no features, dropped by an earlier
+    # hygiene rule). When that happens the golden median is quietly computed
+    # over fewer recordings.
+    #
+    # This exists because dvr-rtl-1781909700 (CSI: Miami) was absent for two
+    # nights and nothing said so. Root cause, found 2026-07-28: its labels are
+    # EMPTY. Its only ad block was one the reviewer had removed and that
+    # survived the merge; the confirmed_show veto cleared it on 07-26, leaving
+    # nothing — and a recording with no labels counts as bootstrap, so it drops
+    # out of train AND test. Its archive npz still carries the pre-veto
+    # ads=[[0,99.68]] because no npz is written for a label-less recording,
+    # which is also why it read IoU 0.000 on both heads: the model followed the
+    # review correctly and the frozen label did not. It has been removed from
+    # the golden set. The check stays so the next one is named on the spot.
+    if _golden_pin:
+        _in_test = {r[0] for r in test_recs}
+        _in_per_rec = {r[0] for r in per_rec}
+        _lost = []
+        for _u in sorted(_golden_pin - _in_test):
+            if _u not in _in_per_rec:
+                _why = "not in per_rec (no archive entry / features, or dropped earlier)"
+            else:
+                _r = next(r for r in per_rec if r[0] == _u)
+                if _is_bootstrap(_r):
+                    _why = "bootstrap (no labels yet)"
+                elif _is_pseudo(_r):
+                    _why = "pseudo-labelled (excluded from test to avoid circular eval)"
+                else:
+                    _why = "in per_rec and neither bootstrap nor pseudo — UNEXPLAINED"
+            _lost.append((_u, _why))
+        if _lost:
+            print(f"golden-pin: {len(_lost)} of {len(_golden_pin)} pinned rec(s) "
+                  f"are NOT in test_recs — the golden median will be short:")
+            for _u, _why in _lost:
+                print(f"  {_u}  {_why}")
 
     # Persist the split ledger + report per-channel test coverage so
     # stratification drift is visible run-to-run.
@@ -5308,12 +5385,36 @@ def main():
                   f"median {_gmed:.3f}  mean {_gmean:.3f}"
                   + ("  ← compare night-to-night, this is the real trend"
                      if deploy else "  (production keeps its previous value)"))
+            # Record WHICH pinned recs were missing, not just how many. On
+            # 2026-07-27 the run scored 59/60 and the median moved 0.891 →
+            # 0.905; with only `n` persisted there was no way to tell whether
+            # the model improved or a hard recording had dropped out mid-cron
+            # (the known invalidation-drain race). Composition-constancy is the
+            # entire point of this metric, so a night where composition did
+            # move has to name the difference instead of hiding it in a count.
+            _missing = sorted(_golden - set(_gpr))
+            # Persist WHICH set produced this number. The v1 set silently
+            # decayed — 35 of its 60 members no longer existed as recordings
+            # and 37 had no signals cache, so they scored through the naive
+            # threshold grouper instead of blocks.Form. Every median from that
+            # era is a mix of two different measurements and nothing in the
+            # trend file said so. A hash makes any future change to the set
+            # visible at the point of comparison instead of a year later.
+            _gmeta = json.loads(_gpath.read_text())
             with open(Path(args.train_archive) / "golden-trend.jsonl", "a") as _gf:
                 _gf.write(json.dumps({
                     "ts": ts, "n": len(_gvals),
                     "golden_median": round(_gmed, 4),
                     "golden_mean": round(_gmean, 4),
+                    "set_version": _gmeta.get("version", 1),
+                    "set_hash": _gmeta.get("set_hash"),
+                    "missing": _missing,
                     "deployed": deploy}) + "\n")
+            if _missing:
+                print(f"  GOLDEN-EVAL WARNING: {len(_missing)} pinned rec(s) "
+                      f"absent — tonight's median is NOT composition-constant "
+                      f"and must not be compared to previous nights as-is: "
+                      f"{', '.join(_missing)}")
         except Exception as _ge:
             print(f"  golden-eval failed: {_ge}")
 

@@ -306,5 +306,32 @@ if [ "$rc" -eq 0 ]; then
   echo "snapshot marker written → $marker" >> "$LOG"
 fi
 
+# ── Label-Audit (2026-07-27) ────────────────────────────────────────
+# Recomputes the DEPLOYED head over the archive's own per-second features
+# and flags every recording whose labels contradict its own signal — the
+# head is confidently "ad" for 90s+ where the labels say show, or the
+# reverse. No decode, so it covers the whole corpus in minutes.
+#
+# Runs AFTER training, not before. The archive .npz are rewritten by the run
+# itself, so an audit placed ahead of it reports YESTERDAY's labels: on
+# 2026-07-28 it listed six recordings whose labels the same run then fixed
+# (16 -> 9 -> 4 once re-run by hand). A stale report is worse than none — it
+# invites acting on a problem that is already gone.
+#
+# Report-only ON PURPOSE. The first run (07-27) found 16 of 486, of which
+# 14 sat in the TRAIN split; three carried human labels, where a signal
+# test disagreeing with a person is not authority to act. Acting is a
+# judgement call (quarantine / redetect / leave alone) and belongs to
+# whoever reads this log, not to a cron job.
+#
+# Why it runs every night rather than once: the golden-eval set decayed
+# from 60 usable members to 23 without anyone noticing, precisely because
+# nothing looked at it periodically. A one-off cleanup is an event; this
+# makes it a property.
+echo "=== label audit (report only) ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/corpus-label-audit.py" 2>&1 \
+  | tail -30 || echo "label audit failed (non-fatal)"
+echo "=== label audit end ==="
+
 echo "train-head exit=$rc"
 exit $rc

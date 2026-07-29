@@ -2005,7 +2005,18 @@ def process_detect(uuid):
            "--nn-backbone", str(backbone_path),
            "--nn-head",     str(head_path),
            "--nn-weight",   str(nn_weight),
-           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),]
+           "--logo-smooth", str(cfg.get("logo_smooth_s") or 0),
+           # PRODUCTION DECODER = HSMM since 2026-07-29 (user decision).
+           # The blind edge test settled a measurement that label provenance
+           # had poisoned: on the 24 largest Form-vs-HSMM edge disputes the
+           # user's blind verdicts sided with the HSMM 22/23 (median error
+           # 4s vs Form's 90s), and against the corrected labels the HSMM
+           # measures +0.061 IoU [+0.032,+0.090] over Form (n=68) — the
+           # first significant decoder result. DurW=15 from the 07-29 sweep
+           # (default 60 over-weighted the duration prior 4x). tv-detect
+           # falls back to Form by itself if a job has no NN confidences,
+           # and reports Form as the second opinion in decoder-agreement.
+           "--decoder", "hsmm", "--hsmm-dur-w", "15",]
     nn_gate = cfg.get("nn_gate", -1)
     if nn_gate is not None and nn_gate >= 0:
         cmd += ["--nn-gate", str(nn_gate)]
@@ -2124,6 +2135,21 @@ def process_detect(uuid):
         # gateway hasn't been updated yet.
         bt = float(cfg.get("bumper_threshold", 0.75))
         cmd += ["--bumper-snap", "90", "--bumper-threshold", str(bt)]
+        # NN guard on END snaps (2026-07-28): breaks close with programme
+        # trailers whose footage matches ident templates, so the plain
+        # latest-hit rule could land the block end 30-50 s INTO the resumed
+        # show (user decision: trailers count as show and must not be cut).
+        # The guard vetoes snap targets where the smoothed NN already reads
+        # show. A/B over 67 human-labelled dumps with production flags:
+        # distance to the trailer-start boundary median 23.9s -> 15.1s
+        # (59 better / 31 worse); block starts untouched. Error asymmetry
+        # favours it: without the guard the skip occasionally swallows show
+        # (irrecoverable), with it an ad spot occasionally survives
+        # (skippable). Nightly IoU may dip slightly against labels that
+        # still embody the old too-long convention — expected, not a
+        # regression (the Futurama case: the user's own trim agrees with
+        # the guard, not with the stale label).
+        cmd += ["--bumper-end-nn-guard"]
         if bumper_paths:
             cmd += ["--bumper-templates", ",".join(bumper_paths)]
         if bumper_start_paths:
@@ -2197,10 +2223,25 @@ def process_detect(uuid):
     # (= even with --quiet the binary emits "pipeline-timing: ..."
     # unconditionally so we can profile production drains without
     # re-running them by hand). Cheap grep over the captured stderr.
+    #
+    # Cross-decoder agreement (2026-07-27): tv-detect runs the HSMM decoder
+    # alongside blocks.Form and reports how far the two disagree. It never
+    # changes the cutlist — it is a candidate REVIEW-TRIAGE signal, and it is
+    # explicitly NOT yet validated. A first read gave a 2.4x lift at P=99%, but
+    # that came from a decoder that still invented a phantom ad block in every
+    # recording over 45 minutes; re-measured after the fix it is 1.4x at P=71%,
+    # i.e. indistinguishable from the base rate on n=58. Forwarded anyway
+    # because it is free and side-effect-free, and the collected values are the
+    # data that would settle it. A parse failure must never block a cutlist.
+    agreement = None
     for ln in (result.stderr or "").splitlines():
         if ln.startswith("pipeline-timing"):
             print(f"  detect {uuid}: {ln}", flush=True)
-            break
+        elif ln.startswith("decoder-agreement"):
+            try:
+                agreement = float(ln.split()[1])
+            except (IndexError, ValueError):
+                pass
     cutlist = result.stdout
     # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
     # Re-fetch `local` via get_source: the bumper download loop above
@@ -2230,9 +2271,10 @@ def process_detect(uuid):
         if local_ts:
             cutlist = _maybe_whisper_refine(uuid, str(local_ts), cutlist)
     try:
-        http_post_stream(
-            f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}",
-            cutlist.encode())
+        _url = f"{GATEWAY}/api/internal/cutlist-uploaded/{uuid}"
+        if agreement is not None:
+            _url += f"?agreement={agreement:.4f}"
+        http_post_stream(_url, cutlist.encode())
     except Exception as e:
         # Cutlist-upload failures (= gateway 404, network blip, etc.)
         # used to fall through with no failure-tracking → daemon

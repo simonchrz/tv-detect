@@ -210,34 +210,43 @@ def viterbi_hsmm(p, ad_mu, ad_sd, show_mu, show_sd, emit_w, dur_w,
     # dp[t][k]: best score for prefix of length t ending in state k (0 show, 1 ad)
     dp = np.full((T + 1, 2), NEG); dp[0, :] = 0.0
     bk = np.zeros((T + 1, 2), dtype=np.int64)
+    bp = np.zeros((T + 1, 2), dtype=np.int64)   # which state the segment came FROM
     dmin_a, dmax_a = int(min_block_s), int(max_block_s)
-    dmin_s, dmax_s = 30, int(45 * 60)
+    dmin_s, dmax_s = 30, T   # kein willkuerlicher 45-min-Deckel
     for t in range(1, T + 1):
         for k, (dmin, dmax, cum, mu, sd) in enumerate((
                 (dmin_s, dmax_s, cs, show_mu, show_sd),
                 (dmin_a, dmax_a, ca, ad_mu, ad_sd))):
-            prev = 1 - k
-            best, bd = NEG, 0
+            # An ad must follow a show. A show may follow EITHER — without the
+            # self-transition the states alternate strictly, and since a show
+            # segment may not exceed dmax_s (45 min), any longer recording is
+            # forced to invent an ad block to bridge two show segments. That
+            # put a phantom 60 s block into every ad-free 55-min recording
+            # (found 2026-07-27 on dvr-one-hd-1781285100: ARD, zero seconds
+            # above p=0.5, HSMM emitted one block anyway).
+            prevs = (1 - k,)
+            best, bd, bpv = NEG, 0, 0
             lo = max(0, t - dmax)
             for st in range(t - dmin, lo - 1, -1):
                 if st < 0:
                     break
-                base = 0.0 if st == 0 else dp[st, prev]
-                if base <= NEG / 2:
-                    continue
-                d = t - st
-                sc = base + (cum[t] - cum[st]) + dur_lp(d, mu, sd)
-                if sc > best:
-                    best, bd = sc, st
-            dp[t, k], bk[t, k] = best, bd
+                for prev in prevs:
+                    base = 0.0 if st == 0 else dp[st, prev]
+                    if base <= NEG / 2:
+                        continue
+                    d = t - st
+                    sc = base + (cum[t] - cum[st]) + dur_lp(d, mu, sd)
+                    if sc > best:
+                        best, bd, bpv = sc, st, prev
+            dp[t, k], bk[t, k], bp[t, k] = best, bd, bpv
     k = int(dp[T, 1] > dp[T, 0])
     if dp[T, k] <= NEG / 2:
         return []
     segs, t = [], T
     while t > 0:
-        st = bk[t, k]
+        st, prev = bk[t, k], bp[t, k]
         segs.append((st, t, k))
-        t, k = st, 1 - k
+        t, k = st, prev
     return [(float(a), float(b)) for a, b, kk in reversed(segs) if kk == 1
             and (b - a) >= min_block_s]
 

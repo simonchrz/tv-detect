@@ -42,7 +42,8 @@ type Opts struct {
 	SceneCutSnapS     float64 // post-refine, pre-IFrame snap to the nearest hard scene cut (luma-histogram Bhattacharyya distance > SceneThreshold). 0 = off (default 1.5). Show→Ad transitions are by definition a complete shot change; the SceneDetector already feeds the voting cluster but the cluster centre often sits between the scene cut and a nearby black/silence anchor. This step forcibly moves the boundary to the exact scene-cut frame when one exists in the radius — the subsequent I-frame snap usually leaves it in place because broadcaster ad-inserts align scene cut + keyframe at the same PTS.
 	LetterboxSnapS    float64 // post-refine snap to the nearest letterbox transition (onset for START, offset for END) within ±this seconds. 0 = off (default 5). Deterministic geometric signal on broadcasters that air 16:9 promos in 4:3 container (RTL/RTLZWEI) — overrides scene-cut/I-frame for the boundary it covers. No-op when LetterboxEvents is empty.
 	BoundarySnapS     float64 // FALLBACK snap to the nearest boundary-head (BNDR) peak within ±this seconds, applied LAST and ONLY to an edge that no deterministic snap (iframe/scene/letterbox/logo-cross/bumper) moved. 0 = off (default 0). A learned, channel-agnostic transition detector for the missed_bumper class: edges where the deterministic anchors found nothing (no bumper template for the channel, no black/silence/scene near the cut). Strictly additive by construction — it can never overrule a deterministic anchor. Do NOT move it earlier in the chain: as a coarse pre-pull it measured +0.016 on prosieben against bumper-less dumps but -0.015 when re-measured faithfully with the real bumper set (2026-07-24). Never adds/removes blocks. Enable per channel via detect-config once a FAITHFUL A/B shows a net gain.
-	BoundaryThreshold float64 // boundary-head score required for a BoundarySnap (default 0.5). The BNDR head's recall is ~85% at ~2.7s precision on bootstrap labels; a moderate threshold keeps spurious peaks from pulling a good boundary.
+	BoundaryThreshold float64 // boundary-head score required for a BoundarySnap (default 0.5).
+	BumperEndNNGuard  bool    // reject end-bumper snap targets where the smoothed NN already reads "show" (> 0.55). German breaks close with programme trailers — real show footage that matches ident/promo templates — so the plain latest-hit rule can land the block END past the show's return (measured 2026-07-28: fresh detects overshooting the programme by 30-50 s on rtlzwei/kabel-eins). The guard drops hits the NN places inside show-reading material; the genuine ad-side bumper keeps its NN-ad context and survives. Opt-in until the corpus A/B is in. The BNDR head's recall is ~85% at ~2.7s precision on bootstrap labels; a moderate threshold keeps spurious peaks from pulling a good boundary.
 }
 
 // Form combines per-frame logo confidences and (optionally) NN
@@ -261,7 +262,11 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 		// start-bumper hit to pull the block END would be semantically
 		// wrong even if the match is high-confidence.
 		if opts.BumperSnapS > 0 && len(bumperConf) > 0 {
-			endS = snapToBumper(endS, bumperConf,
+			var guard []float64
+			if opts.BumperEndNNGuard && useNN {
+				guard = nnConf // already smoothed by step 0
+			}
+			endS = snapToBumperGuarded(endS, bumperConf, guard,
 				opts.FPS, opts.BumperSnapS, opts.BumperThreshold)
 		}
 		if opts.BumperSnapS > 0 && len(startBumperConf) > 0 {
@@ -864,6 +869,42 @@ func snapToBumperStart(t float64, bumperConf []float64, fps, r, threshold float6
 // frame (= first show frame after the bumper). Bumpers span 2-3
 // seconds; we want the END of the bumper window, not the start of
 // the match. If no peak is found, returns t unchanged.
+// snapToBumperGuarded is snapToBumper with an optional NN veto: a hit only
+// qualifies as the snap target if the smoothed NN ad-probability at that frame
+// is not already clearly "show" (<= 0.55). nnConf nil = identical to
+// snapToBumper. See Opts.BumperEndNNGuard for why this exists.
+func snapToBumperGuarded(t float64, bumperConf, nnConf []float64, fps, r, threshold float64) float64 {
+	if len(bumperConf) == 0 || r <= 0 || fps <= 0 {
+		return t
+	}
+	iCenter := int(t * fps)
+	iLo := iCenter - int(r*fps)
+	iHi := iCenter + int(r*fps)
+	if iLo < 0 {
+		iLo = 0
+	}
+	if iHi >= len(bumperConf) {
+		iHi = len(bumperConf) - 1
+	}
+	for i := iHi; i >= iLo; i-- {
+		if bumperConf[i] <= threshold {
+			continue
+		}
+		// nnConf is AD-probability: low = the NN reads this as show. A
+		// genuine end-of-break bumper sits in ad-reading material; hits on
+		// trailers or programme footage read as show and get vetoed. (The
+		// first build had this comparison inverted — it vetoed the genuine
+		// ad-side hits instead — and the production-flag A/B caught it:
+		// 14 of 18 moved ends got WORSE. Polarity matters more than the
+		// threshold here.)
+		if nnConf != nil && i < len(nnConf) && nnConf[i] < 0.45 {
+			continue // hit inside show-reading material (trailer etc.)
+		}
+		return float64(i+1) / fps
+	}
+	return t
+}
+
 func snapToBumper(t float64, bumperConf []float64, fps, r, threshold float64) float64 {
 	if len(bumperConf) == 0 || r <= 0 || fps <= 0 {
 		return t
@@ -1027,6 +1068,11 @@ func logoCrossingRefine(roughS, radiusS float64, logoConf []float64,
 // smoothMean returns a centered rolling-mean over x with a half-window
 // of halfW samples (so total window = 2*halfW+1 samples). Edges use
 // the truncated window — no padding, no NaN.
+// SmoothMean is the rolling-mean smoother Form uses in step 0, exported so
+// external callers (the hsmm-refine dispatcher) can hand the bumper guard the
+// identical stream Form's own guard sees.
+func SmoothMean(x []float64, halfW int) []float64 { return smoothMean(x, halfW) }
+
 func smoothMean(x []float64, halfW int) []float64 {
 	n := len(x)
 	if n == 0 || halfW <= 0 {

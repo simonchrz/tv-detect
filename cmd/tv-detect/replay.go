@@ -99,7 +99,7 @@ func loadReplayNNCSV(path string, frameCount int) ([]float64, error) {
 // signals, optionally swap in a fresh nn_confs CSV (a different
 // classifier candidate scored against the SAME cached decode), form
 // blocks, and print via the normal --output path. No ffmpeg involved.
-func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output string, buildOpts func(fps float64) blocks.Opts) {
+func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output, decoder string, buildOpts func(fps float64) blocks.Opts) {
 	b, err := os.ReadFile(signalsPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "replay-signals:", err)
@@ -131,13 +131,29 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output string, buildOpts 
 	// boundary_confs are dumped at emit time (small per-frame scalars, unlike
 	// the 1280-dim embeddings they're computed from), so the sweep can vary
 	// --boundary-snap against a fixed dump. nil in older dumps → snap no-op.
-	blockList := blocks.Form(buildOpts(d.FPS),
+	blockList := formBlocks(decoder, buildOpts(d.FPS),
 		d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs, speakerConfFrames,
 		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
 
+	// Same informational second opinion as the full-decode path, so a sweep
+	// over cached dumps sees the identical number production would report.
+	agree := -1.0
+	{
+		if iou, n, ok := secondOpinion(decoder, buildOpts(d.FPS), blockList,
+			d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs,
+			speakerConfFrames, d.BoundaryConfs, d.Blackframes, d.Silences,
+			d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount); ok {
+			agree = iou
+			// Same stderr line as the full-decode path. --output cutlist has
+			// nowhere else to put it, and a sweep that silently lacked the
+			// number production reports would be the wrong kind of surprise.
+			fmt.Fprintf(os.Stderr, "decoder-agreement %.4f %d\n", iou, n)
+		}
+	}
+
 	switch output {
 	case "summary":
-		writeReplaySummary(d.FPS, d.FrameCount, blockList)
+		writeReplaySummary(d.FPS, d.FrameCount, blockList, agree)
 	case "cutlist":
 		writeCutlist(d.FPS, d.FrameCount, blockList)
 	default:
@@ -149,16 +165,23 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output string, buildOpts 
 // writeReplaySummary mirrors writeSummary's JSON shape (fps/frame_count/
 // duration_s/blocks) without needing a full pipeline.Result — replay mode
 // never decodes, so width/height/per-phase timing don't exist.
-func writeReplaySummary(fps float64, frameCount int, bl []blocks.Block) {
+// agree is the cross-decoder agreement IoU, or a negative value when it was
+// not computed (no NN signal, or --decoder hsmm was the producer). Omitted
+// from the JSON in that case rather than reported as a misleading 0.
+func writeReplaySummary(fps float64, frameCount int, bl []blocks.Block, agree float64) {
 	out := struct {
 		FPS        float64      `json:"fps"`
 		FrameCount int          `json:"frame_count"`
 		DurationS  float64      `json:"duration_s"`
 		Blocks     [][2]float64 `json:"blocks"`
+		Agreement  *float64     `json:"decoder_agreement_iou,omitempty"`
 	}{
 		FPS: fps, FrameCount: frameCount,
 		DurationS: float64(frameCount) / fps,
 		Blocks:    make([][2]float64, len(bl)),
+	}
+	if agree >= 0 {
+		out.Agreement = &agree
 	}
 	for i, blk := range bl {
 		out.Blocks[i] = [2]float64{blk.StartS, blk.EndS}

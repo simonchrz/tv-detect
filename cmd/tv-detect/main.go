@@ -64,6 +64,7 @@ func main() {
 		bumperStartTpls  = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
 		withAudio        = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
 		bumperSnapS      = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
+		bumperEndGuard   = flag.Bool("bumper-end-nn-guard", false, "reject end-bumper snap targets where the smoothed NN already reads show (>0.55). Breaks close with programme trailers whose footage matches ident templates, dragging the block END past the show's return. Opt-in pending corpus A/B.")
 		bumperThresh     = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
 		bumperStride     = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
 		nnBackbone       = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
@@ -88,8 +89,22 @@ func main() {
 		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
 		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
 		replayNNCSV     = flag.String("replay-nn-csv", "", "with --replay-signals: replace the embedded nn_confs with fresh per-frame confidences from this CSV (idx,time_s,nn_confidence — the same format --emit-nn-csv writes). Lets an external/candidate classifier be block-formed against the cached decode-signals without re-running ffmpeg.")
+		decoderName     = flag.String("decoder", "form", "block formation: form | hsmm | hsmm-blend | hsmm-refine | hsmm-full. 'form' is the hysteresis state machine plus the deterministic snap chain (every --*-snap flag applies). 'hsmm' is explicit-duration Viterbi over the RAW per-second NN probability; it ignores the logo blend, every snap and both --*-extend flags BY DESIGN, because that is exactly what was measured. Over 58 faithful dumps it is +0.022 mean block-IoU vs 'form', but it raises floors and lowers ceilings: +0.083 where form scores below 0.90, -0.085 where form scores above, with single losses down to -0.404. Not a free win — see internal/blocks/hsmm.go. Requires NN confidences; only --min-block-sec / --max-block-sec still apply. The -blend/-refine/-full variants are stage-2/3 experiments (logo-blended emission / narrow deterministic edge snaps / both). PRODUCTION runs 'hsmm' with --hsmm-dur-w 15 since 2026-07-29: the blind edge test showed the corpus labels had inherited form's edges (form-echo), and against blind-corrected labels hsmm measures +0.061 IoU [+0.032,+0.090] over form (n=68) with the user's blind verdicts siding with hsmm on 22/23 disputed edges. With no NN confidences hsmm falls back to form automatically. See internal/blocks/hsmm.go + hsmm_refine.go for the full measurement history.")
+		hsmmAdMu   = flag.Float64("hsmm-ad-mu", 0, "hsmm* only: median ad-block length in seconds (0 = built-in 240). Per-channel values live in hsmm-priors.json (fit-hsmm-priors.py); the fitted medians are ~2x the built-in default on most channels.")
+		hsmmAdSd   = flag.Float64("hsmm-ad-sd", 0, "hsmm* only: log-space sd of ad-block length (0 = built-in 0.55)")
+		hsmmShowMu = flag.Float64("hsmm-show-mu", 0, "hsmm* only: median show-segment length in seconds (0 = built-in 720)")
+		hsmmShowSd = flag.Float64("hsmm-show-sd", 0, "hsmm* only: log-space sd of show-segment length (0 = built-in 0.9)")
+		hsmmDurW   = flag.Float64("hsmm-dur-w", 0, "hsmm* only: weight of the duration prior vs the per-second emission (0 = built-in 60; measured optimum 5-15). Only the ratio to the emission matters; the emission weight is fixed at 1.")
+		hsmmBumpW  = flag.Float64("hsmm-bumper-w", 0, "hsmm* only: weight of soft bumper boundary evidence in the Viterbi (0 = off). End-idents are NN-guarded (trailer convention), start idents are not. Uses --bumper-threshold as the hit cutoff.")
 	)
 	flag.Parse()
+	// The duration prior reaches the decoder via package globals rather than
+	// blocks.Opts: it is an HSMM-only knob, and secondOpinion() must NOT see
+	// it — the decoder-agreement triage signal stays pinned to the defaults
+	// every published agreement number used.
+	hsmmPrior = blocks.HSMMOpts{AdMuS: *hsmmAdMu, AdSD: *hsmmAdSd,
+		ShowMuS: *hsmmShowMu, ShowSD: *hsmmShowSd, DurW: *hsmmDurW}
+	hsmmBumperW = *hsmmBumpW
 
 	// buildOpts assembles blocks.Opts from the CLI flags — shared by the
 	// normal decode path and --replay-signals so both apply identical
@@ -116,6 +131,7 @@ func main() {
 			SceneCutSnapS:     *sceneCutSnapS,
 			BumperSnapS:       *bumperSnapS,
 			BumperThreshold:   *bumperThresh,
+			BumperEndNNGuard:  *bumperEndGuard,
 			LetterboxSnapS:    *letterboxSnapS,
 			BoundarySnapS:     *boundarySnapS,
 			BoundaryThreshold: *boundaryThresh,
@@ -124,7 +140,7 @@ func main() {
 	}
 
 	if *replaySignals != "" {
-		runReplay(*replaySignals, *replayNNCSV, *speakerCSV, *output, buildOpts)
+		runReplay(*replaySignals, *replayNNCSV, *speakerCSV, *output, *decoderName, buildOpts)
 		return
 	}
 
@@ -395,14 +411,34 @@ func main() {
 
 	// Block formation + final output. Without logo confidences the
 	// classifier has no primary signal and returns an empty list.
-	blockList := blocks.Form(buildOpts(res.FPS),
+	blockList := formBlocks(*decoderName, buildOpts(res.FPS),
 		res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
 		res.BoundaryConfs, res.Blackframes, sil.events,
 		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
 
+	// Second opinion from the other decoder — informational only, never
+	// changes blockList. See secondOpinion() for why this is safe to run
+	// always while --decoder itself stays opt-in.
+	summaryExtra := map[string]any{}
+	{
+		if iou, n, ok := secondOpinion(*decoderName, buildOpts(res.FPS), blockList,
+			res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs,
+			speakerConfFrames, res.BoundaryConfs, res.Blackframes, sil.events,
+			res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount); ok {
+			summaryExtra["decoder_agreement_iou"] = iou
+			summaryExtra["hsmm_n_blocks"] = n
+			// Also on stderr, because the production path runs
+			// --output cutlist, whose comskip-compatible text format has
+			// no room for a diagnostic. Same scrape pattern the daemon
+			// already uses for "pipeline-timing"; stdout stays byte-for-
+			// byte what every existing cutlist parser expects.
+			fmt.Fprintf(os.Stderr, "decoder-agreement %.4f %d\n", iou, n)
+		}
+	}
+
 	switch *output {
 	case "summary":
-		writeSummary(res, elapsed, blockList)
+		writeSummary(res, elapsed, blockList, summaryExtra)
 	case "cutlist":
 		writeCutlist(res.FPS, res.FrameCount, blockList)
 	default:
@@ -411,7 +447,11 @@ func main() {
 	}
 }
 
-func writeSummary(res *pipeline.Result, elapsedS float64, bl []blocks.Block) {
+// extra carries optional diagnostics that must never affect the block list —
+// currently the cross-decoder agreement. Merged into "stats" so every existing
+// consumer of this JSON keeps parsing unchanged.
+func writeSummary(res *pipeline.Result, elapsedS float64, bl []blocks.Block,
+	extra map[string]any) {
 	type summaryOut struct {
 		FPS        float64        `json:"fps"`
 		Width      int            `json:"width"`
@@ -432,6 +472,9 @@ func writeSummary(res *pipeline.Result, elapsedS float64, bl []blocks.Block) {
 			"elapsed_s": elapsedS,
 			"fps_proc":  float64(res.FrameCount) / elapsedS,
 		},
+	}
+	for k, v := range extra {
+		out.Stats[k] = v
 	}
 	for i, b := range bl {
 		out.Blocks[i] = [2]float64{b.StartS, b.EndS}

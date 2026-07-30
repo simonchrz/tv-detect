@@ -2878,6 +2878,11 @@ def main():
     # test recs here rather than re-litigating per rejection.
     TEST_SET_EXCLUDE = {
         "dvr-anixe-1781518500",
+        # 2026-07-30 label audit: frozen-archive entry (source long gone,
+        # serien-retention) with a 361s hole on user labels — NN sure-ad
+        # inside labelled show, unverifiable forever. npz quarantined like
+        # the 07-28 fossils.
+        "dvr-rtl-1781444700",          # Die Beet-Brüder
         # 2026-07-15 FP-concentration analysis on the deployed MLP3:
         # these two DEAD which=merged recordings alone carried 50% of
         # ALL measured test-frame errors (4210 of 8385) — the model

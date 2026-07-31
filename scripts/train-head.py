@@ -2883,6 +2883,11 @@ def main():
         # inside labelled show, unverifiable forever. npz quarantined like
         # the 07-28 fossils.
         "dvr-rtl-1781444700",          # Die Beet-Brüder
+        # 2026-07-31 both-cold triage: two more dead merged-label fossils,
+        # both heads <0.40 for days, no source anywhere to verify.
+        # 989a0bea has NO channel slug (tvh-era) and a 0-120s stub label.
+        "989a0bea63b249d1a6243d5f3f27e0ed",  # SpongeBob (tvh-era)
+        "dvr-rtl-1780224000",          # Die Beet-Brüder (2. Fossil)
         # 2026-07-15 FP-concentration analysis on the deployed MLP3:
         # these two DEAD which=merged recordings alone carried 50% of
         # ALL measured test-frame errors (4210 of 8385) — the model

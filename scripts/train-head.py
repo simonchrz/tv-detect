@@ -1681,6 +1681,163 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
     return np.hstack(parts).astype(np.float32)
 
 
+
+# ---- GOLDEN-BODEN (Sperrklinke gegen langsamen Drift) ----------------------
+#
+# Das paarweise Gate ist ein RELATIVER Test: Kandidat gegen den AKTUELLEN
+# Champion, abgelehnt wird nur, was BELASTBAR schlechter ist. Ein bisschen
+# schlechter deployt — und ist ab dann der Massstab, gegen den die naechste
+# Nacht vergleicht. Das ist eine Ratsche ohne Sperrklinke: nach oben zieht
+# nichts zurueck.
+#
+# ⚠️ Genau so gemessen am 2026-08-03. Vier Deploys in Folge, jeder einzelne
+# mit "median Δ +0.000, keine belastbare Regression":
+#
+#     Golden-Median  0.915 → 0.904 → 0.901 → 0.896
+#     Golden-Mean    0.886 → 0.870 → 0.850 → 0.846
+#
+# Kein Schritt war fuer sich ablehnungswuerdig, der Korpus lag stabil bei
+# 270–277 Aufnahmen. Der Golden-Wert wurde die ganze Zeit berechnet,
+# protokolliert und mit "compare night-to-night, this is the real trend"
+# beschriftet — aber nirgends ausgewertet. Reine Beobachtung.
+#
+# Der Boden ist ABSOLUT (gegen den besten je deployten Wert), nicht relativ —
+# sonst waere er dieselbe Ratsche eine Ebene hoeher.
+#
+# Kein Deadlock: ein Kandidat, der den Champion SCHLAEGT, kommt immer durch,
+# auch wenn er noch unter dem Bestwert liegt. Nur so klettert der Stand nach
+# einem Absacker wieder hoch. Blockiert wird ausschliesslich, wer unter dem
+# Bestwert liegt UND den Champion nicht verbessert.
+def golden_bestwert(trend_pfad, set_hash):
+    """Bester je DEPLOYTER Golden-Median fuer genau diesen Golden-Satz.
+
+    ⚠️ Nur Eintraege mit demselben set_hash. Ueber eine Satz-Aenderung hinweg
+    zu vergleichen waere genau der Fehler, den der Hash verhindern soll — und
+    Eintraege mit `missing` sind nicht komposition-konstant, zaehlen also
+    ebenfalls nicht.
+    """
+    best, best_ts = None, None
+    if not trend_pfad or not Path(trend_pfad).exists():
+        return None, None
+    for ln in Path(trend_pfad).read_text().splitlines():
+        if not ln.strip():
+            continue
+        try:
+            e = json.loads(ln)
+        except Exception:
+            continue
+        if not e.get("deployed") or e.get("missing"):
+            continue
+        if e.get("set_hash") != set_hash:
+            continue
+        v = e.get("golden_median")
+        if v is not None and (best is None or float(v) > best):
+            best, best_ts = float(v), e.get("ts")
+    return best, best_ts
+
+
+def golden_stau(trend_pfad, set_hash):
+    """Wie viele der juengsten Laeufe in Folge NICHT deployt haben.
+
+    Dient nur der Sichtbarkeit: ein Gate, das dauerhaft blockt, sieht in der
+    Logzeile genauso aus wie eines, das einmal blockt.
+    """
+    if not trend_pfad or not Path(trend_pfad).exists():
+        return 0
+    eintraege = []
+    for ln in Path(trend_pfad).read_text().splitlines():
+        if not ln.strip():
+            continue
+        try:
+            e = json.loads(ln)
+        except Exception:
+            continue
+        if e.get("set_hash") != set_hash:
+            continue
+        eintraege.append(e)
+    n = 0
+    for e in reversed(eintraege):
+        if e.get("deployed"):
+            break
+        n += 1
+    return n
+
+
+def golden_boden(deploy, reason, *, golden_floor, train_archive,
+                 cand_pr, champ_pr, melde=print):
+    if not deploy or golden_floor <= 0:
+        return deploy, reason
+    try:
+        gpath = (Path(train_archive) / "golden-eval-set.json"
+                 if train_archive else None)
+        if not (gpath and gpath.exists()):
+            return deploy, reason
+        meta = json.loads(gpath.read_text())
+        golden = set(meta.get("uuids", []))
+        if not golden:
+            return deploy, reason
+
+        # ⚠️ Komposition-Konstanz ist die ganze Geschaeftsgrundlage dieser
+        # Zahl. Fehlt auch nur eine gepinnte Aufnahme, ist der Median mit
+        # frueheren Naechten NICHT vergleichbar — dann darf er auch nicht
+        # gaten. Lieber nicht pruefen als falsch pruefen.
+        fehlend = sorted(golden - set(cand_pr))
+        if fehlend:
+            melde(f"  Golden-Boden: uebersprungen — {len(fehlend)} gepinnte "
+                  f"Aufnahme(n) fehlen heute, Median nicht komposition-konstant")
+            return deploy, reason
+
+        g_cand = float(np.median([cand_pr[u] for u in golden]))
+        # Champion im GLEICHEN Lauf auf denselben Aufnahmen — ehrlicher als
+        # der Wert aus der Historie, weil identische Bedingungen.
+        gemeinsam = [u for u in golden if u in champ_pr]
+        g_champ = (float(np.median([champ_pr[u] for u in gemeinsam]))
+                   if len(gemeinsam) == len(golden) else None)
+
+        best, best_ts = golden_bestwert(
+            Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
+            meta.get("set_hash"))
+        if best is None:
+            melde(f"  Golden-Boden: noch kein Bestwert fuer diesen Satz "
+                  f"(set_hash {str(meta.get('set_hash'))[:8]}) — heutiger Wert "
+                  f"{g_cand:.3f} wird der erste")
+            return deploy, reason
+
+        abstand = g_cand - best
+        schlaegt_champ = g_champ is not None and g_cand > g_champ
+        if abstand < -golden_floor:
+            if schlaegt_champ:
+                melde(f"  Golden-Boden: {g_cand:.3f} liegt zwar {-abstand:.3f} "
+                      f"unter dem Bestwert {best:.3f}, schlaegt aber den "
+                      f"Champion ({g_champ:.3f}) — Aufstieg, deploy")
+                return deploy, reason
+            champ_txt = f", Champion {g_champ:.3f}" if g_champ is not None else ""
+            # ⚠️ Ein Boden, der Nacht fuer Nacht blockt, ist kein Schutz mehr,
+            # sondern ein Stillstand: der Champion friert ein und keine neuen
+            # Daten kommen mehr in Produktion. Das ist richtiger als still
+            # abzurutschen, darf aber nicht selbst still passieren.
+            _stau = golden_stau(
+                Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
+                meta.get("set_hash"))
+            if _stau >= 3:
+                melde(f"  ⚠ Golden-Boden blockt die {_stau + 1}. Nacht in Folge — "
+                      f"der Champion steht seit {_stau + 1} Laeufen. Entweder ist "
+                      f"der Bestwert {best:.3f} nicht mehr erreichbar (dann "
+                      f"gehoert er ueberprueft), oder es gibt ein echtes "
+                      f"Datenproblem. NICHT einfach --golden-floor hochsetzen.")
+            return False, (reason + f" — ABER GOLDEN-BODEN: {g_cand:.3f} liegt "
+                           f"{-abstand:.3f} unter dem besten je deployten Wert "
+                           f"{best:.3f} ({best_ts}){champ_txt} und verbessert "
+                           f"den Champion nicht — langsamer Drift, Champion bleibt")
+        melde(f"  Golden-Boden: {g_cand:.3f} vs Bestwert {best:.3f} "
+              f"({abstand:+.3f}) — passiert")
+    except Exception as e:
+        # Ein kaputter Boden darf keinen Lauf verhindern; er darf nur nicht
+        # stillschweigend nichts tun.
+        melde(f"  Golden-Boden: nicht auswertbar ({e}) — Gate unveraendert")
+    return deploy, reason
+
+
 def main():
     ap = argparse.ArgumentParser()
     # Defaults are the post-SMB-migration locations: backbone +
@@ -1961,6 +2118,18 @@ def main():
                          "recs (0.95→0.60) from re-creating the 2026-07-02..06 "
                          "rejection deadlock, while still catching real breakage "
                          "(0.35→0.00, 0.75→0.20).")
+    ap.add_argument("--golden-floor", type=float, default=0.010,
+                    help="absolute Sperrklinke gegen langsamen Drift. Das "
+                         "paarweise Gate vergleicht immer gegen den AKTUELLEN "
+                         "Champion und laesst alles durch, was nicht belastbar "
+                         "schlechter ist — der leicht schlechtere Kandidat wird "
+                         "damit selbst zum neuen Massstab. Gemessen 2026-08-03: "
+                         "vier Deploys in Folge, jeder fuer sich 'keine "
+                         "belastbare Regression', zusammen Golden-Median 0.915 "
+                         "-> 0.896. Diese Schwelle blockt einen Kandidaten, der "
+                         "mehr als so viel unter dem BESTEN je deployten "
+                         "Golden-Median liegt UND den Champion nicht schlaegt. "
+                         "0 = aus.")
     ap.add_argument("--stability-window", type=int, default=10,
                     help="how many recent per-rec-iou.jsonl runs the veto's "
                          "bistability check looks back over. A rec whose own IoU "
@@ -5427,6 +5596,13 @@ def main():
                       f"{', '.join(_missing)}")
         except Exception as _ge:
             print(f"  golden-eval failed: {_ge}")
+
+    deploy, reason = golden_boden(
+        deploy, reason,
+        golden_floor=args.golden_floor,
+        train_archive=args.train_archive,
+        cand_pr=(metrics_smooth or {}).get("per_rec_iou") or {},
+        champ_pr=(deployed_test_metrics or {}).get("per_rec_iou") or {})
 
     if deploy:
         if is_mlp_write:

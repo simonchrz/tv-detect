@@ -4894,10 +4894,40 @@ def main():
         # set, so human review concentrates where it actually moves the model.
         # Uniform fallback when no eval IoU is available.
         from statistics import median as _median
+        # Die Kohorten-Gewichtung folgt dem CHAMPION, nicht dem Kandidaten.
+        #
+        # Begründung ist ein Prinzip, KEINE gemessene Verbesserung:
+        # metrics_smooth ist die Auswertung des frisch trainierten
+        # Kandidaten, und der wird oft ABGELEHNT (Golden-Boden). Label-
+        # Budget soll dorthin fließen, wo das AUSGELIEFERTE Modell schwach
+        # ist — das ist es, was der Nutzer erlebt. Ein abgelehnter Kandidat
+        # beschreibt einen Zustand, den nie jemand zu sehen bekommt.
+        #
+        # ⚠️ EHRLICH ZUR WIRKUNG: am Lauf 20260804T054558 nachgerechnet
+        # (91 Recs mit beiden Werten) ändert das KEINEN einzigen
+        # Multiplikator — Kandidat und Champion urteilten dort fast gleich
+        # (größte Abweichung 0.34, comedy-central bei BEIDEN 0.2977). Der
+        # Sprung auf 0.991 dort kam vom Rollback auf den 0.915-Kopf, nicht
+        # von dieser Unterscheidung. Die Änderung ist also Absicherung
+        # gegen einen Fall, der auftreten KANN (Kandidat bricht ein, wo der
+        # Champion trägt), nicht die Behebung eines gemessenen Schadens.
+        # Wer sie später bewertet: nicht mehr erwarten, als hier steht.
+        #
+        # deployed_test_metrics ist die Head-to-Head-Auswertung des
+        # DEPLOYTEN Kopfs auf demselben Testsatz. Nur wenn sie fehlt
+        # (Kanal-Karte weicht ab, kein Champion ladbar), bleibt der
+        # Kandidat die Notlösung.
+        _pri_quelle = "champion (head-to-head)"
         try:
-            _pri = metrics_smooth.get("per_rec_iou") or {}
+            _pri = (deployed_test_metrics or {}).get("per_rec_iou") or {}
         except Exception:
             _pri = {}
+        if not _pri:
+            _pri_quelle = "kandidat (kein head-to-head verfuegbar)"
+            try:
+                _pri = metrics_smooth.get("per_rec_iou") or {}
+            except Exception:
+                _pri = {}
         _uuid_title = {r[0]: r[1] for r in per_rec}
         _title_iou, _slug_iou = {}, {}
         for _u, _io in _pri.items():
@@ -5010,6 +5040,10 @@ def main():
         cap = _budget
         print(f"\nactive-learning: base top-{n_unc} uncertain + top-{n_div} "
               f"divergent per recording, cohort-weighted → {out_path}")
+        # ⚠️ Quelle mitloggen: fällt die Gewichtung still auf den Kandidaten
+        # zurück (fehlendes head-to-head), lenkt sie das Label-Budget wieder
+        # nach den Schwächen eines Modells, das nie ausgeliefert wird.
+        print(f"  cohort-IoU-Quelle: {_pri_quelle} ({len(_pri)} recs)")
         print(f"  cohort budget: {_mult_hist.get(3, 0)} recs ×3 (IoU<0.30), "
               f"{_mult_hist.get(2, 0)} ×2 (IoU<0.50), {_mult_hist.get(1, 0)} ×1")
         print(f"  emitted {emitted} (cap {cap}, "

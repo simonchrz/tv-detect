@@ -65,7 +65,8 @@ elif ssh -o ConnectTimeout=3 -o BatchMode=yes "$PI_HOST" "test -d $PI_REMOTE_DIR
   # anchor when it's missing. Omitting them here (pre-2026-06-08) made a
   # manual `auto` from the Mac (SMB unmounted) skip with "no channel-map".
   for f in head.bin backbone.onnx head.history.json \
-           head.calibration.json head.channel-map.json head.test-set.json; do
+           head.calibration.json head.channel-map.json head.test-set.json \
+           head.minute-prior.json; do
     scp -q "$PI_HOST:$PI_REMOTE_DIR/$f" "$MODELS_DIR/$f" 2>/dev/null || true
   done
 else
@@ -141,6 +142,18 @@ cmd_create() {
     cp "$MODELS_DIR/head.channel-map.json" "$stage/head.channel-map.json"
   [ -f "$MODELS_DIR/head.test-set.json" ] && \
     cp "$MODELS_DIR/head.test-set.json" "$stage/head.test-set.json"
+  # Minute-prior sidecar (MLP4, seit 2026-07). NICHT optional: nn.go
+  # loadMinutePrior BRICHT AB, wenn sie fehlt ("minute-prior sidecar
+  # missing") — ein MLP4-Anker ohne sie ist gar nicht restaurierbar. Und
+  # der schlimmere Fall ist der, in dem sie NICHT fehlt: `install`
+  # ersetzt head.bin im Modellverzeichnis, die dort liegende Tabelle
+  # bleibt aber die der GEGENWART. Der restaurierte Kopf würde dann
+  # gegen eine anders verteilte Eingabe rechnen, still und ohne Fehler —
+  # genau das, was der Kommentar an loadMinutePrior ausschliessen soll.
+  #
+  # Gefunden 2026-08-05: KEIN Anker seit der MLP4-Umstellung hatte sie.
+  [ -f "$MODELS_DIR/head.minute-prior.json" ] && \
+    cp "$MODELS_DIR/head.minute-prior.json" "$stage/head.minute-prior.json"
 
   local body; body=$(mktemp)
   {
@@ -198,12 +211,40 @@ cmd_install() {
   # rarely) — install then keeps whatever backbone is already deployed.
   [ -f "$stage/backbone.onnx" ] || echo "  note: no backbone in release — keeping current backbone.onnx"
 
+  # ⚠️ MLP4 ohne eigene minute-prior.json ist NICHT restaurierbar.
+  #
+  # tv-detect bricht ohne die Datei ab. Der gefaehrlichere Fall ist aber,
+  # dass sie im Zielverzeichnis schon liegt — dann laeuft der alte Kopf
+  # gegen die HEUTIGE Prior-Tabelle, still und ohne Fehlermeldung, gegen
+  # eine anders verteilte Eingabe als die, mit der er trainiert wurde.
+  #
+  # Anker vor 2026-08-05 haben die Datei nicht (sie wurde nie gebuendelt).
+  # Hier abzubrechen ist richtig: ein Rollback, der leise das falsche
+  # Modell-Eingabe-Paar herstellt, ist schlimmer als ein Rollback, der
+  # nicht stattfindet. Bewusst ueberschreibbar via ANCHOR_ALLOW_PRIOR_MISMATCH=1.
+  if [ "$(head -c4 "$stage/head.bin")" = "MLP4" ] && \
+     [ ! -f "$stage/head.minute-prior.json" ]; then
+    if [ "${ANCHOR_ALLOW_PRIOR_MISMATCH:-0}" = "1" ]; then
+      echo "  WARNUNG: MLP4-Anker ohne head.minute-prior.json — der Kopf" >&2
+      echo "  laeuft gegen die AKTUELLE Prior-Tabelle. Auf ausdruecklichen" >&2
+      echo "  Wunsch (ANCHOR_ALLOW_PRIOR_MISMATCH=1) trotzdem fortgesetzt." >&2
+    else
+      echo "error: $tag ist ein MLP4-Kopf, im Release fehlt aber" >&2
+      echo "  head.minute-prior.json. Ein Restore wuerde ihn still gegen die" >&2
+      echo "  aktuelle Prior-Tabelle rechnen lassen (falsch verteilte Eingabe)." >&2
+      echo "  Anker ab 2026-08-05 buendeln sie. Fuer aeltere: neu ankern oder" >&2
+      echo "  ANCHOR_ALLOW_PRIOR_MISMATCH=1 setzen, wenn die Abweichung" >&2
+      echo "  bewusst in Kauf genommen wird." >&2
+      exit 1
+    fi
+  fi
+
   local ts; ts=$(date +%s)
   mkdir -p "$MODELS_DIR"
   # head.bin LAST so a daemon watching it never sees a new head with the
   # old (mismatched) channel-map.
   for f in backbone.onnx head.history.json head.calibration.json \
-           head.channel-map.json head.test-set.json head.bin; do
+           head.channel-map.json head.test-set.json head.minute-prior.json head.bin; do
     [ -f "$MODELS_DIR/$f" ] && cp "$MODELS_DIR/$f" "$MODELS_DIR/$f.bak.$ts"
     [ -f "$stage/$f" ] && cp "$stage/$f" "$MODELS_DIR/$f"
   done
@@ -217,12 +258,12 @@ cmd_install() {
   if [ "${MODELS_REMOTE:-0}" = "1" ]; then
     echo "→ pushing models back to $PI_HOST:$PI_REMOTE_DIR ..."
     ssh "$PI_HOST" "mkdir -p '$PI_REMOTE_DIR/rollback-bak-$ts' && \
-      for f in head.bin backbone.onnx head.history.json head.calibration.json head.channel-map.json head.test-set.json; do \
+      for f in head.bin backbone.onnx head.history.json head.calibration.json head.channel-map.json head.test-set.json head.minute-prior.json; do \
         [ -f '$PI_REMOTE_DIR'/\$f ] && cp '$PI_REMOTE_DIR'/\$f '$PI_REMOTE_DIR/rollback-bak-$ts/'; \
       done"
     # head.bin LAST (daemon mtime-watch consistency, see above).
     for f in backbone.onnx head.history.json head.calibration.json \
-             head.channel-map.json head.test-set.json head.bin; do
+             head.channel-map.json head.test-set.json head.minute-prior.json head.bin; do
       [ -f "$MODELS_DIR/$f" ] && scp -q "$MODELS_DIR/$f" \
         "$PI_HOST:$PI_REMOTE_DIR/$f"
     done

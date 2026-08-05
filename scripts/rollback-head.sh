@@ -19,7 +19,13 @@
 # Pre-2026-05-30 archives are head-only and therefore NOT safely restorable.
 set -euo pipefail
 
-GATEWAY="${GATEWAY:-http://raspberrypi5lan:8080}"
+# ⚠️ MUSS zum Ziel des Trainers passen (tv-train-head.sh: GATEWAY=
+# https://raspberrypi5lan:8443). Hier stand bis 2026-08-05
+# http://raspberrypi5lan:8080 — der hls-gateway, der am 2026-06-01
+# stillgelegt wurde. Ein Rollback wäre also genau dann gescheitert, wenn
+# man ihn braucht: nach einem schlechten Deploy, unter Zeitdruck.
+GATEWAY="${GATEWAY:-https://raspberrypi5lan:8443}"
+CURL_OPTS=(-sk)  # -k: Caddy fährt das interne Zertifikat
 ARCHIVE="${TRAIN_OUT:-/tmp/tv-train-head-out}/archive"
 HISTORY="${TRAIN_OUT:-/tmp/tv-train-head-out}/head.history.json"
 
@@ -79,7 +85,7 @@ case "$1" in
     ( cd "$stage" && tar czf bundle.tar.gz head.bin head.*.json )
 
     echo "rolling back to head.$ts (IoU $(iou_for_ts "$ts")) → $GATEWAY …"
-    resp=$(curl -fsS -X POST --data-binary "@$stage/bundle.tar.gz" \
+    resp=$(curl -fsS "${CURL_OPTS[@]}" -X POST --data-binary "@$stage/bundle.tar.gz" \
         -H "Content-Type: application/gzip" \
         "$GATEWAY/api/internal/head-bundle")
     echo "  gateway: $resp"

@@ -1138,17 +1138,49 @@ def _fetch_detect_config(uuid):
     return cfg
 
 
+# Block-forming decoder this evaluation uses. MUST track what the Mac daemon
+# actually runs (tv-thumbs-daemon.py process_detect), because everything
+# downstream — the head-to-head deploy gate, the golden trend, the
+# active-learning cohort weights — is computed from the per-rec IoU this
+# produces.
+#
+# ⚠️ Until 2026-08-05 this was not passed at all. tv-detect's --decoder
+# defaults to "form", while PRODUCTION has run "hsmm --hsmm-dur-w 15" since
+# 2026-07-29. For a week the nightly selected heads by a decoder that no
+# longer cut a single recording.
+#
+# That is not a cosmetic mismatch, because Form is structurally almost blind
+# to the head: its per-frame score is a logo/NN blend at nn_weight 0.3, so
+# the NN carries 30% of the decision, while the HSMM consumes the raw NN
+# probability as 100% of its emission. Measured 2026-08-05 on 14 golden
+# recordings with this function's own flags, swapping ONLY the head that
+# produced the probabilities (deployed 07-29 champion vs the 08-03 head):
+#
+#     under form (what the gate saw):     0.773 vs 0.808   -> +0.035
+#     under hsmm (what production does):  0.828 vs 0.939   -> +0.111
+#
+# and 11 of the 14 scored BYTE-IDENTICAL under form for the two heads. The
+# gate could barely see a difference that costs production 11 IoU points.
+#
+# ⚠️ Changing this makes every golden/per-rec number before 2026-08-05
+# incomparable to every number after — they measure different block formers.
+# `decoder` is therefore persisted into golden-trend.jsonl; compare only
+# within one decoder.
+EVAL_DECODER = ["--decoder", "hsmm", "--hsmm-dur-w", "15"]
+
+
 def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60):
     """Feeds one candidate's per-frame (fps_extract-rate) ad-probability
-    through the real blocks.Form() pipeline via `tv-detect --replay-signals`
-    against the cached decode signals. Builds the CLI flags the exact same
-    way tv-thumbs-daemon.py's process_detect does (same always-pass-
-    nn-weight/logo-smooth, only-pass-if-set nn-gate/start-extend/
-    end-extend, hardcoded bumper-snap=90 semantics) — so a per-show/
-    per-channel override actually changes what eval measures, instead of
-    silently falling back to tv-detect's bare CLI defaults (which differ
-    from production's: logo-smooth defaults to 0 in production vs 5 in
-    the CLI, bumper-snap to 90 vs 10). Returns a [(start_s,end_s), ...]
+    through the real production block former via `tv-detect
+    --replay-signals` against the cached decode signals. Builds the CLI
+    flags the exact same way tv-thumbs-daemon.py's process_detect does
+    (same always-pass-nn-weight/logo-smooth, only-pass-if-set nn-gate/
+    start-extend/end-extend, hardcoded bumper-snap=90 semantics, and
+    EVAL_DECODER) — so a per-show/per-channel override actually changes
+    what eval measures, instead of silently falling back to tv-detect's
+    bare CLI defaults (which differ from production's: logo-smooth
+    defaults to 0 in production vs 5 in the CLI, bumper-snap to 90 vs 10,
+    and the decoder to form vs hsmm). Returns a [(start_s,end_s), ...]
     list, or None on any failure (caller falls back to to_blocks())."""
     try:
         fps, frame_count = _signals_header(cache_path)
@@ -1221,6 +1253,9 @@ def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60)
             cmd += ["--start-extend", str(cfg["start_extend_s"])]
         if cfg.get("end_extend_s", 0):
             cmd += ["--end-extend", str(cfg["end_extend_s"])]
+        # ⚠️ Zuletzt, damit klar bleibt: OHNE das hier misst die ganze
+        # Bewertung "form", und die Produktion schneidet mit "hsmm".
+        cmd += EVAL_DECODER
         cmd.append("dummy")
         r = subprocess.run(cmd, check=True, capture_output=True,
                            text=True, timeout=60)
@@ -1715,10 +1750,23 @@ def golden_bestwert(trend_pfad, set_hash):
     zu vergleichen waere genau der Fehler, den der Hash verhindern soll — und
     Eintraege mit `missing` sind nicht komposition-konstant, zaehlen also
     ebenfalls nicht.
+
+    ⚠️ Und nur Eintraege mit DEMSELBEN DECODER. Bis 2026-08-05 wurde der
+    Golden-Wert mit `form` gemessen, obwohl die Produktion seit 07-29 `hsmm`
+    faehrt (s. EVAL_DECODER). Das ist derselbe Fehler eine Ebene tiefer: eine
+    stille Neudefinition dessen, was die Zahl bedeutet. hsmm liegt auf diesem
+    Satz systematisch HOEHER als form (gemessen +0.14 Mittel), ein
+    form-Bestwert waere als Boden also wirkungslos — die Sperrklinke haette
+    genau das nicht mehr getan, wofuer es sie gibt.
+
+    Folge: nach der Umstellung ist der Boden zunaechst leer und baut sich ab
+    der ersten hsmm-Nacht neu auf. Das ist gewollt; ein geerbter Boden waere
+    schlimmer als keiner.
     """
     best, best_ts = None, None
     if not trend_pfad or not Path(trend_pfad).exists():
         return None, None
+    jetzt = " ".join(EVAL_DECODER) or "form"
     for ln in Path(trend_pfad).read_text().splitlines():
         if not ln.strip():
             continue
@@ -1729,6 +1777,8 @@ def golden_bestwert(trend_pfad, set_hash):
         if not e.get("deployed") or e.get("missing"):
             continue
         if e.get("set_hash") != set_hash:
+            continue
+        if (e.get("decoder") or "form") != jetzt:
             continue
         v = e.get("golden_median")
         if v is not None and (best is None or float(v) > best):
@@ -1753,6 +1803,10 @@ def golden_stau(trend_pfad, set_hash):
         except Exception:
             continue
         if e.get("set_hash") != set_hash:
+            continue
+        # Gleiche Begruendung wie in golden_bestwert: ein Stau, der aus
+        # form-Naechten stammt, sagt ueber die hsmm-Reihe nichts.
+        if (e.get("decoder") or "form") != (" ".join(EVAL_DECODER) or "form"):
             continue
         eintraege.append(e)
     n = 0
@@ -1798,8 +1852,13 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
             Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
             meta.get("set_hash"))
         if best is None:
+            # ⚠️ Diese Zeile erscheint auch in der ERSTEN Nacht nach einem
+            # Decoder-Wechsel, nicht nur bei einem neuen Golden-Satz. Ohne den
+            # Hinweis liest sie sich wie ein Satz-Wechsel, und der Boden sieht
+            # aus, als waere er verloren gegangen — er wird nur neu aufgebaut.
             melde(f"  Golden-Boden: noch kein Bestwert fuer diesen Satz "
-                  f"(set_hash {str(meta.get('set_hash'))[:8]}) — heutiger Wert "
+                  f"(set_hash {str(meta.get('set_hash'))[:8]}, decoder "
+                  f"{' '.join(EVAL_DECODER) or 'form'}) — heutiger Wert "
                   f"{g_cand:.3f} wird der erste")
             return deploy, reason
 
@@ -5623,6 +5682,14 @@ def main():
                     "golden_mean": round(_gmean, 4),
                     "set_version": _gmeta.get("version", 1),
                     "set_hash": _gmeta.get("set_hash"),
+                    # Which block former produced this number. Entries
+                    # before 2026-08-05 have no key and were all "form",
+                    # while production ran "hsmm" from 07-29 — those
+                    # medians are NOT comparable to later ones. Without
+                    # this field the discontinuity would look like a
+                    # model jump, which is exactly the kind of silent
+                    # re-definition the set_hash was added to prevent.
+                    "decoder": " ".join(EVAL_DECODER) or "form",
                     "missing": _missing,
                     "deployed": deploy}) + "\n")
             if _missing:

@@ -26,8 +26,8 @@ set -euo pipefail
 # man ihn braucht: nach einem schlechten Deploy, unter Zeitdruck.
 GATEWAY="${GATEWAY:-https://raspberrypi5lan:8443}"
 CURL_OPTS=(-sk)  # -k: Caddy fährt das interne Zertifikat
-ARCHIVE="${TRAIN_OUT:-/tmp/tv-train-head-out}/archive"
-HISTORY="${TRAIN_OUT:-/tmp/tv-train-head-out}/head.history.json"
+ARCHIVE="${TRAIN_OUT:-$HOME/.cache/tv-train-head-out}/archive"
+HISTORY="${TRAIN_OUT:-$HOME/.cache/tv-train-head-out}/head.history.json"
 
 usage() { echo "usage: $0 {list | restore <ts>}" >&2; exit 1; }
 [ $# -ge 1 ] || usage
@@ -67,6 +67,18 @@ case "$1" in
       fi
     done
     [ "$found" = 1 ] || echo "  (none)"
+    # ⚠️ Diese Liste ist NICHT das ganze Sicherheitsnetz. Sie zeigt nur den
+    # lokalen Bestand; vollständige Bündel liegen zusätzlich off-site als
+    # GitHub-Releases (model-anchor.sh, ein Anker je echtem Deploy, mit
+    # Kanal-Karte). Am 2026-08-05 hat mich genau diese Verkürzung in die
+    # Irre geführt: die lokale Liste zeigte drei Einträge, ich schloss
+    # daraus „Champion unwiederbringlich" — und off-site lagen vierzehn,
+    # der gesuchte darunter. Deshalb steht der Hinweis hier und nicht in
+    # einer README, die im Ernstfall niemand liest.
+    echo
+    echo "  weiter zurück? Off-Site-Anker (mit Kanal-Karte):"
+    echo "    ./scripts/model-anchor.sh list"
+    echo "    ./scripts/model-anchor.sh install model-anchor-auto-<ts>"
     ;;
 
   restore)

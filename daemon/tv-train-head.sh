@@ -133,7 +133,22 @@ TRAIN_START_TS=$(date +%s)
 # Local output dir — head.bin + sidecars + archive/ all land here.
 # Old SMB-mounted path was ~/mnt/pi-tv/hls/.tvd-models/ which broke
 # when SMB unmounted; we now write locally and POST to Pi at end.
-TRAIN_OUT="/tmp/tv-train-head-out"
+#
+# ⚠️ NICHT nach /tmp. Dort lag es bis 2026-08-05, und damit war
+# `archive/` — die EINZIGE Quelle vollständiger Bündel (head + Kanal-Karte
+# + Kalibrierung) — nach jedem Mac-Neustart leer. Gemessen an dem Tag: das
+# Pi-Archiv hielt 177 Köpfe zurück bis zum 25. April, aber ausschließlich
+# `.bin` ohne Sidecars; lokal existierten noch DREI Zeitstempel. Die reale
+# Rollback-Tiefe von `rollback-head.sh` war damit „seit dem letzten
+# Neustart" statt eines halben Jahres — und das Werkzeug verweigert (zu
+# Recht) einen Kopf ohne passende Kanal-Karte, weil falsch ausgerichtete
+# Kanal-Spalten stille Fehlinferenz ergeben.
+#
+# Das Off-Site-Ankern via model-anchor.sh (GitHub-Releases) war intakt und
+# hat den Fall gerettet — aber es ist der DR-Weg, nicht der Alltagsweg.
+# Beide sollen tragen. ~/.cache liegt neben den übrigen Modell-Caches
+# (tvd-features, tvd-train-archive) und überlebt Neustarts.
+TRAIN_OUT="${TRAIN_OUT:-$HOME/.cache/tv-train-head-out}"
 mkdir -p "$TRAIN_OUT"
 LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
 

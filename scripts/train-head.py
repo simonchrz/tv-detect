@@ -1848,7 +1848,9 @@ def main():
     # the caches and the snapshot dir exists.
     ap.add_argument("--backbone", default=os.path.expanduser(
         "~/.cache/tv-detect-daemon/backbone.onnx"))
-    ap.add_argument("--output", default="/tmp/tv-train-head-out/head.bin")
+    ap.add_argument("--output",
+                    default=os.path.expanduser(
+                        "~/.cache/tv-train-head-out/head.bin"))
     ap.add_argument("--hls-root", default="/tmp/tv-train-snapshot")
     ap.add_argument("--feature-cache", default=os.path.expanduser(
         "~/.cache/tvd-features"))

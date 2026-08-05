@@ -91,9 +91,43 @@ case "$1" in
 
     stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
     cp "$h" "$stage/head.bin"
-    for suf in channel-map calibration test-set; do
+    for suf in channel-map calibration test-set minute-prior; do
       [ -f "$ARCHIVE/head.$ts.$suf.json" ] && cp "$ARCHIVE/head.$ts.$suf.json" "$stage/head.$suf.json"
     done
+    # ⚠️ Ein MLP4-Kopf braucht seine eigene minute-prior-Tabelle; das Archiv
+    # legt sie bis heute nicht ab (dort liegen head.<ts>.bin + channel-map/
+    # calibration/test-set). Der zurueckgerollte Kopf rechnet dann gegen die
+    # Tabelle der Gegenwart. NICHT abbrechen wie beim fehlenden channel-map:
+    # dort waeren die One-Hots verschoben (kaputte Inferenz), hier sind es
+    # gemessen -0.004 IoU (2026-08-05, 12 Aufnahmen). Sichtbar muss es aber
+    # sein — genau so ist es am 05-08 unbemerkt passiert.
+    if [ "$(head -c4 "$stage/head.bin")" = "MLP4" ] && \
+       [ ! -f "$stage/head.minute-prior.json" ]; then
+      echo "  WARNUNG: head.$ts ist MLP4, das Archiv hat keine passende" >&2
+      echo "  minute-prior.json — der Kopf laeuft gegen die aktuelle Tabelle" >&2
+      echo "  (~-0.004 IoU). Der naechste Nightly-Deploy paart wieder sauber." >&2
+    fi
+    # ⚠️ head.gate.bin gehoert zum ERSETZTEN Kopf, nicht zu diesem. Bliebe es
+    # liegen, verglichen die naechsten Naechte den Kandidaten gegen einen
+    # Kopf, der gar nicht mehr deployt ist — das Gate verteidigte ein
+    # Qualitaetsniveau, das die Produktion nicht hat, und koennte einen
+    # Kandidaten ablehnen, der den TATSAECHLICH deployten schlaegt.
+    # train-head.py faellt ohne gate.bin auf head.bin zurueck, also auf genau
+    # den zurueckgerollten Kopf. Beobachtet am 05-08: head.bin 07-29,
+    # head.gate.bin 08-04.
+    # Das Gateway kennt nur head-bundle (schreiben), kein Loeschen — also
+    # per ssh. Schlaegt das fehl (Fernzugriff ohne ssh), muss es sichtbar
+    # gesagt werden statt still zu unterbleiben.
+    GATE_REMOTE="${PI_HOST:-raspberrypi5lan}"
+    echo "  raeume head.gate.bin (gehoert zum ersetzten Kopf) ..."
+    if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$GATE_REMOTE" \
+         "rm -f /mnt/tv/hls/.tvd-models/head.gate.bin" 2>/dev/null; then
+      echo "  ACHTUNG: head.gate.bin konnte nicht entfernt werden." >&2
+      echo "  Bis das passiert, vergleicht der naechtliche Gate-Test gegen den" >&2
+      echo "  ERSETZTEN Kopf und kann einen Kandidaten ablehnen, der den jetzt" >&2
+      echo "  deployten schlaegt. Von Hand:" >&2
+      echo "    ssh $GATE_REMOTE rm /mnt/tv/hls/.tvd-models/head.gate.bin" >&2
+    fi
     ( cd "$stage" && tar czf bundle.tar.gz head.bin head.*.json )
 
     echo "rolling back to head.$ts (IoU $(iou_for_ts "$ts")) → $GATEWAY …"

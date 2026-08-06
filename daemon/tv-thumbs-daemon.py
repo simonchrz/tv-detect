@@ -955,10 +955,27 @@ def _pi_source_size(uuid):
 
 
 def _invalidate_derived(uuid):
-    """Drop stale feature .npy + archive .npz for a uuid so the nightly
-    re-extracts from the fresh source instead of training on wrong-channel
-    features (the cache key is mtime-based, but the archive pins the old .npy
-    path, so both must go). Returns count removed."""
+    """Drop stale feature .npy + archive .npz + whisper transcript for a uuid
+    so the nightly re-extracts from the fresh source instead of training on
+    wrong-channel features (the cache key is mtime-based, but the archive pins
+    the old .npy path, so both must go). Returns count removed.
+
+    ⚠️ Das Whisper-Transkript gehoert DAZU, und das fehlte bis 2026-08-06.
+    Es beschreibt den Ton der ALTEN Quelle; nach einem Re-Filter oder einer
+    Kanal-Korrektur passt es nicht mehr zum Material — dieselbe Fehlerklasse,
+    die fuer .npy/.npz laengst geschlossen ist. Es faellt nur nicht auf, weil
+    nichts abstuerzt: der Kopf bekommt einfach falsche Ton-Evidenz.
+
+    Und die wiegt schwer. Die Whisper-Spalte hat in der ersten Schicht Norm
+    15.5 gegen Median 1.49 der Backbone-Spalten; dieselbe Aufnahme mit/ohne
+    korrekten Feed schwankt bis 0.6 IoU. Belegt ist der Fall auch: der
+    Backfill am 2026-08-06 fand 34 Aufnahmen, deren whisper.json aelter war
+    als ihre Quelle.
+
+    Das Transkript wird beim naechsten Detect-Zyklus neu erzeugt
+    (WHISPER_TRANSCRIBE) und dabei auch neu in den Suchindex geschoben — ein
+    veraltetes Transkript ist auch fuer /api/recordings/search falsch, das
+    Loeschen ist dort also ebenfalls die richtige Richtung."""
     n = 0
     try:
         for p in TVD_FEATURES.glob(f"{uuid}-*.npy"):
@@ -968,6 +985,10 @@ def _invalidate_derived(uuid):
     z = TVD_ARCHIVE / f"{uuid}.npz"
     try:
         if z.exists(): z.unlink(); n += 1
+    except Exception: pass
+    w = WHISPER_CACHE / f"{uuid}.whisper.json"
+    try:
+        if w.exists(): w.unlink(); n += 1
     except Exception: pass
     return n
 

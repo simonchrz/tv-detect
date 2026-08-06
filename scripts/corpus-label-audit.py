@@ -112,7 +112,12 @@ DUMPS = os.path.expanduser("~/.cache/tv-detect-daemon/emit-signals")
 def load_head(path):
     raw = open(path, "rb").read()
     name = raw[:4].decode("latin1")
-    nh = {"MLP4": 12, "MLP3": 11, "MLP2": 10}.get(name)
+    # MLP5 (2026-08-06) haengt `n_whispermask` als 13. uint32 an; die
+    # Spalte selbst steht in build_X ganz hinten. Ohne diesen Eintrag
+    # bricht das naechtliche Label-Audit ab, sobald ein v5-Kopf deployt
+    # ist — nicht fatal fuer den Lauf (der Orchestrator faengt es ab),
+    # aber die Pruefung faellt still aus.
+    nh = {"MLP5": 13, "MLP4": 12, "MLP3": 11, "MLP2": 10}.get(name)
     if nh is None:
         raise SystemExit(f"unbekannter head-magic {name!r}")
     hdr = struct.unpack(f"<{nh}I", raw[:nh * 4])
@@ -161,7 +166,21 @@ def whisper_per_sec(uuid, n):
     return out
 
 
-def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral):
+def whisper_present(uuid):
+    """Spiegelt train-head.py's _whisper_present: Datei da UND parsebar UND
+    `windows` nicht leer. Eine blosse Existenzpruefung liefe bei einer
+    abgeschnittenen Datei von der Trainingsseite weg."""
+    p = os.path.join(WHISPER, f"{uuid}.whisper.json")
+    if not os.path.isfile(p):
+        return False
+    try:
+        return bool(json.loads(open(p).read()).get("windows"))
+    except Exception:
+        return False
+
+
+def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
+            with_whispermask=False):
     T = feat.shape[0]
     oh = np.zeros((T, n_chan), np.float32)
     if slug in chan_idx:
@@ -179,7 +198,13 @@ def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral):
         mp = arr[minutes].reshape(-1, 1)
     else:
         mp = np.full((T, 1), neutral, np.float32)
-    return np.hstack([feat, oh, wp, dp, dn, mp]).astype(np.float32)
+    parts = [feat, oh, wp, dp, dn, mp]
+    if with_whispermask:
+        # v5: 1.0 wenn ueberhaupt Whisper-Daten vorliegen. GANZ HINTEN,
+        # damit die v2..v4-Reihenfolge ein Praefix bleibt.
+        parts.append(np.full((T, 1),
+                             1.0 if whisper_present(uuid) else 0.0, np.float32))
+    return np.hstack(parts).astype(np.float32)
 
 
 
@@ -226,7 +251,11 @@ def main():
     pj = json.loads(open(prior_path).read()) if os.path.exists(prior_path) else {}
     prior = pj.get("priors", pj if "priors" not in pj else {})
     neutral = float(pj.get("neutral", 0.25))
-    n_chan = idim - 1282 - 4
+    # v4: 1282 Backbone + n_chan + whisper + 2 temporal + minute-prior.
+    # v5 hat eine Spalte mehr (whispermask) — am Magic erkannt, damit
+    # n_chan nicht um eins danebenliegt.
+    is_v5 = open(os.path.join(MODELS, "head.bin"), "rb").read(4) == b"MLP5"
+    n_chan = idim - 1282 - (5 if is_v5 else 4)
     print(f"head input_dim={idim}  n_chan={n_chan}  "
           f"channel-map={len(chan_idx)}  prior-slugs={len(prior)}  "
           f"neutral={neutral:.3f}")
@@ -266,7 +295,7 @@ def main():
                 continue
             feat = np.load(fp)
             X = build_X(feat, m.get("slug", ""), u, int(m.get("start_ts") or 0),
-                        chan_idx, n_chan, prior, neutral)
+                        chan_idx, n_chan, prior, neutral, is_v5)
             if X.shape[1] != idim:
                 # Older extraction with a different feature width — not a
                 # verification failure, just not comparable.
@@ -317,7 +346,8 @@ def main():
             continue
         feat = np.load(fp, mmap_mode="r")
         X = build_X(np.asarray(feat), m.get("slug", ""), u,
-                    int(m.get("start_ts") or 0), chan_idx, n_chan, prior, neutral)
+                    int(m.get("start_ts") or 0), chan_idx, n_chan, prior,
+                    neutral, is_v5)
         if X.shape[1] != idim:
             skipped += 1
             continue

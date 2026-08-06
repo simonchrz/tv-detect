@@ -892,3 +892,155 @@ func TestConfidenceMLPChunk_MinutePriorMatchesPython(t *testing.T) {
 			out[0], sig(0.25))
 	}
 }
+
+func writeTestMLPHeadV5(t *testing.T, path string,
+	inDim, hidden, outDim, nLogo, nAudio, nChan, nWhisper, nTemporal,
+	nMinutePrior, nWhisperMask int,
+	W1, b1, W2, b2 []float32) {
+	t.Helper()
+	if len(W1) != inDim*hidden ||
+		len(b1) != hidden ||
+		len(W2) != hidden*outDim ||
+		len(b2) != outDim {
+		t.Fatalf("writeTestMLPHeadV5: weight shape mismatch")
+	}
+	header := make([]byte, 52)
+	binary.LittleEndian.PutUint32(header[0:], 0x35504C4D) // "MLP5"
+	binary.LittleEndian.PutUint32(header[4:], 5)
+	binary.LittleEndian.PutUint32(header[8:], uint32(inDim))
+	binary.LittleEndian.PutUint32(header[12:], uint32(hidden))
+	binary.LittleEndian.PutUint32(header[16:], uint32(outDim))
+	binary.LittleEndian.PutUint32(header[20:], uint32(nnFeatDim))
+	binary.LittleEndian.PutUint32(header[24:], uint32(nLogo))
+	binary.LittleEndian.PutUint32(header[28:], uint32(nAudio))
+	binary.LittleEndian.PutUint32(header[32:], uint32(nChan))
+	binary.LittleEndian.PutUint32(header[36:], uint32(nWhisper))
+	binary.LittleEndian.PutUint32(header[40:], uint32(nTemporal))
+	binary.LittleEndian.PutUint32(header[44:], uint32(nMinutePrior))
+	binary.LittleEndian.PutUint32(header[48:], uint32(nWhisperMask))
+	body := make([]byte, 0, (len(W1)+len(b1)+len(W2)+len(b2))*4)
+	for _, v := range append(append(append([]float32{}, W1...), b1...), append(W2, b2...)...) {
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], math.Float32bits(v))
+		body = append(body, b[:]...)
+	}
+	if err := os.WriteFile(path, append(header, body...), 0o644); err != nil {
+		t.Fatalf("write head: %v", err)
+	}
+}
+
+// Der Kern der v5-Spalte: sie muss 1.0 sein, wenn Whisper-Daten
+// vorliegen, und 0.0, wenn nicht — bei sonst identischer Eingabe.
+//
+// ⚠️ Genau diese Unterscheidung ist der Zweck. Ohne sie liefert die
+// Whisper-WAHRSCHEINLICHKEITS-Spalte in beiden Faellen 0.5, und der Kopf
+// kann "kein Ton-Signal" nicht von "Ton sagt 50/50" trennen. Wenn dieser
+// Test faellt, ist die Spalte entweder tot oder falsch positioniert, und
+// beides sieht in der Produktion aus wie ein leicht schlechteres Modell
+// statt wie ein Fehler.
+func TestMLPHeadV5_WhisperMaskUnterscheidetFehlendVonNeutral(t *testing.T) {
+	dir := t.TempDir()
+	headPath := filepath.Join(dir, "head.bin")
+
+	const H = 1
+	const nChan, nLogo, nAudio = 2, 1, 1
+	const nWhisper, nTemporal, nMinutePrior, nWhisperMask = 1, 2, 1, 1
+	inDim := nnFeatDim + nLogo + nAudio + nChan + nWhisper + nTemporal +
+		nMinutePrior + nWhisperMask
+
+	// NUR die Maskenspalte traegt Gewicht — so haengt die Ausgabe
+	// ausschliesslich an ihr, und eine Verschiebung der Offsets faellt
+	// sofort auf.
+	maskCol := nnFeatDim + nLogo + nAudio + nChan + nWhisper + nTemporal +
+		nMinutePrior
+	W1 := make([]float32, inDim*H)
+	W1[maskCol*H+0] = 6.0
+	b1 := []float32{0}
+	W2 := []float32{1.0}
+	b2 := []float32{0}
+	writeTestMLPHeadV5(t, headPath, inDim, H, 1, nLogo, nAudio, nChan,
+		nWhisper, nTemporal, nMinutePrior, nWhisperMask, W1, b1, W2, b2)
+	if err := os.WriteFile(filepath.Join(dir, "head.channel-map.json"),
+		[]byte(`{"version":1,"n":2,"slugs":["alpha","beta"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "head.minute-prior.json"),
+		[]byte(`{"version":1,"neutral":0.25,"priors":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lade := func(whisper []float64) *NNDetector {
+		d := &NNDetector{headPath: headPath, channelSlug: "alpha", mlpChanIdx: -1}
+		if err := d.reloadHead(); err != nil {
+			t.Fatalf("reloadHead MLP5: %v", err)
+		}
+		if d.mlpNWhisperMask != 1 {
+			t.Fatalf("mlpNWhisperMask=%d, will 1 — Header falsch gelesen",
+				d.mlpNWhisperMask)
+		}
+		if d.mlpInDim != inDim {
+			t.Fatalf("mlpInDim=%d, will %d", d.mlpInDim, inDim)
+		}
+		d.mlpWhisperProbs = whisper
+		return d
+	}
+
+	embeds := make([]float32, nnFeatDim)
+	logo := []float64{0.5}
+	rms := []float64{0.5}
+
+	mit := lade([]float64{0.5})
+	ohne := lade(nil)
+	pMit := mit.confidenceMLPChunk(embeds, logo, rms, 1, 1, 0)[0]
+	pOhne := ohne.confidenceMLPChunk(embeds, logo, rms, 1, 1, 0)[0]
+
+	// sigmoid(6*1) vs sigmoid(6*0)
+	wollMit := 1 / (1 + math.Exp(-6.0))
+	wollOhne := 0.5
+	if math.Abs(pMit-wollMit) > 1e-6 {
+		t.Errorf("mit Whisper: %.6f, will %.6f", pMit, wollMit)
+	}
+	if math.Abs(pOhne-wollOhne) > 1e-6 {
+		t.Errorf("ohne Whisper: %.6f, will %.6f", pOhne, wollOhne)
+	}
+	if math.Abs(pMit-pOhne) < 0.4 {
+		t.Errorf("Maske ohne Wirkung: mit %.6f vs ohne %.6f — die Spalte "+
+			"unterscheidet fehlende Daten NICHT von neutralen", pMit, pOhne)
+	}
+}
+
+// Ein v4-Kopf darf von der v5-Erweiterung unberuehrt bleiben: gleiche
+// Offsets, keine Maskenspalte. Sonst haette der Header-Bump die
+// bestehenden Modelle still verschoben.
+func TestMLPHeadV4_BleibtOhneMaske(t *testing.T) {
+	dir := t.TempDir()
+	headPath := filepath.Join(dir, "head.bin")
+	const H = 1
+	const nChan, nLogo, nAudio, nWhisper, nTemporal, nMinutePrior = 2, 1, 1, 1, 2, 1
+	inDim := nnFeatDim + nLogo + nAudio + nChan + nWhisper + nTemporal + nMinutePrior
+	W1 := make([]float32, inDim*H)
+	whisperCol := nnFeatDim + nLogo + nAudio + nChan
+	W1[whisperCol*H+0] = 4.0
+	writeTestMLPHeadV4(t, headPath, inDim, H, 1, nLogo, nAudio, nChan,
+		nWhisper, nTemporal, nMinutePrior,
+		W1, []float32{0}, []float32{1.0}, []float32{0})
+	if err := os.WriteFile(filepath.Join(dir, "head.channel-map.json"),
+		[]byte(`{"version":1,"n":2,"slugs":["alpha","beta"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "head.minute-prior.json"),
+		[]byte(`{"version":1,"neutral":0.25,"priors":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &NNDetector{headPath: headPath, channelSlug: "alpha", mlpChanIdx: -1}
+	if err := d.reloadHead(); err != nil {
+		t.Fatalf("reloadHead MLP4: %v", err)
+	}
+	if d.mlpNWhisperMask != 0 {
+		t.Errorf("v4-Kopf meldet mlpNWhisperMask=%d, will 0",
+			d.mlpNWhisperMask)
+	}
+	if d.mlpInDim != inDim {
+		t.Errorf("mlpInDim=%d, will %d", d.mlpInDim, inDim)
+	}
+}

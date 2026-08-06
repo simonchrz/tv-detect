@@ -44,16 +44,22 @@ type NNDetector struct {
 	// unused). Loaded from a "MLP1" magic-prefixed head.bin as
 	// specified in scripts/train-head.py write_mlp_head_v1.
 	headIsMLP       bool
-	mlpInDim        int            // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel + mlpNWhisper + mlpNTemporal)
-	mlpHidden       int            // hidden-layer size (e.g. 32)
-	mlpOutDim       int            // = 1 today; format carries the field for fwd-compat
-	mlpBackbone     int            // sanity vs nnFeatDim
-	mlpNLogo        int            // 0 or 1
-	mlpNAudio       int            // 0 or 1
-	mlpNChannel     int            // size of channel one-hot block
-	mlpNWhisper     int            // 0 or 1 — per-frame whisper-prob slot (v2+)
-	mlpNTemporal    int            // 0 or 2 — L2 distance to prev/next frame (v3+)
-	mlpNMinutePrior int            // 0 or 1 — P(ad | minute-of-hour) slot (v4+)
+	mlpInDim        int // total input dim (= mlpBackbone + mlpNLogo + mlpNAudio + mlpNChannel + mlpNWhisper + mlpNTemporal)
+	mlpHidden       int // hidden-layer size (e.g. 32)
+	mlpOutDim       int // = 1 today; format carries the field for fwd-compat
+	mlpBackbone     int // sanity vs nnFeatDim
+	mlpNLogo        int // 0 or 1
+	mlpNAudio       int // 0 or 1
+	mlpNChannel     int // size of channel one-hot block
+	mlpNWhisper     int // 0 or 1 — per-frame whisper-prob slot (v2+)
+	mlpNTemporal    int // 0 or 2 — L2 distance to prev/next frame (v3+)
+	mlpNMinutePrior int // 0 or 1 — P(ad | minute-of-hour) slot (v4+)
+	// 0 or 1 — whisper-PRESENCE slot (v5+). 1.0 when this recording has
+	// whisper data at all, 0.0 when it does not. Distinct from
+	// mlpNWhisper, which carries the probability: without this column a
+	// missing whisper feed is indistinguishable from "audio says 50/50",
+	// and that was true for half the 2026-08 training corpus.
+	mlpNWhisperMask int
 	mlpW1           []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
 	mlpB1           []float32      // mlpHidden
 	mlpW2           []float32      // (mlpHidden, mlpOutDim) row-major
@@ -266,8 +272,9 @@ func (d *NNDetector) reloadHead() error {
 	//   "MLP2" (v2) — v1 + per-frame whisper-prob input slot
 	//   "MLP3" (v3) — v2 + L2-distance-to-prev/next-frame input slots
 	//   "MLP4" (v4) — v3 + minute-of-hour-prior input slot
+	//   "MLP5" (v5) — v4 + whisper-PRESENCE slot
 	// Each gets its own loader because the header layout differs
-	// (v4 is 48 B, v3 44 B, v2 40 B, v1 36 B). Falls through to the
+	// (v5 is 52 B, v4 48 B, v3 44 B, v2 40 B, v1 36 B). Falls through to the
 	// legacy LogReg size-detection path when no magic matches.
 	if len(raw) >= 4 && raw[0] == 'M' && raw[1] == 'L' && raw[2] == 'P' {
 		switch raw[3] {
@@ -279,6 +286,8 @@ func (d *NNDetector) reloadHead() error {
 			return d.loadMLPHeadV3(raw, mtime)
 		case '4':
 			return d.loadMLPHeadV4(raw, mtime)
+		case '5':
+			return d.loadMLPHeadV5(raw, mtime)
 		}
 		// Unknown MLPx version → fall through to LogReg size
 		// detection, which will fail with a clean error rather
@@ -341,6 +350,7 @@ func (d *NNDetector) reloadHead() error {
 	d.mlpNWhisper = 0
 	d.mlpNTemporal = 0
 	d.mlpNMinutePrior = 0
+	d.mlpNWhisperMask = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -449,6 +459,7 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	d.mlpNWhisper = 0
 	d.mlpNTemporal = 0
 	d.mlpNMinutePrior = 0
+	d.mlpNWhisperMask = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -639,6 +650,7 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	d.mlpNWhisper = nWhisper
 	d.mlpNTemporal = nTemporal
 	d.mlpNMinutePrior = 0
+	d.mlpNWhisperMask = 0
 	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
@@ -753,6 +765,136 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	d.mlpNWhisper = nWhisper
 	d.mlpNTemporal = nTemporal
 	d.mlpNMinutePrior = nMinutePrior
+	d.mlpNWhisperMask = 0
+	d.mlpMinutePrior = mpPrior
+	d.mlpMPNeutral = mpNeutral
+	d.mlpW1 = W1
+	d.mlpB1 = b1
+	d.mlpW2 = W2
+	d.mlpB2 = b2
+	d.mlpChanMap = chanMap
+	d.mlpChanIdx = mlpChanIdx
+	d.headW = nil
+	d.headBias = 0
+	d.headWithLogo = false
+	d.headWithChan = false
+	d.headWithAudio = false
+	d.mu.Unlock()
+	return nil
+}
+
+// loadMLPHeadV5 parses an "MLP5"-magic head.bin (= written by
+// scripts/train-head.py write_mlp_head_v5). Identical layout to v4
+// except the header carries a 13th uint32 LE field `n_whispermask`
+// (0 or 1) at offset 48..51, growing the header from 48 to 52 bytes.
+// input_dim must equal backbone+logo+audio+channel+whisper+temporal
+// +minuteprior+whispermask.
+//
+// At inference the whisper-mask column is appended LAST (= AFTER the
+// minute prior), so the v1..v4 column order stays a prefix.
+//
+// WHY the column exists. The whisper PROBABILITY column falls back to a
+// neutral 0.5 when a recording has no whisper data, which makes "no
+// audio evidence" and "audio says 50/50" the same input. On 2026-08-06
+// that was 300 of 557 archived recordings — a June collapse in whisper
+// coverage whose sources are long deleted, so it cannot be backfilled.
+// The head weights the whisper column heavily (first-layer norm 15.5,
+// top percentile) and recordings without it scored 0.049 IoU lower
+// (p=0.034); toggling the feed on one recording moved it 0.341 -> 0.935.
+// The mask lets the head tell the two apart instead of learning to
+// half-trust a column that is real 93% of the time in production.
+//
+// MUST mirror scripts/train-head.py's _whisper_present exactly: 1.0 iff
+// whisper data exists for the recording, 0.0 otherwise. On this side
+// that is "the daemon passed --nn-whisper-json and it parsed", i.e.
+// d.mlpWhisperProbs != nil.
+func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64) error {
+	const headerLen = 52
+	if len(raw) < headerLen {
+		return fmt.Errorf("MLP5 head truncated: %d B < %d B header",
+			len(raw), headerLen)
+	}
+	u32 := func(off int) uint32 {
+		return uint32(raw[off]) | uint32(raw[off+1])<<8 |
+			uint32(raw[off+2])<<16 | uint32(raw[off+3])<<24
+	}
+	if u32(0) != 0x35504C4D {
+		return fmt.Errorf("MLP5 head magic mismatch: got 0x%08x, want 0x35504C4D",
+			u32(0))
+	}
+	if version := u32(4); version != 5 {
+		return fmt.Errorf("MLP5 head version %d unsupported (this build reads v5)",
+			version)
+	}
+	inDim := int(u32(8))
+	hidden := int(u32(12))
+	outDim := int(u32(16))
+	backbone := int(u32(20))
+	nLogo := int(u32(24))
+	nAudio := int(u32(28))
+	nChan := int(u32(32))
+	nWhisper := int(u32(36))
+	nTemporal := int(u32(40))
+	nMinutePrior := int(u32(44))
+	nWhisperMask := int(u32(48))
+	if backbone != nnFeatDim {
+		return fmt.Errorf("MLP5 head backbone_dim %d != nnFeatDim %d "+
+			"(rebuild head against the current backbone)",
+			backbone, nnFeatDim)
+	}
+	if backbone+nLogo+nAudio+nChan+nWhisper+nTemporal+nMinutePrior+
+		nWhisperMask != inDim {
+		return fmt.Errorf("MLP5 head input_dim %d inconsistent with "+
+			"backbone %d + logo %d + audio %d + chan %d + whisper %d + "+
+			"temporal %d + minuteprior %d + whispermask %d",
+			inDim, backbone, nLogo, nAudio, nChan, nWhisper, nTemporal,
+			nMinutePrior, nWhisperMask)
+	}
+	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
+	if len(raw) != expected {
+		return fmt.Errorf("MLP5 head size %d != expected %d (in=%d hid=%d out=%d)",
+			len(raw), expected, inDim, hidden, outDim)
+	}
+	off := headerLen
+	readFloats := func(n int) []float32 {
+		out := make([]float32, n)
+		for i := 0; i < n; i++ {
+			out[i] = floatLE(raw[off+i*4:])
+		}
+		off += n * 4
+		return out
+	}
+	W1 := readFloats(inDim * hidden)
+	b1 := readFloats(hidden)
+	W2 := readFloats(hidden * outDim)
+	b2 := readFloats(outDim)
+	chanMap, mlpChanIdx, err := d.loadChannelMap(nChan)
+	if err != nil {
+		return fmt.Errorf("MLP5 head: %w", err)
+	}
+	var mpPrior []float32
+	mpNeutral := float32(0.25)
+	if nMinutePrior > 0 {
+		mpPrior, mpNeutral, err = d.loadMinutePrior()
+		if err != nil {
+			return fmt.Errorf("MLP5 head: %w", err)
+		}
+	}
+	d.mu.Lock()
+	d.headIsMLP = true
+	d.headLoaded = true
+	d.headMtime = mtime
+	d.mlpInDim = inDim
+	d.mlpHidden = hidden
+	d.mlpOutDim = outDim
+	d.mlpBackbone = backbone
+	d.mlpNLogo = nLogo
+	d.mlpNAudio = nAudio
+	d.mlpNChannel = nChan
+	d.mlpNWhisper = nWhisper
+	d.mlpNTemporal = nTemporal
+	d.mlpNMinutePrior = nMinutePrior
+	d.mlpNWhisperMask = nWhisperMask
 	d.mlpMinutePrior = mpPrior
 	d.mlpMPNeutral = mpNeutral
 	d.mlpW1 = W1
@@ -808,7 +950,7 @@ func (d *NNDetector) loadMinutePrior() ([]float32, float32, error) {
 	}
 	if d.channelSlug != "" {
 		fmt.Fprintf(os.Stderr,
-			"nn: MLP4 head loaded but channel slug %q has no minute-prior "+
+			"nn: MLP4+ head loaded but channel slug %q has no minute-prior "+
 				"histogram (%d known) — using neutral %.3f\n",
 			d.channelSlug, len(sc.Priors), neutral)
 	}
@@ -1067,7 +1209,18 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	whisperOff := chanOff + d.mlpNChannel
 	temporalOff := whisperOff + d.mlpNWhisper
 	minutePriorOff := temporalOff + d.mlpNTemporal
+	whisperMaskOff := minutePriorOff + d.mlpNMinutePrior
 	whisperPerSec := d.mlpWhisperProbs
+	// v5: 1.0 wenn fuer diese Aufnahme ueberhaupt Whisper-Daten
+	// vorliegen. Konstant ueber die ganze Aufnahme — der Daemon
+	// uebergibt --nn-whisper-json entweder oder nicht. Muss
+	// _whisper_present in train-head.py entsprechen (Datei existiert),
+	// sonst sieht der Kopf im Betrieb eine andere Spalte als im
+	// Training.
+	whisperMask := float32(0)
+	if whisperPerSec != nil {
+		whisperMask = 1
+	}
 	if fps <= 0 {
 		fps = 1
 	}
@@ -1168,6 +1321,9 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 				}
 			}
 			x[minutePriorOff] = mp
+		}
+		if d.mlpNWhisperMask > 0 {
+			x[whisperMaskOff] = whisperMask
 		}
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {

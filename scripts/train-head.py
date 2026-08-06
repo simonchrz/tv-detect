@@ -305,6 +305,66 @@ def write_mlp_head_v4(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+# ---- v5 ("MLP5") -----------------------------------------------------
+#   - magic is "MLP5" (= 0x35504C4D LE) — ein v4-Binary scheitert sauber
+#     auf einer v5-Datei (0.5-Rueckfall) statt sie falsch zu lesen.
+#   - Header waechst 48 → 52 Byte: haengt ein 13. uint32 LE `n_whispermask`
+#     (0 oder 1) HINTER `n_minuteprior`.
+#   - input_dim-Vertrag:
+#         backbone + n_logo + n_audio + n_channel + n_whisper
+#         + n_temporal + n_minuteprior + n_whispermask == input_dim
+#   - Spaltenreihenfolge bei der Inferenz:
+#         [backbone(1280), logo?, audio?, chan_onehot?, whisper_prob?,
+#          l2_dist_prev?, l2_dist_next?, minute_prior?, whisper_mask?]
+#     (= wieder GANZ HINTEN, damit v1..v4 ein Praefix bleiben).
+#     whisper_mask = 1.0 wenn fuer die Aufnahme Whisper-Daten vorliegen,
+#     sonst 0.0. Siehe _whisper_present fuer das Warum und nn.go
+#     loadMLPHeadV5 fuer die Go-Seite.
+def write_mlp_head_v5(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0, n_temporal=0,
+                      n_minuteprior=0, n_whispermask=0):
+    """Serialise an sklearn-compatible MLP to the v5 MLP head.bin format.
+    Same atomic write + shape validation as v4, plus the whisper-presence
+    slot. Returns bytes written."""
+    import struct
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if (backbone_dim + n_logo + n_audio + n_channel + n_whisper + n_temporal
+            + n_minuteprior + n_whispermask != input_dim):
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel} + "
+            f"whisper {n_whisper} + temporal {n_temporal} + "
+            f"minuteprior {n_minuteprior} + whispermask {n_whispermask}")
+    header = struct.pack("<13I",
+                         0x35504C4D,  # "MLP5" little-endian
+                         5, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper, n_temporal, n_minuteprior,
+                         n_whispermask)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 class _DeployedMLP:
     """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
     so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test
@@ -336,7 +396,15 @@ def load_deployed_mlp(path):
     if len(raw) < 40:
         return None
     magic = struct.unpack("<I", raw[:4])[0]
-    if magic == 0x34504C4D:  # "MLP4", version 4, 48-byte header
+    if magic == 0x35504C4D:  # "MLP5", version 5, 52-byte header
+        if len(raw) < 52:
+            return None
+        hdr = struct.unpack("<13I", raw[:52])
+        if hdr[1] != 5:
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        off = 52
+    elif magic == 0x34504C4D:  # "MLP4", version 4, 48-byte header
         if len(raw) < 48:
             return None
         hdr = struct.unpack("<12I", raw[:48])
@@ -534,6 +602,42 @@ class WeightedMLP:
 
 
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
+
+
+def _whisper_present(uuid):
+    """Gibt es fuer diese Aufnahme ueberhaupt Whisper-Daten?
+
+    ⚠️ Das ist NICHT dasselbe wie "die Wahrscheinlichkeit ist 0.5".
+    `_load_whisper_per_sec` fuellt fehlende Dateien mit neutralen 0.5 —
+    und am 2026-08-06 hatten **300 von 557** archivierten Aufnahmen keine
+    Whisper-Datei (historischer Einbruch im Juni, Quellen inzwischen
+    geloescht, also nicht nachholbar; aktuelle Aufnahmen liegen bei 93 %).
+
+    Der Kopf konnte "kein Ton-Signal" und "Ton sagt 50/50" damit nicht
+    unterscheiden und hat gelernt, der Spalte nur halb zu trauen —
+    obwohl er sie stark gewichtet (Norm 15.5, oberstes Perzentil) und sie
+    im Betrieb fast immer echt ist. Gemessen auf dem Test-Satz des Laufs
+    20260806T041055: Aufnahmen ohne Whisper liegen 0.049 IoU tiefer
+    (p=0.034), und dieselbe Aufnahme mit/ohne Whisper-Feed schwankt um
+    bis zu 0.6.
+
+    Diese Funktion liefert die Indikatorspalte, die beides trennt.
+
+    ⚠️ Die Bedingung muss der Go-Seite EXAKT entsprechen, sonst sieht der
+    Kopf im Betrieb eine andere Spalte als im Training. Go setzt die Spur
+    nur, wenn `signals.LoadWhisperPerSecond` durchlaeuft — und die
+    verlangt: Datei lesbar, JSON parsebar, `windows` nicht leer. Eine
+    blosse Existenzpruefung waere schon bei einer abgeschnittenen Datei
+    auseinandergelaufen, und zwar lautlos.
+    """
+    p = WHISPER_CACHE / f"{uuid}.whisper.json"
+    if not p.is_file():
+        return False
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return False
+    return bool(d.get("windows"))
 
 
 def _load_whisper_per_sec(uuid, n_seconds):
@@ -2070,7 +2174,8 @@ def main():
                     choices=["logreg", "mlp32-channel",
                              "mlp32-channel-whisper",
                              "mlp32-channel-whisper-temporal",
-                             "mlp32-channel-whisper-temporal-mp"],
+                             "mlp32-channel-whisper-temporal-mp",
+                             "mlp32-channel-whisper-temporal-mp-wm"],
                     default="logreg",
                     help="head architecture to deploy. "
                          "'logreg' = legacy linear head (size-detected). "
@@ -3864,13 +3969,22 @@ def main():
     wants_mlp = args.head_arch in ("mlp32-channel",
                                     "mlp32-channel-whisper",
                                     "mlp32-channel-whisper-temporal",
-                                    "mlp32-channel-whisper-temporal-mp")
+                                    "mlp32-channel-whisper-temporal-mp",
+                                    "mlp32-channel-whisper-temporal-mp-wm")
     wants_whisper = args.head_arch in ("mlp32-channel-whisper",
                                        "mlp32-channel-whisper-temporal",
-                                       "mlp32-channel-whisper-temporal-mp")
+                                       "mlp32-channel-whisper-temporal-mp",
+                                       "mlp32-channel-whisper-temporal-mp-wm")
     wants_temporal = args.head_arch in ("mlp32-channel-whisper-temporal",
-                                        "mlp32-channel-whisper-temporal-mp")
-    wants_minuteprior = args.head_arch == "mlp32-channel-whisper-temporal-mp"
+                                        "mlp32-channel-whisper-temporal-mp",
+                                        "mlp32-channel-whisper-temporal-mp-wm")
+    wants_minuteprior = args.head_arch in ("mlp32-channel-whisper-temporal-mp",
+                                          "mlp32-channel-whisper-temporal-mp-wm")
+    # ⚠️ Die Whisper-Indikatorspalte. Siehe _whisper_present: sie trennt
+    # "keine Ton-Daten vorhanden" von "Ton sagt 50/50" — ohne sie sind
+    # beide konstant 0.5, und das betraf am 2026-08-06 die Haelfte des
+    # Korpus.
+    wants_whispermask = args.head_arch == "mlp32-channel-whisper-temporal-mp-wm"
     # Corpus-wide neutral fill for the minute-prior column (recordings
     # with no start_ts / channels with no histogram): mean of all prior
     # buckets ≈ base ad rate, so the column carries no signal instead of
@@ -3970,6 +4084,19 @@ def main():
             mp_train = (np.concatenate(mp_parts)
                         if mp_parts else np.empty((0, 1), dtype=np.float32))
             prod_parts.append(mp_train)
+        # Whisper-Indikator, GANZ HINTEN (Praefix-Vertrag, s. v5-Header).
+        # Konstant je Aufnahme — deshalb voll, nicht per _minuteprior_col.
+        if wants_whispermask:
+            wm_parts = []
+            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
+                if n <= 0:
+                    continue
+                v = 1.0 if _whisper_present(r[0]) else 0.0
+                wm_parts.append(
+                    np.full((r[3].shape[0], 1), v, dtype=np.float32)[mask])
+            wm_train = (np.concatenate(wm_parts)
+                        if wm_parts else np.empty((0, 1), dtype=np.float32))
+            prod_parts.append(wm_train)
         X_train_ch = np.hstack(prod_parts)
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
@@ -4009,6 +4136,10 @@ def main():
                     parts.append(dn)
                 if wants_minuteprior:
                     parts.append(_minuteprior_col(r[0], T))
+                if wants_whispermask:
+                    parts.append(np.full(
+                        (T, 1), 1.0 if _whisper_present(r[0]) else 0.0,
+                        dtype=np.float32))
                 X_new = np.hstack(parts).astype(np.float32)
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
@@ -4857,6 +4988,10 @@ def main():
                 parts.append(dn)
             if wants_minuteprior:
                 parts.append(_minuteprior_col(r[0], T))
+            if wants_whispermask:
+                parts.append(np.full(
+                    (T, 1), 1.0 if _whisper_present(r[0]) else 0.0,
+                    dtype=np.float32))
             X_parts.append(np.hstack(parts).astype(np.float32))
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
@@ -5585,7 +5720,16 @@ def main():
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs)
-        if wants_minuteprior:
+        if wants_whispermask:
+            write_mlp_head_v5(path, clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=32, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1, n_temporal=2,
+                              n_minuteprior=1, n_whispermask=1)
+        elif wants_minuteprior:
             write_mlp_head_v4(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=32, backbone_dim=1280,
@@ -5725,7 +5869,8 @@ def main():
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
         if is_mlp_write:
-            fmt = ("MLP4 v4" if wants_minuteprior else
+            fmt = ("MLP5 v5" if wants_whispermask else
+                   "MLP4 v4" if wants_minuteprior else
                    "MLP3 v3" if wants_temporal else
                    "MLP2 v2" if wants_whisper else "MLP1 v1")
         else:

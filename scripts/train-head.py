@@ -1784,6 +1784,44 @@ def _worker_extract(args):
     return cache_path, feats
 
 
+def _churn_col(X, fenster=31):
+    """Bildunruhe-Niveau: der 1s-L2-Delta, über `fenster` Sekunden gemittelt.
+
+    Warum das gebraucht wird. Die beiden Produktionsspalten sind der Abstand
+    zur Nachbarsekunde — ein Einzelsprung, und der ist verrauscht. Gemessen
+    über den Golden-Satz (Rang-AUC gegen die Labels, 2026-08-06):
+
+        Delta über 1s (Produktion)    0.637
+        1s-Delta, 31s gemittelt       0.880
+        1s-Delta, 61s gemittelt       0.932
+
+    Und es ist NEUE Information, keine Wiederholung dessen, was der Kopf
+    schon hat: die Korrelation mit seiner Ausgabe liegt bei 0.625, und in
+    genau den Sekunden, in denen er unsicher ist (0.2<p<0.8, im Median 248
+    je Aufnahme), trennt das Merkmal noch mit 0.784.
+
+    ⚠️ 31 Sekunden, nicht 61 oder 181, obwohl die breiteren höher messen.
+    Go rechnet den Kopf CHUNKWEISE (4 Chunks in Produktion), ein Fenster am
+    Chunk-Rand sieht die Nachbarschaft nicht. Bei 31 s betrifft das ~4 % der
+    Frames — dieselbe Größenordnung wie die ~2 %, die die 1s-Deltas schon
+    kosten. Bei 61 s wären es 8 %, bei 181 s über 20 %, und das wäre ein
+    Train/Serve-Bruch statt eines Rundungsfehlers.
+
+    ⚠️ Am Rand wird auf die TATSÄCHLICH vorhandenen Werte normiert, nicht
+    mit Nullen aufgefüllt. Nullen zögen die Unruhe am Rand nach unten, was
+    wie „Sendung" aussieht — eine gerichtete Verzerrung. Der Teilfenster-
+    Mittelwert ist nur verrauschter. Die Go-Seite muss das exakt so machen.
+    """
+    T = X.shape[0]
+    d = np.zeros(T, dtype=np.float32)
+    if T > 1:
+        d[1:] = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+    k = np.ones(fenster, dtype=np.float32)
+    summe = np.convolve(d, k, mode="same")
+    anzahl = np.convolve(np.ones(T, dtype=np.float32), k, mode="same")
+    return (summe / np.maximum(anzahl, 1.0)).reshape(-1, 1)
+
+
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
                            wants_temporal=False, mp_col=None):
     """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
@@ -1813,6 +1851,7 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
             dn[:-1, 0] = d
         parts.append(dp)
         parts.append(dn)
+        parts.append(_churn_col(X))
     if mp_col is not None:
         # v4 teacher: minute-prior column from the TEACHER's own sidecar
         # (the caller builds the closure) — the live table drifts nightly.
@@ -4068,9 +4107,10 @@ def main():
                     d = np.linalg.norm(Xr[1:] - Xr[:-1], axis=1).astype(np.float32)
                     dp[1:] = d
                     dn[:-1] = d
-                temporal_parts.append(np.column_stack([dp, dn])[mask])
+                ch = _churn_col(Xr)[:, 0]
+                temporal_parts.append(np.column_stack([dp, dn, ch])[mask])
             temporal_train = (np.concatenate(temporal_parts)
-                              if temporal_parts else np.empty((0, 2), dtype=np.float32))
+                              if temporal_parts else np.empty((0, 3), dtype=np.float32))
             prod_parts.append(temporal_train)
         # Optional minute-prior column (mlp32-channel-whisper-temporal-mp
         # only), appended LAST. Computed per rec on the RAW frame count,
@@ -4134,6 +4174,7 @@ def main():
                         dn[:-1, 0] = d
                     parts.append(dp)
                     parts.append(dn)
+                    parts.append(_churn_col(r[3]))
                 if wants_minuteprior:
                     parts.append(_minuteprior_col(r[0], T))
                 if wants_whispermask:
@@ -4423,7 +4464,8 @@ def main():
                 d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
                 dp[1:, 0] = d
                 dn[:-1, 0] = d
-            return np.hstack([X, oh, wp, dp, dn]).astype(np.float32)
+            return np.hstack([X, oh, wp, dp, dn,
+                              _churn_col(X)]).astype(np.float32)
 
         # Neutral fill for the minute-prior column when a recording has
         # no start_ts or its channel has no prior: corpus-wide mean of
@@ -4996,6 +5038,7 @@ def main():
                     dn[:-1, 0] = d
                 parts.append(dp)
                 parts.append(dn)
+                parts.append(_churn_col(r[3]))
             if wants_minuteprior:
                 parts.append(_minuteprior_col(r[0], T))
             if wants_whispermask:
@@ -5737,7 +5780,7 @@ def main():
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
-                              n_whisper=1, n_temporal=2,
+                              n_whisper=1, n_temporal=3,
                               n_minuteprior=1, n_whispermask=1)
         elif wants_minuteprior:
             write_mlp_head_v4(path, clf,

@@ -1195,6 +1195,11 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 	return d.ConfidenceChunk(embeds, logoConfs, rmsConfs, n, 1, 0)
 }
 
+// churnWindowS ist die Fensterbreite (in Sekunden) der Unruhe-Spalte.
+// Muss dem Vorgabewert von _churn_col in train-head.py entsprechen —
+// eine Abweichung hier ist ein stiller Train/Serve-Bruch, kein Fehler.
+const churnWindowS = 31
+
 // confidenceMLPChunk is the chunk-scope MLP forward pass with correctly-
 // timed auxiliary inputs (see ConfidenceChunk for the timing contract).
 // Caller holds d.mu.RLock. Replaces the batch-scope confidenceMLP, whose
@@ -1233,7 +1238,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	// X rows (train-head.py _augment_channel_whisper_temporal computes
 	// np.linalg.norm(X[t] - X[t-1]) on 1 fps rows of exactly that
 	// layout).
-	var dpTemporal, dnTemporal []float32
+	var dpTemporal, dnTemporal, churnTemporal []float32
 	if d.mlpNTemporal > 0 {
 		baseDim := nnFeatDim + d.mlpNLogo + d.mlpNAudio
 		base := make([]float32, n*baseDim)
@@ -1265,6 +1270,47 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 			dist := float32(math.Sqrt(float64(sumSq)))
 			dpTemporal[i] = dist
 			dnTemporal[i-step] = dist
+		}
+		// Dritte Spalte (v5, 2026-08-06): das UNRUHE-NIVEAU — derselbe
+		// 1s-Abstand, aber ueber churnWindowS Sekunden gemittelt.
+		//
+		// Warum: der Einzelsprung ist verrauscht. Rang-AUC gegen die
+		// Labels ueber den Golden-Satz: 1s-Delta 0.637, ueber 31 s
+		// gemittelt 0.880. Und es ist NEUE Information — Korrelation mit
+		// der Kopf-Ausgabe nur 0.625, und dort wo der Kopf unsicher ist
+		// (0.2<p<0.8) trennt es noch mit 0.784.
+		//
+		// MUSS _churn_col in train-head.py spiegeln: Mittel ueber 31
+		// Werte im 1-SEKUNDEN-Abstand, am Rand auf die tatsaechlich
+		// vorhandenen normiert (NICHT mit Nullen auffuellen — das zoege
+		// die Unruhe am Rand nach unten und saehe wie "Sendung" aus,
+		// also eine gerichtete Verzerrung statt nur mehr Rauschen).
+		//
+		// ⚠️ Der Kopf laeuft CHUNKWEISE, das Fenster sieht die
+		// Nachbarschaft ueber die Chunk-Grenze hinweg nicht. Bei 31 s und
+		// 4 Chunks (Produktion, DETECT_PARALLEL=3) betrifft das ~4 % der
+		// Frames — dieselbe Groessenordnung wie die ~2 %, die die
+		// 1s-Deltas schon an den Chunk-Raendern kosten. Deshalb 31 und
+		// nicht 61 (dort 8 %) oder 181 (ueber 20 %), obwohl die breiteren
+		// Fenster hoeher messen.
+		if d.mlpNTemporal >= 3 {
+			churnTemporal = make([]float32, n)
+			const halb = churnWindowS / 2
+			for i := 0; i < n; i++ {
+				var sum float32
+				var cnt float32
+				for k := -halb; k <= halb; k++ {
+					j := i + k*step
+					if j < 0 || j >= n {
+						continue
+					}
+					sum += dpTemporal[j]
+					cnt++
+				}
+				if cnt > 0 {
+					churnTemporal[i] = sum / cnt
+				}
+			}
 		}
 	}
 	for i := 0; i < n; i++ {
@@ -1306,6 +1352,9 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 		if d.mlpNTemporal > 0 {
 			x[temporalOff] = dpTemporal[i]
 			x[temporalOff+1] = dnTemporal[i]
+			if d.mlpNTemporal >= 3 && churnTemporal != nil {
+				x[temporalOff+2] = churnTemporal[i]
+			}
 		}
 		// Minute-of-hour prior (v4): wall-clock minute of this frame =
 		// recording start + absolute in-recording offset. Mirrors

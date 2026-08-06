@@ -192,6 +192,21 @@ done
     --shadow-eval \
     --ablate-minute-prior \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-08-06 (spaeter am Tag): der Temporal-Block waechst von 2 auf 3
+# Spalten — dp, dn und NEU das Unruhe-Niveau (1s-Delta ueber 31 s
+# gemittelt). Der Architektur-NAME bleibt gleich, der Header traegt die
+# Zahl (n_temporal=3), das Modell beschreibt sich also selbst. Grund:
+# Rang-AUC gegen die Labels ueber den Golden-Satz 0.637 (1s) gegen 0.880
+# (31 s), Korrelation mit der Kopf-Ausgabe nur 0.625, und dort wo der Kopf
+# unsicher ist (0.2<p<0.8) trennt es noch mit 0.784 — also neue
+# Information, nicht bloss geglaettete alte.
+#
+# 31 s und nicht breiter, obwohl 61 s (0.932) und 181 s (0.977) hoeher
+# messen: der Kopf laeuft chunkweise, ein Fenster sieht ueber die
+# Chunk-Grenze nicht hinaus. Bei 4 Chunks (DETECT_PARALLEL=3) sind das bei
+# 31 s ~4 % der Frames, bei 61 s 8 %, bei 181 s ueber 20 % — und ein
+# Train/Serve-Bruch ist teurer als der Messgewinn.
+#
 # 2026-08-06: --head-arch auf -mp-wm (MLP5 v5) umgestellt — eine
 # Indikatorspalte "Whisper vorhanden ja/nein". Grund: die
 # Whisper-WAHRSCHEINLICHKEITS-Spalte faellt bei fehlenden Daten auf

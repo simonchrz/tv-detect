@@ -1044,3 +1044,124 @@ func TestMLPHeadV4_BleibtOhneMaske(t *testing.T) {
 		t.Errorf("mlpInDim=%d, will %d", d.mlpInDim, inDim)
 	}
 }
+
+// Parität der Unruhe-Spalte gegen _churn_col in train-head.py.
+//
+// ⚠️ Die Sollwerte stammen aus der PYTHON-Implementierung
+// (`_churn_col(werte, fenster=5)`, numpy-Faltung mit Randnormierung), nicht
+// aus dieser Datei nachgerechnet. Fällt der Test, sehen Training und
+// Betrieb verschiedene Eingaben — und das sieht in der Produktion aus wie
+// ein leicht schlechteres Modell, nicht wie ein Fehler.
+//
+// Bewusst mit einem SCHMALEN Fenster (5 statt der 31 aus der Produktion):
+// bei n=8 wäre 31 überall randnormiert und der Test damit blind für den
+// Fall, um den es geht.
+func TestChurnSpalte_ParitaetMitTraining(t *testing.T) {
+	const n = 8
+	const halb = 2
+	werte := []float32{0, 1, 3, 6, 10, 15, 21, 28} // Deltas 0,1,2,3,4,5,6,7
+	dp := make([]float32, n)
+	for i := 1; i < n; i++ {
+		dp[i] = werte[i] - werte[i-1]
+	}
+	// _churn_col(werte, fenster=5) in Python:
+	will := []float32{1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 5.5, 6.0}
+
+	// Dieselbe Schleife wie in confidenceMLPChunk, step=1 (fps=1).
+	got := make([]float32, n)
+	for i := 0; i < n; i++ {
+		var sum, cnt float32
+		for k := -halb; k <= halb; k++ {
+			j := i + k
+			if j < 0 || j >= n {
+				continue
+			}
+			sum += dp[j]
+			cnt++
+		}
+		if cnt > 0 {
+			got[i] = sum / cnt
+		}
+	}
+	for i := range will {
+		if math.Abs(float64(will[i]-got[i])) > 1e-6 {
+			t.Errorf("Sekunde %d: %.6f, will %.6f (Python)", i, got[i], will[i])
+		}
+	}
+	// Der Kern: am Rand darf NICHT durch die volle Fensterbreite geteilt
+	// werden. Mit Nullauffüllung wäre got[0] = (0+0+0+1+2)/5 = 0.6 statt
+	// 1.0 — zu wenig Unruhe, und das liest der Kopf als Sendung.
+	if math.Abs(float64(got[0])-1.0) > 1e-6 {
+		t.Errorf("Randwert %.6f, will 1.0 — mit Nullen aufgefüllt (ergäbe "+
+			"0.6) statt auf die vorhandenen Werte normiert?", got[0])
+	}
+}
+
+// Ende-zu-Ende: ein v5-Kopf mit n_temporal=3, bei dem NUR die Unruhe-Spalte
+// Gewicht trägt. Die Ausgabe muss damit eine reine Funktion dieser Spalte
+// sein — verschiebt sich der Offset um eins (etwa weil jemand n_temporal
+// wieder auf 2 setzt, ohne das Schreiben anzupassen), landet stattdessen
+// dnTemporal dort und der Test fällt.
+func TestChurnSpalte_ImVorwaertslauf(t *testing.T) {
+	dir := t.TempDir()
+	headPath := filepath.Join(dir, "head.bin")
+	const H = 1
+	const nChan, nLogo, nAudio = 2, 1, 1
+	const nWhisper, nTemporal, nMinutePrior, nWhisperMask = 1, 3, 1, 1
+	inDim := nnFeatDim + nLogo + nAudio + nChan + nWhisper + nTemporal +
+		nMinutePrior + nWhisperMask
+	churnCol := nnFeatDim + nLogo + nAudio + nChan + nWhisper + 2 // dp, dn, DANN churn
+	W1 := make([]float32, inDim*H)
+	W1[churnCol*H+0] = 1.0
+	writeTestMLPHeadV5(t, headPath, inDim, H, 1, nLogo, nAudio, nChan,
+		nWhisper, nTemporal, nMinutePrior, nWhisperMask,
+		W1, []float32{0}, []float32{1.0}, []float32{0})
+	if err := os.WriteFile(filepath.Join(dir, "head.channel-map.json"),
+		[]byte(`{"version":1,"n":2,"slugs":["alpha","beta"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "head.minute-prior.json"),
+		[]byte(`{"version":1,"neutral":0.25,"priors":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &NNDetector{headPath: headPath, channelSlug: "alpha", mlpChanIdx: -1}
+	if err := d.reloadHead(); err != nil {
+		t.Fatalf("reloadHead: %v", err)
+	}
+	if d.mlpNTemporal != 3 {
+		t.Fatalf("mlpNTemporal=%d, will 3", d.mlpNTemporal)
+	}
+
+	// Erste Komponente linear steigend → 1s-Deltas konstant 1.0 ab Sekunde 1.
+	const n = 64
+	embeds := make([]float32, n*nnFeatDim)
+	for i := 0; i < n; i++ {
+		embeds[i*nnFeatDim] = float32(i)
+	}
+	logo := make([]float64, n)
+	rms := make([]float64, n)
+	for i := range logo {
+		logo[i], rms[i] = 0.5, 0.5
+	}
+	out := d.confidenceMLPChunk(embeds, logo, rms, n, 1, 0)
+
+	// In der Mitte ist das Fenster voll und enthält nur Einsen → churn = 1,
+	// also sigmoid(1). Ganz am Anfang zieht die Null aus Sekunde 0 den
+	// Mittelwert unter 1 — aber NICHT auf das Nullauffüll-Niveau.
+	mitte := 1 / (1 + math.Exp(-1.0))
+	if math.Abs(out[n/2]-mitte) > 1e-6 {
+		t.Errorf("Mitte: %.6f, will %.6f (churn muss dort exakt 1.0 sein)",
+			out[n/2], mitte)
+	}
+	if out[0] >= out[n/2] {
+		t.Errorf("Rand %.6f nicht kleiner als Mitte %.6f — die Null aus "+
+			"Sekunde 0 muss den Randmittelwert senken", out[0], out[n/2])
+	}
+	// Mit Nullauffüllung wäre der Randwert (0+…+15 Einsen)/31 ≈ 0.516;
+	// mit Randnormierung 15/16 = 0.9375. sigmoid davon liegt klar darüber.
+	randChurn := 15.0 / 16.0
+	if math.Abs(out[0]-1/(1+math.Exp(-randChurn))) > 1e-6 {
+		t.Errorf("Randwert %.6f passt weder zu Randnormierung (%.6f) — "+
+			"mit Nullen aufgefüllt?", out[0], 1/(1+math.Exp(-randChurn)))
+	}
+}

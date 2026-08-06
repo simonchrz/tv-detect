@@ -94,5 +94,59 @@ class ChurnParitaet(unittest.TestCase):
         self.assertGreater(float(c[0]), 0.9)
 
 
+class TeacherBreiten(unittest.TestCase):
+    """_augment_teacher_feats muss fuer JEDE bekannte Kopfform exakt die
+    Breite liefern, die der Header-Vertrag vorsieht.
+
+    ⚠️ Genau hier ist am 2026-08-06 etwas still kaputtgegangen: die
+    Lehrer-Erkennung matchte input_dim gegen eine LISTE bekannter Formen,
+    und als der v5-Kopf dazukam, passte keine mehr. Der Lehrer fiel auf
+    "unalignable", der Hygiene-Durchlauf lief ohne ihn weiter — kein
+    Absturz, nur eine stumm abgeschaltete Pruefung. Deshalb wird die Breite
+    jetzt gerechnet, und dieser Test haelt die Rechnung fest.
+
+    Spaltenreihenfolge (Header-Vertrag):
+      basis | kanal | whisper | temporal(2|3) | minuteprior | maske
+    """
+
+    def _breite(self, **kw):
+        T, basis, n_chan = 40, 6, 3
+        X = _rampe(T, breite=basis)
+        chan_idx = {"alpha": 0, "beta": 1, "gamma": 2}
+        Xa = th._augment_teacher_feats(X, "alpha", chan_idx, "dvr-x-1", **kw)
+        self.assertEqual(Xa.shape[0], T)
+        return Xa.shape[1] - basis - n_chan   # die Zusatzspalten
+
+    def test_v2_nur_whisper(self):
+        self.assertEqual(self._breite(wants_whisper=True), 1)
+
+    def test_v3_whisper_temporal(self):
+        self.assertEqual(
+            self._breite(wants_whisper=True, wants_temporal=True), 3)
+
+    def test_v4_plus_minuteprior(self):
+        mp = lambda uuid, T: np.zeros((T, 1), np.float32)
+        self.assertEqual(
+            self._breite(wants_whisper=True, wants_temporal=True,
+                         mp_col=mp), 4)
+
+    def test_v5_temporal2_mit_maske(self):
+        mp = lambda uuid, T: np.zeros((T, 1), np.float32)
+        self.assertEqual(
+            self._breite(wants_whisper=True, wants_temporal=True,
+                         mp_col=mp, wants_mask=True), 5)
+
+    def test_v5_temporal3_mit_churn_und_maske(self):
+        mp = lambda uuid, T: np.zeros((T, 1), np.float32)
+        self.assertEqual(
+            self._breite(wants_whisper=True, wants_temporal=True,
+                         mp_col=mp, wants_churn=True, wants_mask=True), 6)
+
+    def test_churn_ohne_temporal_ist_wirkungslos(self):
+        """Die Unruhe haengt am Temporal-Block; ohne den gibt es sie nicht."""
+        self.assertEqual(
+            self._breite(wants_whisper=True, wants_churn=True), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

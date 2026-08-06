@@ -1834,7 +1834,8 @@ def _churn_col(X, fenster=31):
 
 
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
-                           wants_temporal=False, mp_col=None):
+                           wants_temporal=False, mp_col=None,
+                           wants_churn=False, wants_mask=False):
     """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
     matrix a v2/v3 MLP teacher was trained on, so it scores identically in
     the label-hygiene pass.
@@ -1862,11 +1863,19 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
             dn[:-1, 0] = d
         parts.append(dp)
         parts.append(dn)
-        parts.append(_churn_col(X))
+        # ⚠️ NUR wenn der Lehrer sie auch hat. Ein v4-Lehrer (n_temporal=2)
+        # bekaeme sonst eine Spalte zu viel, faellt durch die Breitenpruefung
+        # und der Hygiene-Durchlauf laeuft still ohne ihn.
+        if wants_churn:
+            parts.append(_churn_col(X))
     if mp_col is not None:
         # v4 teacher: minute-prior column from the TEACHER's own sidecar
         # (the caller builds the closure) — the live table drifts nightly.
         parts.append(mp_col(uuid, T))
+    if wants_mask:
+        parts.append(np.full((T, 1),
+                             1.0 if _whisper_present(uuid) else 0.0,
+                             dtype=np.float32))
     return np.hstack(parts).astype(np.float32)
 
 
@@ -3598,6 +3607,8 @@ def main():
     teacher_chan_idx = None   # slug→col from the TEACHER's own channel-map
     teacher_whisper = False
     teacher_temporal = False
+    teacher_churn = False
+    teacher_mask = False
     teacher_mp_col = None     # v4 teacher: minute-prior closure from ITS sidecar
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
@@ -3618,11 +3629,33 @@ def main():
                 slugs = (json.loads(cmap_path.read_text()).get("slugs", [])
                          if cmap_path.exists() else [])
                 n_chan = len(slugs)
-                if mlp.input_dim == feat_dim + n_chan + 1 + 2 + 1:
-                    teacher_whisper = True
-                    teacher_temporal = True
-                    # v4 teacher — minute-prior column from the teacher's
-                    # OWN sidecar (deployed alongside its head.bin).
+                # ⚠️ Die Zusatzspalten werden GERECHNET, nicht gegen eine
+                # Liste bekannter Formen geprueft. Die Liste war der Fehler:
+                # als der v5-Kopf (Whisper-Maske) dazukam, passte keine
+                # Form mehr, der Lehrer fiel auf "unalignable" und der
+                # Hygiene-Durchlauf lief still ohne ihn weiter — kein
+                # Absturz, nur eine stumm abgeschaltete Pruefung.
+                #
+                # Reihenfolge der Zusatzspalten (= Header-Vertrag):
+                #   whisper(1) temporal(2 oder 3) minuteprior(1) maske(1)
+                _extra = mlp.input_dim - (feat_dim + n_chan)
+                _bekannt = {
+                    0: (False, False, False, False),
+                    1: (True, False, False, False),   # v2
+                    3: (True, True, False, False),    # v3
+                    4: (True, True, True, False),     # v4
+                    5: (True, True, True, True),      # v5, temporal=2
+                    6: (True, True, True, True),      # v5, temporal=3
+                }
+                if _extra not in _bekannt:
+                    mlp = None  # dim budget doesn't add up → unalignable
+                if mlp is not None:
+                    (teacher_whisper, teacher_temporal,
+                     _t_mp, teacher_mask) = _bekannt[_extra]
+                    teacher_churn = (_extra == 6)
+                if mlp is not None and _t_mp:
+                    # minute-prior column from the teacher's OWN sidecar
+                    # (deployed alongside its head.bin).
                     _mp_side = Path(args.output).with_suffix(
                         ".minute-prior.json")
                     _tpriors, _tneutral = {}, 0.25
@@ -3644,22 +3677,15 @@ def main():
                                        // 60 % 60).astype(int)
                             return _p[slug][minutes].reshape(-1, 1)
                         return np.full((T, 1), _n, dtype=np.float32)
-                elif mlp.input_dim == feat_dim + n_chan + 1 + 2:
-                    teacher_whisper = True
-                    teacher_temporal = True
-                elif mlp.input_dim == feat_dim + n_chan + 1:
-                    teacher_whisper = True
-                elif mlp.input_dim == feat_dim + n_chan:
-                    teacher_whisper = False
-                else:
-                    mlp = None  # dim budget doesn't add up → unalignable
                 if mlp is not None:
                     teacher_mlp = mlp
                     teacher_chan_idx = {s: i for i, s in enumerate(slugs)}
                     print(f"label-hygiene: v2/v3 MLP teacher loaded "
                           f"(input_dim={mlp.input_dim}, n_chan={n_chan}, "
                           f"whisper={teacher_whisper}, "
-                          f"temporal={teacher_temporal})")
+                          f"temporal={teacher_temporal}"
+                          f"{', churn' if teacher_churn else ''}"
+                          f"{', maske' if teacher_mask else ''})")
                 else:
                     print(f"label-hygiene: v2/v3 MLP teacher unalignable "
                           f"(input_dim={load_deployed_mlp(args.output).input_dim}, "
@@ -3700,7 +3726,8 @@ def main():
             if teacher_mlp is not None:
                 Xa = _augment_teacher_feats(r[3], uuid_slug.get(r[0], ""),
                                             teacher_chan_idx, r[0], teacher_whisper,
-                                            teacher_temporal, teacher_mp_col)
+                                            teacher_temporal, teacher_mp_col,
+                                            teacher_churn, teacher_mask)
                 proba = teacher_mlp.predict_proba(Xa)[:, 1]
             else:
                 logits = r[3] @ teacher_w + teacher_b
@@ -4035,6 +4062,10 @@ def main():
     # beide konstant 0.5, und das betraf am 2026-08-06 die Haelfte des
     # Korpus.
     wants_whispermask = args.head_arch == "mlp32-channel-whisper-temporal-mp-wm"
+    # Die Unruhe-Spalte haengt an DIESER Architektur, nicht an wants_temporal:
+    # die aelteren Archs schreiben n_temporal=2 in den Header, bekaemen aber
+    # sonst drei Spalten — der Header-Vertrag flöge auf.
+    wants_churn = wants_whispermask
     # Corpus-wide neutral fill for the minute-prior column (recordings
     # with no start_ts / channels with no histogram): mean of all prior
     # buckets ≈ base ad rate, so the column carries no signal instead of
@@ -4118,10 +4149,16 @@ def main():
                     d = np.linalg.norm(Xr[1:] - Xr[:-1], axis=1).astype(np.float32)
                     dp[1:] = d
                     dn[:-1] = d
-                ch = _churn_col(Xr)[:, 0]
-                temporal_parts.append(np.column_stack([dp, dn, ch])[mask])
+                if wants_churn:
+                    ch = _churn_col(Xr)[:, 0]
+                    temporal_parts.append(
+                        np.column_stack([dp, dn, ch])[mask])
+                else:
+                    temporal_parts.append(np.column_stack([dp, dn])[mask])
             temporal_train = (np.concatenate(temporal_parts)
-                              if temporal_parts else np.empty((0, 3), dtype=np.float32))
+                              if temporal_parts
+                              else np.empty((0, 3 if wants_churn else 2),
+                                            dtype=np.float32))
             prod_parts.append(temporal_train)
         # Optional minute-prior column (mlp32-channel-whisper-temporal-mp
         # only), appended LAST. Computed per rec on the RAW frame count,
@@ -4185,7 +4222,8 @@ def main():
                         dn[:-1, 0] = d
                     parts.append(dp)
                     parts.append(dn)
-                    parts.append(_churn_col(r[3]))
+                    if wants_churn:
+                        parts.append(_churn_col(r[3]))
                 if wants_minuteprior:
                     parts.append(_minuteprior_col(r[0], T))
                 if wants_whispermask:
@@ -4475,8 +4513,10 @@ def main():
                 d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
                 dp[1:, 0] = d
                 dn[:-1, 0] = d
-            return np.hstack([X, oh, wp, dp, dn,
-                              _churn_col(X)]).astype(np.float32)
+            teile = [X, oh, wp, dp, dn]
+            if wants_churn:
+                teile.append(_churn_col(X))
+            return np.hstack(teile).astype(np.float32)
 
         # Neutral fill for the minute-prior column when a recording has
         # no start_ts or its channel has no prior: corpus-wide mean of
@@ -5049,7 +5089,8 @@ def main():
                     dn[:-1, 0] = d
                 parts.append(dp)
                 parts.append(dn)
-                parts.append(_churn_col(r[3]))
+                if wants_churn:
+                    parts.append(_churn_col(r[3]))
             if wants_minuteprior:
                 parts.append(_minuteprior_col(r[0], T))
             if wants_whispermask:
@@ -5791,7 +5832,8 @@ def main():
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
-                              n_whisper=1, n_temporal=3,
+                              n_whisper=1,
+                              n_temporal=3 if wants_churn else 2,
                               n_minuteprior=1, n_whispermask=1)
         elif wants_minuteprior:
             write_mlp_head_v4(path, clf,

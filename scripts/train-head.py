@@ -1811,15 +1811,26 @@ def _churn_col(X, fenster=31):
     mit Nullen aufgefüllt. Nullen zögen die Unruhe am Rand nach unten, was
     wie „Sendung" aussieht — eine gerichtete Verzerrung. Der Teilfenster-
     Mittelwert ist nur verrauschter. Die Go-Seite muss das exakt so machen.
+
+    ⚠️ NICHT mit np.convolve(mode="same") gebaut. Das gibt die Laenge des
+    LAENGEREN Arrays zurueck — bei einer Aufnahme mit 7 Sekunden und einem
+    31er-Fenster also 31 Werte statt 7, und das Training stirbt beim
+    column_stack (2026-08-06 genau so passiert). Das Praefixsummen-Fenster
+    unten ist fuer jede Laenge korrekt und entspricht Zeile fuer Zeile der
+    Schleife in nn.go confidenceMLPChunk.
     """
     T = X.shape[0]
     d = np.zeros(T, dtype=np.float32)
     if T > 1:
         d[1:] = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-    k = np.ones(fenster, dtype=np.float32)
-    summe = np.convolve(d, k, mode="same")
-    anzahl = np.convolve(np.ones(T, dtype=np.float32), k, mode="same")
-    return (summe / np.maximum(anzahl, 1.0)).reshape(-1, 1)
+    halb = fenster // 2
+    cs = np.concatenate([[0.0], np.cumsum(d, dtype=np.float64)])
+    i = np.arange(T)
+    lo = np.maximum(i - halb, 0)
+    hi = np.minimum(i + halb + 1, T)
+    summe = cs[hi] - cs[lo]
+    anzahl = (hi - lo).astype(np.float64)
+    return (summe / np.maximum(anzahl, 1.0)).astype(np.float32).reshape(-1, 1)
 
 
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,

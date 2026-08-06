@@ -188,10 +188,32 @@ done
     --with-self-training \
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
-    --head-arch mlp32-channel-whisper-temporal-mp \
+    --head-arch mlp32-channel-whisper-temporal-mp-wm \
     --shadow-eval \
     --ablate-minute-prior \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-08-06: --head-arch auf -mp-wm (MLP5 v5) umgestellt — eine
+# Indikatorspalte "Whisper vorhanden ja/nein". Grund: die
+# Whisper-WAHRSCHEINLICHKEITS-Spalte faellt bei fehlenden Daten auf
+# neutrale 0.5, womit "kein Ton-Signal" und "Ton sagt 50/50" dieselbe
+# Eingabe waren — bei 300 von 557 Archiv-Aufnahmen. Der Kopf gewichtet
+# die Spalte stark (Norm 15.5 gegen Median 1.49 der Backbone-Spalten),
+# Aufnahmen ohne Whisper lagen 0.049 IoU tiefer (p=0.034), und dieselbe
+# Aufnahme mit/ohne Feed schwankt bis 0.6. Nachholen geht nicht: 296 der
+# 300 haben keine Quelle mehr und HLS-VOD existiert fuer keine.
+#
+# ⚠️ REIHENFOLGE: erst das Mac-Binary (~/.local/bin/tv-detect, kennt
+# MLP5 seit a2deb9b), DANN diese Zeile. Umgekehrt laedt der Daemon einen
+# MLP5-Kopf nicht und die Detection steht. Geprueft: das neue Binary
+# liefert auf dem deployten MLP4-Kopf 2272/2272 NN-Werte identisch.
+#
+# Erste Nacht wie bei jedem Architekturwechsel: input_dim 1299 -> 1300,
+# also skippt das Head-to-Head (die Meldung dazu war bis heute STILL und
+# ist jetzt im Log). Es schuetzen der historische IoU-Boden und der
+# Golden-Boden — der steht seit 20260806 bei 0.909 unter hsmm, mit
+# --golden-floor 0.010 muss der Kandidat also >= 0.899 erreichen.
+# Zurueck: diese Zeile auf ...-mp, sonst nichts.
+#
 # 2026-07-22: --head-arch auf -mp (MLP4 v4) migriert nach 3 positiven
 # Shadow-Nächten (+0.021/+0.021/+0.016). Erste Nacht: dim-change →
 # head-to-head skippt, Floor-Gate greift; head.minute-prior.json wird

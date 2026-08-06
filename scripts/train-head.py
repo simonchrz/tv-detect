@@ -4230,6 +4230,16 @@ def main():
             elif _dep is not None and _dep.input_dim == mlp_prod_in_dim:
                 print("  head-to-head skipped: channel-map differs from the "
                       "deployed head — falling back to the historical floor")
+            elif _dep is not None:
+                # ⚠️ Dieser Fall war bis 2026-08-06 STILL. Er tritt bei jedem
+                # Architekturwechsel ein (input_dim des Kandidaten passt nicht
+                # zum deployten Kopf) — also genau in der Nacht, in der man am
+                # ehesten wissen will, dass der paarweise Schutz gerade nicht
+                # greift. Ohne Meldung sah das Log aus wie ein normaler Lauf.
+                print(f"  head-to-head SKIPPED: deployed head has input_dim "
+                      f"{_dep.input_dim}, candidate {mlp_prod_in_dim} — "
+                      f"Architekturwechsel. Es schuetzen nur noch der "
+                      f"historische IoU-Boden und der Golden-Boden.")
 
         # --- Holdout overfit diagnostic (env HOLDOUT_REPORT_UUIDS) -----------
         # Read-only: score the deployed champion vs this run's candidate on a

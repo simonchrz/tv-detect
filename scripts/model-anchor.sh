@@ -187,6 +187,10 @@ cmd_create() {
   [ -f "$stage/head.calibration.json" ] && assets+=("$stage/head.calibration.json")
   [ -f "$stage/head.channel-map.json" ] && assets+=("$stage/head.channel-map.json")
   [ -f "$stage/head.test-set.json" ]    && assets+=("$stage/head.test-set.json")
+  # ⚠️ Ohne diese Zeile wird die Datei zwar nach $stage kopiert, aber nie
+  # hochgeladen — der Anker sieht lokal vollstaendig aus und ist es im
+  # Release nicht. Genau so ist der erste Versuch dieses Fixes gescheitert.
+  [ -f "$stage/head.minute-prior.json" ] && assets+=("$stage/head.minute-prior.json")
   gh release create "$tag" --repo "$ANCHOR_REPO" \
     --title "Model anchor: $raw_tag" \
     --notes-file "$body" \
@@ -304,8 +308,13 @@ cmd_auto() {
   local tag="${ANCHOR_PREFIX}auto-$ts"
   local stage; stage="$(mktemp -d)"; trap "rm -rf '$stage'" RETURN
   local assets=()
+  # ⚠️ head.minute-prior.json gehoert HIER hin, nicht nur in cmd_create:
+  # cmd_auto ist der Pfad, den der Nightly nach jedem Deploy nimmt, und damit
+  # der, der die Anker tatsaechlich erzeugt. Am 2026-08-06 zuerst nur
+  # cmd_create ergaenzt — der Anker der Nacht kam prompt wieder ohne sie.
   for f in head.bin head.channel-map.json head.calibration.json \
-           head.test-set.json head.history.json backbone.onnx; do
+           head.test-set.json head.history.json head.minute-prior.json \
+           backbone.onnx; do
     [ -f "$MODELS_DIR/$f" ] && { cp "$MODELS_DIR/$f" "$stage/$f"; assets+=("$stage/$f"); }
   done
   # Capture gh's stderr so a failure is debuggable (the old >/dev/null 2>&1 hid

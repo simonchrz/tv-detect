@@ -38,6 +38,14 @@ def archiv(tmp, trend):
         json.dumps({"uuids": uuids, "set_hash": HASH, "version": 2}))
     with open(p / "golden-trend.jsonl", "w") as f:
         for e in trend:
+            # Seit 2026-08-06 filtert golden_bestwert zusaetzlich nach
+            # `decoder` — ein Eintrag ohne das Feld gilt als "form" und
+            # zaehlt nicht mehr mit, wenn EVAL_DECODER auf hsmm steht.
+            # Die Testfaelle beschreiben den NORMALFALL, also den aktuell
+            # gemessenen Decoder; wer den fremden Decoder testen will,
+            # setzt das Feld ausdruecklich (s. test_fremder_decoder_*).
+            e = dict(e)
+            e.setdefault("decoder", " ".join(_th.EVAL_DECODER) or "form")
             f.write(json.dumps(e) + "\n")
     return p, uuids
 
@@ -100,6 +108,36 @@ class GoldenBoden(unittest.TestCase):
             cand=0.896, champ=0.901)
         self.assertTrue(deploy)
         self.assertIn("noch kein Bestwert", log)
+
+    def test_fremder_decoder_zaehlt_nicht(self):
+        """Ein Bestwert, der mit einem ANDEREN Blockbildner gemessen wurde,
+        darf nicht gaten.
+
+        Gleiche Begruendung wie beim set_hash: es waeren zwei verschiedene
+        Messungen. Und die Richtung ist hier gefaehrlich — hsmm liegt auf
+        diesem Satz systematisch HOEHER als form (gemessen +0.14 Mittel),
+        ein geerbter form-Bestwert waere als Sperrklinke also wirkungslos
+        statt zu streng. Sie haette genau das nicht mehr getan, wofuer es
+        sie gibt."""
+        deploy, _, log = self.lauf(
+            [{"ts": "alt", "golden_median": 0.980, "deployed": True,
+              "set_hash": HASH, "decoder": "form"}],
+            cand=0.896, champ=0.901)
+        self.assertTrue(deploy)
+        self.assertIn("noch kein Bestwert", log)
+
+    def test_eigener_decoder_gatet_weiterhin(self):
+        """Gegenprobe: mit passendem Decoder muss derselbe Eintrag blocken.
+
+        Ohne diesen Test koennte der Filter alles wegwerfen und die Tests
+        blieben gruen — ein Gate, das nie ausloest, ist von einem fehlenden
+        nicht zu unterscheiden."""
+        deploy, grund, _ = self.lauf(
+            [{"ts": "alt", "golden_median": 0.980, "deployed": True,
+              "set_hash": HASH}],
+            cand=0.896, champ=0.901)
+        self.assertFalse(deploy)
+        self.assertIn("GOLDEN-BODEN", grund.upper())
 
     def test_abgelehnte_kandidaten_setzen_keinen_bestwert(self):
         """Ein REJECTED-Kandidat war nie in Produktion; sein Wert darf den

@@ -1845,6 +1845,95 @@ def _churn_col(X, fenster=61):
     return (summe / np.maximum(anzahl, 1.0)).astype(np.float32).reshape(-1, 1)
 
 
+# ---- DER ZUSATZBLOCK — eine einzige Definition -----------------------------
+#
+# Alles, was hinter die Backbone-Merkmale gehaengt wird, entsteht hier und
+# NUR hier. Spaltenreihenfolge (= der Header-Vertrag, den nn.go liest):
+#
+#     kanal-one-hot | whisper | dp | dn | unruhe | minute-prior | maske
+#
+# ⚠️ Warum das eine eigene Funktion sein MUSS. Bis 2026-08-07 stand dieselbe
+# Rechnung an SECHS Stellen: _augment_teacher_feats (Hygiene-Lehrer), der
+# blockweise Produktions-Fit, _aug_test, _augment_channel_whisper_temporal
+# (+ _augment_cwt_minuteprior), der All-Data-Refit und build_X in
+# corpus-label-audit.py. Eine neue Spalte hiess: fuenf bis sechs Stellen
+# aendern, und jede vergessene Stelle ist ein STILLER Bruch — der Kopf sieht
+# dann in einem Pfad eine andere Eingabe als in den anderen, und das
+# aeussert sich als "das Modell ist etwas schlechter geworden", nicht als
+# Fehler. Genau so ist die Unruhe-Spalte am 2026-08-06 eingezogen (fuenf
+# Edits), und dabei ist die Lehrer-Erkennung still ausgefallen.
+#
+# ⚠️ Die Reihenfolge ist ein PRAEFIX-Vertrag: neue Spalten kommen HINTEN
+# dazu, damit die Spaltenlage aelterer Koepfe gueltig bleibt und eine
+# Migration ein Header-Bump ist, kein Umsortieren.
+#
+# Die Go-Seite (internal/signals/nn.go) baut denselben Block beim Ableiten
+# noch einmal — das laesst sich nicht zusammenlegen (Begruendung dort),
+# deshalb bindet scripts/gen-augment-parity.py die beiden mit
+# Goldwert-Vektoren aneinander, wie bei hsmm.
+def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
+                  kanal=True, whisper=False, temporal=False, churn=False,
+                  mp_col=None, maske=False):
+    """Der Zusatzblock fuer EINE Aufnahme, Form (T, k).
+
+    `X` sind die rohen Backbone-Merkmale der Aufnahme — zusammenhaengend und
+    VOR jeder Hygiene-Maske, denn dp/dn/unruhe sind Nachbarschafts-Groessen:
+    auf einer bereits geloecherten Matrix wuerde eine weggeworfene Sekunde
+    einen Szenenwechsel vortaeuschen. Der Aufrufer maskiert danach Block und
+    Basis gemeinsam.
+
+    `chan_idx` ist die Zuordnung slug→Spalte des Kopfes, um den es geht — der
+    Lehrer braucht SEINE eigene Karte, nicht die des laufenden Durchgangs.
+
+    `mp_col` ist eine Funktion (uuid, T) → (T, 1); None heisst "keine
+    Minute-Prior-Spalte".
+    """
+    T = X.shape[0]
+    if n_chan is None:
+        n_chan = len(chan_idx)
+    teile = []
+    if kanal:
+        oh = np.zeros((T, n_chan), dtype=np.float32)
+        if slug in chan_idx:
+            oh[:, chan_idx[slug]] = 1.0
+        teile.append(oh)
+    if whisper:
+        teile.append(_load_whisper_per_sec(uuid, T).reshape(-1, 1))
+    if temporal:
+        dp = np.zeros((T, 1), dtype=np.float32)
+        dn = np.zeros((T, 1), dtype=np.float32)
+        if T > 1:
+            d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
+            dp[1:, 0] = d
+            dn[:-1, 0] = d
+        teile.append(dp)
+        teile.append(dn)
+        # ⚠️ Die Unruhe haengt am Temporal-Block. Ohne ihn gibt es sie nicht —
+        # sonst bekaeme ein v4-Kopf (n_temporal=2) eine Spalte zu viel, fiele
+        # durch die Breitenpruefung, und der betroffene Pfad liefe still ohne
+        # ihn weiter.
+        if churn:
+            teile.append(_churn_col(X))
+    if mp_col is not None:
+        teile.append(mp_col(uuid, T))
+    if maske:
+        teile.append(np.full((T, 1),
+                             1.0 if _whisper_present(uuid) else 0.0,
+                             dtype=np.float32))
+    if not teile:
+        return np.zeros((T, 0), dtype=np.float32)
+    return np.hstack(teile).astype(np.float32)
+
+
+def mit_zusatz(X, uuid, slug, chan_idx, n_chan=None, **kw):
+    """Basis + Zusatzblock — die uebliche Form fuer Pfade, die pro Aufnahme
+    eine fertige Matrix wollen."""
+    z = zusatzspalten(X, uuid, slug, chan_idx, n_chan, **kw)
+    if z.shape[1] == 0:
+        return X.astype(np.float32)
+    return np.hstack([X, z]).astype(np.float32)
+
+
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
                            wants_temporal=False, mp_col=None,
                            wants_churn=False, wants_mask=False):
@@ -1858,37 +1947,15 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
     the teacher must be scored with ITS OWN map, not the new run's. A
     misaligned column here would feed the teacher garbage and drop correct
     frames, so the caller also keeps the per-recording drop-rate cap as a
-    backstop."""
-    T = X.shape[0]
-    oh = np.zeros((T, len(chan_idx)), dtype=np.float32)
-    if slug in chan_idx:
-        oh[:, chan_idx[slug]] = 1.0
-    parts = [X, oh]
-    if wants_whisper:
-        parts.append(_load_whisper_per_sec(uuid, T).reshape(-1, 1))
-    if wants_temporal:
-        dp = np.zeros((T, 1), dtype=np.float32)
-        dn = np.zeros((T, 1), dtype=np.float32)
-        if T > 1:
-            d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-            dp[1:, 0] = d
-            dn[:-1, 0] = d
-        parts.append(dp)
-        parts.append(dn)
-        # ⚠️ NUR wenn der Lehrer sie auch hat. Ein v4-Lehrer (n_temporal=2)
-        # bekaeme sonst eine Spalte zu viel, faellt durch die Breitenpruefung
-        # und der Hygiene-Durchlauf laeuft still ohne ihn.
-        if wants_churn:
-            parts.append(_churn_col(X))
-    if mp_col is not None:
-        # v4 teacher: minute-prior column from the TEACHER's own sidecar
-        # (the caller builds the closure) — the live table drifts nightly.
-        parts.append(mp_col(uuid, T))
-    if wants_mask:
-        parts.append(np.full((T, 1),
-                             1.0 if _whisper_present(uuid) else 0.0,
-                             dtype=np.float32))
-    return np.hstack(parts).astype(np.float32)
+    backstop.
+
+    Die Rechnung selbst steht in zusatzspalten() — der Lehrer unterscheidet
+    sich vom laufenden Durchgang NUR durch seine eigene Kanalkarte und seine
+    eigene Minute-Prior-Beilage (die lebende Tabelle driftet naechtlich),
+    nicht durch die Spaltenlage."""
+    return mit_zusatz(X, uuid, slug, chan_idx,
+                      whisper=wants_whisper, temporal=wants_temporal,
+                      churn=wants_churn, mp_col=mp_col, maske=wants_mask)
 
 
 
@@ -4082,12 +4149,19 @@ def main():
     # with no start_ts / channels with no histogram): mean of all prior
     # buckets ≈ base ad rate, so the column carries no signal instead of
     # a false one. Persisted in the sidecar so Go uses the SAME value.
+    #
+    # ⚠️ Wird berechnet, sobald eine Prior-Tabelle da IST — nicht erst, wenn
+    # der laufende --head-arch die Spalte will. Die Schatten-Sonde
+    # _augment_cwt_minuteprior benutzt sie naemlich auch dann, und bis
+    # 2026-08-07 hatte sie dafuer einen eigenen, anders berechneten
+    # Neutralwert. Zwei Definitionen desselben Fuellwerts sind genau die
+    # Sorte Naht, die spaeter still auseinanderlaeuft.
     mp_neutral = 0.25
-    if wants_minuteprior:
-        if not minute_prior:
-            raise SystemExit("--head-arch mlp32-channel-whisper-temporal-mp "
-                             "requires --with-minute-prior (the prior table "
-                             "is the feature source)")
+    if wants_minuteprior and not minute_prior:
+        raise SystemExit("--head-arch mlp32-channel-whisper-temporal-mp "
+                         "requires --with-minute-prior (the prior table "
+                         "is the feature source)")
+    if minute_prior:
         _all_p = [v for arr in minute_prior.values() for v in arr]
         if _all_p:
             mp_neutral = float(sum(_all_p) / len(_all_p))
@@ -4115,89 +4189,44 @@ def main():
         # entry of train_recs in order, so the parallel zip stays
         # consistent here.
         rec_lengths_train = [len(p) for p in y_train_parts]
-        chan_oh_train = np.zeros((len(X_train), n_chan), dtype=np.float32)
-        offset = 0
-        for r, n in zip(train_recs, rec_lengths_train):
-            slug = uuid_slug.get(r[0], "")
-            if slug in prod_chan_idx and n > 0:
-                chan_oh_train[offset:offset + n,
-                              prod_chan_idx[slug]] = 1.0
-            offset += n
-        # Optional per-frame whisper-prob column (mlp32-channel-whisper
-        # and up). Aligned by walking train_recs in the same order as
-        # rec_lengths_train; per-rec slice of X_train gets a 1-dim
-        # column from the recording's whisper.json. Missing whisper
-        # → 0.5 fallback per the loader spec.
-        prod_parts = [X_train, chan_oh_train]
-        if wants_whisper:
-            whisper_train = np.full(len(X_train), 0.5, dtype=np.float32)
-            offset = 0
-            for r, n in zip(train_recs, rec_lengths_train):
-                if n <= 0:
-                    continue
-                wp = _load_whisper_per_sec(r[0], n)
-                whisper_train[offset:offset + n] = wp
-                offset += n
-            prod_parts.append(whisper_train.reshape(-1, 1))
-        # Optional temporal L2-delta columns (mlp32-channel-whisper-
-        # temporal only), appended LAST. Computed on the RAW per-rec X
-        # (contiguous, pre-hygiene-mask) so a dropped frame in the
-        # middle of a mask can't fake a scene-change delta, then the
-        # SAME mask used to build X_train_parts is applied — this
-        # mirrors the --shadow-eval v6 variant exactly (the numbers
-        # that earned the migration). Recs zeroed out entirely by the
-        # age-decay cutoff (rec_lengths_train[i] == 0) are skipped, same
-        # as the whisper loop above.
-        if wants_temporal:
-            temporal_parts = []
-            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
-                if n <= 0:
-                    continue
-                Xr = r[3]
-                Tr = Xr.shape[0]
-                dp = np.zeros(Tr, dtype=np.float32)
-                dn = np.zeros(Tr, dtype=np.float32)
-                if Tr > 1:
-                    d = np.linalg.norm(Xr[1:] - Xr[:-1], axis=1).astype(np.float32)
-                    dp[1:] = d
-                    dn[:-1] = d
-                if wants_churn:
-                    ch = _churn_col(Xr)[:, 0]
-                    temporal_parts.append(
-                        np.column_stack([dp, dn, ch])[mask])
-                else:
-                    temporal_parts.append(np.column_stack([dp, dn])[mask])
-            temporal_train = (np.concatenate(temporal_parts)
-                              if temporal_parts
-                              else np.empty((0, 3 if wants_churn else 2),
-                                            dtype=np.float32))
-            prod_parts.append(temporal_train)
-        # Optional minute-prior column (mlp32-channel-whisper-temporal-mp
-        # only), appended LAST. Computed per rec on the RAW frame count,
-        # then the same hygiene mask as the other columns.
-        if wants_minuteprior:
-            mp_parts = []
-            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
-                if n <= 0:
-                    continue
-                mp_parts.append(_minuteprior_col(r[0], r[3].shape[0])[mask])
-            mp_train = (np.concatenate(mp_parts)
-                        if mp_parts else np.empty((0, 1), dtype=np.float32))
-            prod_parts.append(mp_train)
-        # Whisper-Indikator, GANZ HINTEN (Praefix-Vertrag, s. v5-Header).
-        # Konstant je Aufnahme — deshalb voll, nicht per _minuteprior_col.
-        if wants_whispermask:
-            wm_parts = []
-            for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
-                if n <= 0:
-                    continue
-                v = 1.0 if _whisper_present(r[0]) else 0.0
-                wm_parts.append(
-                    np.full((r[3].shape[0], 1), v, dtype=np.float32)[mask])
-            wm_train = (np.concatenate(wm_parts)
-                        if wm_parts else np.empty((0, 1), dtype=np.float32))
-            prod_parts.append(wm_train)
-        X_train_ch = np.hstack(prod_parts)
+
+        def _prod_zusatz(X, uuid, chan_idx=None, n=None):
+            """Der Zusatzblock in der Auspraegung des laufenden --head-arch.
+            EINE Stelle fuer Fit, Auswertung, Ablation und All-Data-Refit —
+            damit keiner der vier Pfade eine andere Eingabe sieht als die
+            anderen."""
+            return zusatzspalten(
+                X, uuid, uuid_slug.get(uuid, ""),
+                prod_chan_idx if chan_idx is None else chan_idx,
+                n_chan if n is None else n,
+                whisper=wants_whisper, temporal=wants_temporal,
+                churn=wants_churn,
+                mp_col=_minuteprior_col if wants_minuteprior else None,
+                maske=wants_whispermask)
+
+        # Der komplette Zusatzblock, pro Aufnahme auf dem ROHEN X gebaut
+        # und danach mit derselben Hygiene-Maske gesiebt wie die Basis.
+        #
+        # ⚠️ Vor dem 2026-08-07 stand hier ein Block je SPALTE, ueber alle
+        # Aufnahmen verkettet. Fuer die Kanal-, Temporal-, Minute-Prior- und
+        # Masken-Spalten war das gleichwertig — fuer die Whisper-Spalte NICHT:
+        # sie wurde mit der NACH-Masken-Frame-Zahl geholt und ungefiltert in
+        # den maskierten Bereich geschrieben. _load_whisper_per_sec indiziert
+        # aber nach ABSOLUTER Sekunde, also war die Spalte um die Zahl der bis
+        # dahin verworfenen Frames verschoben und das Ende der Aufnahme fehlte
+        # ganz. Betroffen: jede Aufnahme mit loechriger Maske — im Lauf vom
+        # 2026-08-07 waren das 168 von 283. Die Auswertung (_aug_test) und die
+        # Go-Seite hatten die Spalte immer richtig; der Fit lernte also auf
+        # einer anderen Eingabe, als er spaeter bewertet wurde.
+        # Test: scripts/test_zusatzspalten.py, Klasse MaskenVersatz.
+        zusatz_parts = []
+        for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
+            if n <= 0:
+                continue
+            zusatz_parts.append(_prod_zusatz(r[3], r[0])[mask])
+        zusatz_train = (np.concatenate(zusatz_parts) if zusatz_parts
+                        else np.zeros((len(X_train), 0), dtype=np.float32))
+        X_train_ch = np.hstack([X_train, zusatz_train])
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
               f"({n_chan} channels"
@@ -4216,33 +4245,8 @@ def main():
         def _aug_test(recs):
             out = []
             for r in recs:
-                X = r[3]
-                T = X.shape[0]
-                slug = uuid_slug.get(r[0], "")
-                oh = np.zeros((T, n_chan), dtype=np.float32)
-                if slug in prod_chan_idx:
-                    oh[:, prod_chan_idx[slug]] = 1.0
-                parts = [X, oh]
-                if wants_whisper:
-                    parts.append(_load_whisper_per_sec(r[0], T).reshape(-1, 1))
-                if wants_temporal:
-                    dp = np.zeros((T, 1), dtype=np.float32)
-                    dn = np.zeros((T, 1), dtype=np.float32)
-                    if T > 1:
-                        d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-                        dp[1:, 0] = d
-                        dn[:-1, 0] = d
-                    parts.append(dp)
-                    parts.append(dn)
-                    if wants_churn:
-                        parts.append(_churn_col(r[3]))
-                if wants_minuteprior:
-                    parts.append(_minuteprior_col(r[0], T))
-                if wants_whispermask:
-                    parts.append(np.full(
-                        (T, 1), 1.0 if _whisper_present(r[0]) else 0.0,
-                        dtype=np.float32))
-                X_new = np.hstack(parts).astype(np.float32)
+                X_new = np.hstack([r[3], _prod_zusatz(r[3], r[0])]
+                                  ).astype(np.float32)
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
         test_recs_ch = _aug_test(test_recs)
@@ -4264,10 +4268,19 @@ def main():
             def _med_iou(m):
                 return m.get("iou_tv_median",
                              m.get("iou_median", m.get("iou", 0.0)))
+            # ⚠️ Die Spalte wird GERECHNET, nicht als "die letzte" angenommen.
+            # Bis 2026-08-07 stand hier Xa[:, -1]. Das stimmte fuer MLP4 —
+            # aber seit dem v5-Kopf (2026-08-06) sitzt GANZ HINTEN die
+            # Whisper-Maske, und der Minute-Prior davor. Die Ablation hat
+            # also eine Nacht lang die Maske flachgelegt und das Ergebnis
+            # als "minute-prior ABLATION" ueberschrieben. Die aelteren
+            # Zahlen der 8-Naechte-Serie (Δ≈0) sind davon nicht betroffen,
+            # die liefen alle vor v5.
+            mp_idx = -2 if wants_whispermask else -1
             ablated = []
             for r in test_recs_ch:
                 Xa = r[3].copy()
-                Xa[:, -1] = mp_neutral  # neutralise the minute-prior column
+                Xa[:, mp_idx] = mp_neutral
                 ablated.append((r[0], r[1], r[2], Xa, r[4]) + tuple(r[5:]))
             print("\n=== minute-prior ABLATION (candidate, column neutralised) ===")
             m_abl = eval_split(mlp_prod_clf, ablated, args.fps_extract, smooth_s=10)
@@ -4470,99 +4483,46 @@ def main():
         # — both the shadow-eval variants here and the production
         # mlp32-channel-whisper fit downstream call it.
 
+        # Die Schatten-Sonden. Jede ist eine Auspraegung desselben
+        # Zusatzblocks — die Rechnung steht in zusatzspalten(), hier nur
+        # noch welche Spalten die Sonde sehen soll.
         def _augment_channel(X, slug, _uuid=None):
-            T = X.shape[0]
-            oh = np.zeros((T, n_chan), dtype=np.float32)
-            if slug in chan_idx:
-                oh[:, chan_idx[slug]] = 1.0
-            return np.hstack([X, oh])
+            return mit_zusatz(X, _uuid, slug, chan_idx, n_chan)
 
         def _augment_temporal(X, slug, _uuid=None):
-            # |X[t] - X[t-1]| and |X[t] - X[t+1]| as 2 extra dims.
-            # Captures scene-change signal that per-frame backbone
-            # embeddings can't see — boundary detection lever.
-            T = X.shape[0]
-            dp = np.zeros(T, dtype=np.float32)
-            dn = np.zeros(T, dtype=np.float32)
-            if T > 1:
-                d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-                dp[1:] = d
-                dn[:-1] = d
-            return np.column_stack([X, dp, dn]).astype(np.float32)
+            # |X[t] - X[t-1]| und |X[t] - X[t+1]| als 2 Zusatzspalten,
+            # OHNE Kanal-one-hot: Szenenwechsel-Signal, das die
+            # Backbone-Merkmale je Sekunde nicht sehen koennen.
+            return mit_zusatz(X, _uuid, slug, chan_idx, n_chan,
+                              kanal=False, temporal=True)
 
         def _augment_channel_whisper(X, slug, uuid):
-            # Channel one-hot + per-frame whisper prob (1 extra dim).
-            # Whisper Stage 4 prototype: instead of running whisper
-            # as a post-processor (FP-killer / boundary-extend /
-            # missed-adder rules with hand-tuned thresholds), feed
-            # the per-second prob directly to the MLP and let it
-            # learn the right combination with the other features.
-            T = X.shape[0]
-            oh = np.zeros((T, n_chan), dtype=np.float32)
-            if slug in chan_idx:
-                oh[:, chan_idx[slug]] = 1.0
-            wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
-            return np.hstack([X, oh, wp]).astype(np.float32)
+            # Whisper Stage 4: die Wahrscheinlichkeit je Sekunde direkt als
+            # Eingabespalte statt als Nachbearbeitungsregel.
+            return mit_zusatz(X, uuid, slug, chan_idx, n_chan, whisper=True)
 
         def _augment_channel_whisper_temporal(X, slug, uuid):
-            # Production features + the temporal L2 deltas — the combo
-            # candidate born 2026-07-07, when the first honest variant
-            # table (true sample_weight) had MLP-32+temporal on top
-            # (+0.035 vs LogReg, ahead of channel+whisper). Deltas are
-            # computed on the raw per-rec X (contiguous, pre-mask), so
-            # hygiene/pseudo row-masks can't fake scene changes. Layout
-            # appends temporal LAST ([X, chan, whisper, dp, dn]) so the
-            # existing v2-header column order stays a prefix — a future
-            # production migration is a header bump, not a re-order.
-            T = X.shape[0]
-            oh = np.zeros((T, n_chan), dtype=np.float32)
-            if slug in chan_idx:
-                oh[:, chan_idx[slug]] = 1.0
-            wp = _load_whisper_per_sec(uuid, T).reshape(-1, 1)
-            dp = np.zeros((T, 1), dtype=np.float32)
-            dn = np.zeros((T, 1), dtype=np.float32)
-            if T > 1:
-                d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-                dp[1:, 0] = d
-                dn[:-1, 0] = d
-            teile = [X, oh, wp, dp, dn]
-            if wants_churn:
-                teile.append(_churn_col(X))
-            return np.hstack(teile).astype(np.float32)
-
-        # Neutral fill for the minute-prior column when a recording has
-        # no start_ts or its channel has no prior: corpus-wide mean of
-        # all priors (≈ base ad rate), so the column carries no signal
-        # instead of a false one.
-        _mp_neutral = 0.25
-        if minute_prior:
-            _all_p = [v for arr in minute_prior.values() for v in arr]
-            if _all_p:
-                _mp_neutral = float(sum(_all_p) / len(_all_p))
+            # Produktions-Zwilling (2026-07-07 migriert). Die Deltas rechnen
+            # auf dem rohen X der Aufnahme (zusammenhaengend, vor der Maske),
+            # damit ein weggeworfener Frame keinen Szenenwechsel vortaeuscht.
+            return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
+                              whisper=True, temporal=True, churn=wants_churn)
 
         def _augment_cwt_minuteprior(X, slug, uuid):
-            # Production layout + P(ad | minute-of-hour) as ONE extra
-            # column appended LAST ([X, chan, whisper, dp, dn, mp]) —
-            # same prefix-compatible migration mechanics as temporal.
-            # Motivation (2026-07-15 FP analysis): 77% of test-frame
-            # errors are false "ad" calls deep inside show content
-            # (Galileo product segments, kids' content). German private
-            # channels slot ads at fixed minute offsets — the per-
-            # channel minute histogram (already built for Phase A
-            # pseudo-labels) is a strong prior AGAINST mid-show ad
-            # calls that the backbone can't know. Zero extraction cost:
-            # pure augmentation from start_ts, like whisper/temporal.
-            base = _augment_channel_whisper_temporal(X, slug, uuid)
-            T = X.shape[0]
-            start = uuid_start.get(uuid, 0)
-            if start and slug in minute_prior:
-                prior_arr = np.array(minute_prior[slug], dtype=np.float32)
-                minutes = ((start + np.arange(T) / args.fps_extract)
-                           // 60 % 60).astype(int)
-                mp = prior_arr[minutes].reshape(-1, 1)
-            else:
-                mp = np.full((T, 1), _mp_neutral, dtype=np.float32)
-            return np.hstack([base, mp]).astype(np.float32)
+            # Produktions-Zwilling + P(Werbung | Minute der Stunde) als EINE
+            # Spalte ganz hinten. Motivation (2026-07-15): 77 % der Fehler auf
+            # dem Testsatz sind falsche "Werbung"-Rufe mitten in der Sendung;
+            # deutsche Privatsender legen Werbung auf feste Minutenoffsets.
+            #
+            # ⚠️ Nutzt _minuteprior_col — dieselbe Definition wie der
+            # Produktions-Fit. Bis 2026-08-07 stand hier eine zweite Kopie
+            # mit einem EIGENEN Neutralwert (_mp_neutral), der anders
+            # berechnet wurde als mp_neutral: die Sonde haette gegen eine
+            # andere Spalte gemessen als die Produktion, sobald der laufende
+            # --head-arch die Minute-Prior-Spalte nicht selbst wollte.
+            return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
+                              whisper=True, temporal=True, churn=wants_churn,
+                              mp_col=_minuteprior_col)
 
         def _build_train(recs, augment):
             # recs must be train_recs: rows are taken via the parallel
@@ -5078,38 +5038,15 @@ def main():
                        and not (len(r) > 12 and r[12])]
         n_chan_prod = len(mlp_prod_chan_slugs)
         prod_chan_idx_all = {s: i for i, s in enumerate(mlp_prod_chan_slugs)}
-        # Per-rec channel one-hot block (+ whisper if active), row-by-
-        # row to match the per-rec X concatenation order.
+        # Zusatzblock je Aufnahme, in derselben Reihenfolge wie die
+        # X-Verkettung. Eigene Kanalkarte: der Refit laeuft ueber ALLE
+        # Aufnahmen, nicht nur ueber train+test, deshalb prod_chan_idx_all.
         X_parts = []
         y_parts = []
         for r in keep_all:
-            X = r[3]
-            T = X.shape[0]
-            oh = np.zeros((T, n_chan_prod), dtype=np.float32)
-            slug = uuid_slug.get(r[0], "")
-            if slug in prod_chan_idx_all and T > 0:
-                oh[:, prod_chan_idx_all[slug]] = 1.0
-            parts = [X, oh]
-            if wants_whisper:
-                parts.append(_load_whisper_per_sec(r[0], T).reshape(-1, 1))
-            if wants_temporal:
-                dp = np.zeros((T, 1), dtype=np.float32)
-                dn = np.zeros((T, 1), dtype=np.float32)
-                if T > 1:
-                    d = np.linalg.norm(X[1:] - X[:-1], axis=1).astype(np.float32)
-                    dp[1:, 0] = d
-                    dn[:-1, 0] = d
-                parts.append(dp)
-                parts.append(dn)
-                if wants_churn:
-                    parts.append(_churn_col(r[3]))
-            if wants_minuteprior:
-                parts.append(_minuteprior_col(r[0], T))
-            if wants_whispermask:
-                parts.append(np.full(
-                    (T, 1), 1.0 if _whisper_present(r[0]) else 0.0,
-                    dtype=np.float32))
-            X_parts.append(np.hstack(parts).astype(np.float32))
+            X_parts.append(np.hstack([
+                r[3], _prod_zusatz(r[3], r[0], prod_chan_idx_all,
+                                   n_chan_prod)]).astype(np.float32))
             y_parts.append(r[4])
         X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
         y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)

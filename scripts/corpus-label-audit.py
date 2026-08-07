@@ -96,12 +96,29 @@ Column layout, from train-head.py `_augment_cwt_minuteprior`:
 """
 import argparse
 import glob
+import importlib.util
 import json
 import os
 import struct
 import sys
 
 import numpy as np
+
+# ⚠️ Die Spaltendefinition kommt aus train-head.py — derselben Datei, die
+# den Kopf trainiert. Frueher stand hier eine Kopie; die lief zweimal
+# auseinander (Unruhe-Fenster, Spaltenzahl), und ein Audit mit falscher
+# Eingabe meldet Widersprueche, die keine sind.
+_TH_PFAD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "train-head.py")
+_spec = importlib.util.spec_from_file_location("train_head", _TH_PFAD)
+TH = importlib.util.module_from_spec(_spec)
+_argv, sys.argv = sys.argv, ["train-head"]
+try:
+    _spec.loader.exec_module(TH)
+except SystemExit:
+    pass
+finally:
+    sys.argv = _argv
 
 ARCH = os.path.expanduser("~/.cache/tvd-train-archive")
 MODELS = os.path.expanduser("~/.cache/tv-detect-daemon")
@@ -158,90 +175,33 @@ def head_prob(X, p):
     return 1.0 / (1.0 + np.exp(-o))
 
 
-def whisper_per_sec(uuid, n):
-    p = os.path.join(WHISPER, f"{uuid}.whisper.json")
-    if not os.path.isfile(p):
-        return np.full(n, 0.5, np.float32)
-    try:
-        d = json.loads(open(p).read())
-    except Exception:
-        return np.full(n, 0.5, np.float32)
-    ws = int(d.get("window_s", 60))
-    s = np.zeros(n, np.float32)
-    c = np.zeros(n, np.int32)
-    for w in d.get("windows", []):
-        lo = max(0, int(w.get("t", 0)))
-        hi = min(n, lo + ws)
-        if hi > lo:
-            s[lo:hi] += float(w.get("prob", 0.5))
-            c[lo:hi] += 1
-    out = np.full(n, 0.5, np.float32)
-    m = c > 0
-    out[m] = s[m] / c[m]
-    return out
-
-
-def _churn(feat, fenster=61):
-    """Unruhe-Niveau: der 1s-L2-Delta, ueber `fenster` Sekunden gemittelt.
-    Spiegelt _churn_col in train-head.py (geclipptes Schiebefenster ueber
-    Praefixsummen, am Rand auf die vorhandenen Werte normiert)."""
-    T = feat.shape[0]
-    d = np.zeros(T, np.float32)
-    if T > 1:
-        d[1:] = np.linalg.norm(feat[1:] - feat[:-1], axis=1).astype(np.float32)
-    halb = fenster // 2
-    cs = np.concatenate([[0.0], np.cumsum(d, dtype=np.float64)])
-    i = np.arange(T)
-    lo = np.maximum(i - halb, 0)
-    hi = np.minimum(i + halb + 1, T)
-    return ((cs[hi] - cs[lo]) / np.maximum(hi - lo, 1.0)).astype(np.float32).reshape(-1, 1)
-
-
-def whisper_present(uuid):
-    """Spiegelt train-head.py's _whisper_present: Datei da UND parsebar UND
-    `windows` nicht leer. Eine blosse Existenzpruefung liefe bei einer
-    abgeschnittenen Datei von der Trainingsseite weg."""
-    p = os.path.join(WHISPER, f"{uuid}.whisper.json")
-    if not os.path.isfile(p):
-        return False
-    try:
-        return bool(json.loads(open(p).read()).get("windows"))
-    except Exception:
-        return False
 
 
 def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
             with_whispermask=False, n_temporal=2):
-    T = feat.shape[0]
-    oh = np.zeros((T, n_chan), np.float32)
-    if slug in chan_idx:
-        oh[:, chan_idx[slug]] = 1.0
-    wp = whisper_per_sec(uuid, T).reshape(-1, 1)
-    dp = np.zeros((T, 1), np.float32)
-    dn = np.zeros((T, 1), np.float32)
-    if T > 1:
-        d = np.linalg.norm(feat[1:] - feat[:-1], axis=1).astype(np.float32)
-        dp[1:, 0] = d
-        dn[:-1, 0] = d
-    if start_ts and slug in prior:
-        arr = np.array(prior[slug], np.float32)
-        minutes = ((start_ts + np.arange(T)) // 60 % 60).astype(int)
-        mp = arr[minutes].reshape(-1, 1)
-    else:
-        mp = np.full((T, 1), neutral, np.float32)
-    # ⚠️ Reihenfolge = Header-Vertrag: whisper, temporal(2|3), minuteprior,
-    # maske. Die Unruhe-Spalte gehoert IN den Temporal-Block, nicht ans
-    # Ende — sonst sitzt der minuteprior auf ihrem Platz.
-    parts = [feat, oh, wp, dp, dn]
-    if n_temporal >= 3:
-        parts.append(_churn(feat))
-    parts.append(mp)
-    if with_whispermask:
-        # v5: 1.0 wenn ueberhaupt Whisper-Daten vorliegen. GANZ HINTEN,
-        # damit die v2..v4-Reihenfolge ein Praefix bleibt.
-        parts.append(np.full((T, 1),
-                             1.0 if whisper_present(uuid) else 0.0, np.float32))
-    return np.hstack(parts).astype(np.float32)
+    """Die Eingabematrix, wie der Kopf sie sieht.
+
+    ⚠️ Die Spalten entstehen NICHT hier, sondern in train-head.py's
+    zusatzspalten() — derselben Funktion, mit der der Kopf trainiert wurde.
+    Bis 2026-08-07 stand hier eine eigene Kopie samt eigenem Unruhe-Fenster
+    und eigenem Whisper-Lader. Ein Audit, das mit einer anderen Eingabe
+    urteilt als die Produktion, misst nichts — es erfindet.
+
+    Einziger bewusster Unterschied: die Minute-Prior-Werte kommen aus der
+    BEILAGE DES KOPFES (`prior`/`neutral`), nicht aus der lebenden Tabelle.
+    Die driftet naechtlich, und beurteilt werden soll der Kopf, wie er ist.
+    """
+    def _mp(_uuid, T):
+        if start_ts and slug in prior:
+            arr = np.array(prior[slug], np.float32)
+            minutes = ((start_ts + np.arange(T)) // 60 % 60).astype(int)
+            return arr[minutes].reshape(-1, 1)
+        return np.full((T, 1), neutral, np.float32)
+
+    return TH.mit_zusatz(feat, uuid, slug, chan_idx, n_chan,
+                         whisper=True, temporal=True,
+                         churn=n_temporal >= 3, mp_col=_mp,
+                         maske=with_whispermask)
 
 
 

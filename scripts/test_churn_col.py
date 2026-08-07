@@ -150,14 +150,15 @@ class TeacherBreiten(unittest.TestCase):
 
 
 class FensterbreiteStimmtUeberall(unittest.TestCase):
-    """Die Fensterbreite steht an DREI Stellen. Laufen sie auseinander,
-    sieht der Kopf im Betrieb eine andere Spalte als im Training — und das
-    aeussert sich als leicht schlechteres Modell, nicht als Fehler.
+    """Die Fensterbreite steht noch an ZWEI Stellen — einmal je Sprache.
 
-    ⚠️ Genau diese Sorte Bruch hat in dieser Codebasis schon mehrfach
-    Tage gekostet. Der Test liest die Go-Konstante aus dem Quelltext,
-    weil es keinen anderen Weg gibt, die beiden Sprachen aneinander zu
-    binden."""
+    ⚠️ Bis zum 2026-08-07 waren es drei: corpus-label-audit.py hatte eine
+    eigene Kopie. Die haengt jetzt an train-head.py (s. test_audit_hat_keine_
+    eigene_kopie), es bleibt also nur die Sprachgrenze. Laufen die beiden
+    auseinander, sieht der Kopf im Betrieb eine andere Spalte als im
+    Training — und das aeussert sich als leicht schlechteres Modell, nicht
+    als Fehler. Der Test liest die Go-Konstante aus dem Quelltext, weil es
+    keinen anderen Weg gibt, die beiden Sprachen aneinander zu binden."""
 
     def _go_konstante(self):
         p = Path(__file__).resolve().parent.parent / "internal/signals/nn.go"
@@ -174,18 +175,22 @@ class FensterbreiteStimmtUeberall(unittest.TestCase):
             "train-head.py _churn_col und nn.go churnWindowS unterscheiden "
             "sich — stiller Train/Serve-Bruch")
 
-    def test_audit_gleich(self):
-        import importlib.util as iu
+    def test_audit_hat_keine_eigene_kopie(self):
+        """Das Audit darf die Spalten NICHT selbst bauen. Tat es bis
+        2026-08-07, und lief dabei zweimal von der Produktion weg."""
         p = Path(__file__).resolve().parent / "corpus-label-audit.py"
-        sp = iu.spec_from_file_location("cla", str(p))
-        mod = iu.module_from_spec(sp)
-        sp.loader.exec_module(mod)
-        import inspect
-        vorgabe = inspect.signature(mod._churn).parameters["fenster"].default
-        self.assertEqual(
-            vorgabe, self._go_konstante(),
-            "corpus-label-audit.py _churn weicht ab — das Audit urteilt "
-            "dann mit einer anderen Eingabe als die Produktion")
+        quelle = p.read_text()
+        self.assertNotIn(
+            "def _churn(", quelle,
+            "corpus-label-audit.py hat wieder eine eigene Unruhe-Spalte")
+        self.assertNotIn(
+            "def whisper_per_sec(", quelle,
+            "corpus-label-audit.py hat wieder einen eigenen Whisper-Lader")
+        self.assertIn(
+            "TH.mit_zusatz(", quelle,
+            "corpus-label-audit.py baut die Eingabe nicht mehr ueber "
+            "train-head.py — dann urteilt es mit einer anderen Eingabe "
+            "als die Produktion")
 
 
 if __name__ == "__main__":

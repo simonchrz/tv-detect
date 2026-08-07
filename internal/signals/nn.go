@@ -1219,6 +1219,66 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 // beurteilen, statt wie bei einem Spaltenzuwachs auszufallen.
 const churnWindowS = 61
 
+// temporalSpalten baut die drei Spalten des Temporal-Blocks: den Abstand zur
+// Sekunde davor (dp), zur Sekunde danach (dn) und — ab nTemporal>=3 — das
+// UNRUHE-NIVEAU, also dp gemittelt ueber churnWindowS Sekunden.
+//
+// `base` sind n Zeilen a baseDim Werte in Frame-Reihenfolge, `step` ist die
+// Zahl der Frames je Sekunde. Gerechnet wird also immer im 1-SEKUNDEN-
+// Abstand, auch wenn der Kopf je Frame laeuft.
+//
+// ⚠️ Diese Funktion MUSS zusatzspalten()/_churn_col in train-head.py
+// spiegeln. Sie ist bewusst herausgeloest, damit
+// scripts/gen-augment-parity.py Goldwert-Vektoren dagegen halten kann —
+// dieselbe Absicherung wie beim hsmm-Decoder. Ein Auseinanderlaufen der
+// beiden Sprachen ist ein STILLER Bruch: der Kopf sieht im Betrieb eine
+// andere Spalte als im Training, und das sieht aus wie ein etwas
+// schlechteres Modell, nicht wie ein Fehler.
+//
+// ⚠️ Am Rand wird auf die tatsaechlich vorhandenen Werte normiert, NICHT mit
+// Nullen aufgefuellt. Nullen zoegen die Unruhe am Rand nach unten, und wenig
+// Unruhe liest der Kopf als Sendung — das waere eine gerichtete Verzerrung
+// statt nur mehr Rauschen.
+func temporalSpalten(base []float32, n, baseDim, step, nTemporal int) (dp, dn, churn []float32) {
+	if nTemporal <= 0 || n <= 0 {
+		return nil, nil, nil
+	}
+	dp = make([]float32, n)
+	dn = make([]float32, n)
+	for i := step; i < n; i++ {
+		a := base[i*baseDim : (i+1)*baseDim]
+		b := base[(i-step)*baseDim : (i-step+1)*baseDim]
+		var sumSq float32
+		for k := 0; k < baseDim; k++ {
+			diff := a[k] - b[k]
+			sumSq += diff * diff
+		}
+		dist := float32(math.Sqrt(float64(sumSq)))
+		dp[i] = dist
+		dn[i-step] = dist
+	}
+	if nTemporal < 3 {
+		return dp, dn, nil
+	}
+	churn = make([]float32, n)
+	const halb = churnWindowS / 2
+	for i := 0; i < n; i++ {
+		var sum, cnt float32
+		for k := -halb; k <= halb; k++ {
+			j := i + k*step
+			if j < 0 || j >= n {
+				continue
+			}
+			sum += dp[j]
+			cnt++
+		}
+		if cnt > 0 {
+			churn[i] = sum / cnt
+		}
+	}
+	return dp, dn, churn
+}
+
 // confidenceMLPChunk is the chunk-scope MLP forward pass with correctly-
 // timed auxiliary inputs (see ConfidenceChunk for the timing contract).
 // Caller holds d.mu.RLock. Replaces the batch-scope confidenceMLP, whose
@@ -1276,61 +1336,8 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 				base[off] = float32(rms)
 			}
 		}
-		dpTemporal = make([]float32, n)
-		dnTemporal = make([]float32, n)
-		for i := step; i < n; i++ {
-			a := base[i*baseDim : (i+1)*baseDim]
-			b := base[(i-step)*baseDim : (i-step+1)*baseDim]
-			var sumSq float32
-			for k := 0; k < baseDim; k++ {
-				diff := a[k] - b[k]
-				sumSq += diff * diff
-			}
-			dist := float32(math.Sqrt(float64(sumSq)))
-			dpTemporal[i] = dist
-			dnTemporal[i-step] = dist
-		}
-		// Dritte Spalte (v5, 2026-08-06): das UNRUHE-NIVEAU — derselbe
-		// 1s-Abstand, aber ueber churnWindowS Sekunden gemittelt.
-		//
-		// Warum: der Einzelsprung ist verrauscht. Rang-AUC gegen die
-		// Labels ueber den Golden-Satz: 1s-Delta 0.637, ueber 31 s
-		// gemittelt 0.880. Und es ist NEUE Information — Korrelation mit
-		// der Kopf-Ausgabe nur 0.625, und dort wo der Kopf unsicher ist
-		// (0.2<p<0.8) trennt es noch mit 0.784.
-		//
-		// MUSS _churn_col in train-head.py spiegeln: Mittel ueber 31
-		// Werte im 1-SEKUNDEN-Abstand, am Rand auf die tatsaechlich
-		// vorhandenen normiert (NICHT mit Nullen auffuellen — das zoege
-		// die Unruhe am Rand nach unten und saehe wie "Sendung" aus,
-		// also eine gerichtete Verzerrung statt nur mehr Rauschen).
-		//
-		// ⚠️ Der Kopf laeuft CHUNKWEISE, das Fenster sieht die
-		// Nachbarschaft ueber die Chunk-Grenze hinweg nicht. Bei 31 s und
-		// 4 Chunks (Produktion, DETECT_PARALLEL=3) betrifft das ~4 % der
-		// Frames — dieselbe Groessenordnung wie die ~2 %, die die
-		// 1s-Deltas schon an den Chunk-Raendern kosten. Deshalb 31 und
-		// nicht 61 (dort 8 %) oder 181 (ueber 20 %), obwohl die breiteren
-		// Fenster hoeher messen.
-		if d.mlpNTemporal >= 3 {
-			churnTemporal = make([]float32, n)
-			const halb = churnWindowS / 2
-			for i := 0; i < n; i++ {
-				var sum float32
-				var cnt float32
-				for k := -halb; k <= halb; k++ {
-					j := i + k*step
-					if j < 0 || j >= n {
-						continue
-					}
-					sum += dpTemporal[j]
-					cnt++
-				}
-				if cnt > 0 {
-					churnTemporal[i] = sum / cnt
-				}
-			}
-		}
+		dpTemporal, dnTemporal, churnTemporal = temporalSpalten(
+			base, n, baseDim, step, d.mlpNTemporal)
 	}
 	for i := 0; i < n; i++ {
 		copy(x[:nnFeatDim], embeds[i*nnFeatDim:(i+1)*nnFeatDim])

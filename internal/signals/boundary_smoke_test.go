@@ -2,6 +2,7 @@ package signals_test
 
 import (
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/simonchrz/tv-detect/internal/signals"
@@ -12,7 +13,19 @@ func TestBoundaryDetectorRealFile(t *testing.T) {
 	// pass on synthetic embeddings. Validates BNDR-format parsing and
 	// shape/dim sanity. Real-quality eval happens via the per-recording
 	// recall metric in train-boundary-head.py.
-	d, err := signals.NewBoundaryDetector("/tmp/boundary_head.bin")
+	//
+	// ⚠️ Haengt an einem Artefakt in /tmp, das kein Bauschritt erzeugt —
+	// nach einem Neustart ist es weg und der Test dauerhaft rot. Eine immer
+	// rote Suite ist keine Absicherung, sondern Rauschen: sie hat am
+	// 2026-08-07 verdeckt, dass ein ZWEITER Test (die Unruhe-Spalte) durch
+	// eine echte Aenderung gebrochen war. Fehlt die Datei, wird deshalb
+	// uebersprungen statt gemeldet.
+	const kopf = "/tmp/boundary_head.bin"
+	if _, err := os.Stat(kopf); err != nil {
+		t.Skipf("kein %s — der Boundary-Head ist ohnehin deaktiviert "+
+			"(Memory boundary_head_activated)", kopf)
+	}
+	d, err := signals.NewBoundaryDetector(kopf)
 	if err != nil {
 		t.Fatalf("NewBoundaryDetector: %v", err)
 	}

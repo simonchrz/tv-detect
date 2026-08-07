@@ -1133,7 +1133,15 @@ func TestChurnSpalte_ImVorwaertslauf(t *testing.T) {
 	}
 
 	// Erste Komponente linear steigend → 1s-Deltas konstant 1.0 ab Sekunde 1.
-	const n = 64
+	//
+	// ⚠️ Laenge und Randerwartung werden aus churnWindowS ABGELEITET, nicht
+	// hingeschrieben. Bis 2026-08-07 stand unten 15.0/16.0 fest — die
+	// Randbreite des 31er-Fensters. Mit der Umstellung auf 61 wurde dieser
+	// Test rot, und zwar unbemerkt, weil die Go-Suite nach der Aenderung
+	// nicht lief. Ein Test, der bei einer legitimen Anpassung von selbst
+	// bricht, erzieht dazu, ihn zu ignorieren.
+	halb := churnWindowS / 2
+	n := 2*churnWindowS + 2 // Mitte hat ein volles Fenster ohne Sekunde 0
 	embeds := make([]float32, n*nnFeatDim)
 	for i := 0; i < n; i++ {
 		embeds[i*nnFeatDim] = float32(i)
@@ -1157,11 +1165,16 @@ func TestChurnSpalte_ImVorwaertslauf(t *testing.T) {
 		t.Errorf("Rand %.6f nicht kleiner als Mitte %.6f — die Null aus "+
 			"Sekunde 0 muss den Randmittelwert senken", out[0], out[n/2])
 	}
-	// Mit Nullauffüllung wäre der Randwert (0+…+15 Einsen)/31 ≈ 0.516;
-	// mit Randnormierung 15/16 = 0.9375. sigmoid davon liegt klar darüber.
-	randChurn := 15.0 / 16.0
+	// Bei Sekunde 0 reicht das Fenster von 0 bis halb, das sind halb+1
+	// Werte, davon einer (Sekunde 0) null → halb/(halb+1).
+	// Mit Nullauffüllung waeren es stattdessen halb/churnWindowS, also rund
+	// die Haelfte — und zu wenig Unruhe liest der Kopf als Sendung.
+	randChurn := float64(halb) / float64(halb+1)
+	nullFuellung := float64(halb) / float64(churnWindowS)
 	if math.Abs(out[0]-1/(1+math.Exp(-randChurn))) > 1e-6 {
-		t.Errorf("Randwert %.6f passt weder zu Randnormierung (%.6f) — "+
-			"mit Nullen aufgefüllt?", out[0], 1/(1+math.Exp(-randChurn)))
+		t.Errorf("Randwert %.6f passt nicht zur Randnormierung (%.6f); "+
+			"mit Nullen aufgefuellt waere es %.6f",
+			out[0], 1/(1+math.Exp(-randChurn)),
+			1/(1+math.Exp(-nullFuellung)))
 	}
 }

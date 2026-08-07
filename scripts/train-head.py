@@ -1784,7 +1784,7 @@ def _worker_extract(args):
     return cache_path, feats
 
 
-def _churn_col(X, fenster=31):
+def _churn_col(X, fenster=61):
     """Bildunruhe-Niveau: der 1s-L2-Delta, über `fenster` Sekunden gemittelt.
 
     Warum das gebraucht wird. Die beiden Produktionsspalten sind der Abstand
@@ -1800,12 +1800,24 @@ def _churn_col(X, fenster=31):
     genau den Sekunden, in denen er unsicher ist (0.2<p<0.8, im Median 248
     je Aufnahme), trennt das Merkmal noch mit 0.784.
 
-    ⚠️ 31 Sekunden, nicht 61 oder 181, obwohl die breiteren höher messen.
-    Go rechnet den Kopf CHUNKWEISE (4 Chunks in Produktion), ein Fenster am
-    Chunk-Rand sieht die Nachbarschaft nicht. Bei 31 s betrifft das ~4 % der
-    Frames — dieselbe Größenordnung wie die ~2 %, die die 1s-Deltas schon
-    kosten. Bei 61 s wären es 8 %, bei 181 s über 20 %, und das wäre ein
-    Train/Serve-Bruch statt eines Rundungsfehlers.
+    ⚠️ 61 Sekunden. Zuerst stand hier 31, aus Sorge um die Chunk-Grenzen
+    (Go rechnet den Kopf chunkweise, ein Fenster am Rand sieht die
+    Nachbarschaft nicht). Die Sorge war UNBEGRÜNDET — am 2026-08-07
+    nachgemessen, Unruhe global gegen chunkweise bei sonst identischem
+    Kopf und Decoder:
+
+        Fenster   global   4 Chunks    Delta   betroffen
+          31 s     0.936     0.936    -0.000      0/37
+          61 s     0.931     0.930    -0.000      1/37
+         121 s     0.934     0.934    +0.000      0/37
+
+    Die Unruhe ist eine geglättete Größe, und der Dauer-Prior des Decoders
+    bügelt lokale Störungen weg. Bei 61 s trennt das Merkmal deutlich
+    besser (Rang-AUC 0.932 gegen 0.880).
+
+    ⚠️ Die Breite ändert input_dim NICHT — Absicht, damit das nächtliche
+    Head-to-Head funktionsfähig bleibt und die Änderung sofort beurteilen
+    kann.
 
     ⚠️ Am Rand wird auf die TATSÄCHLICH vorhandenen Werte normiert, nicht
     mit Nullen aufgefüllt. Nullen zögen die Unruhe am Rand nach unten, was

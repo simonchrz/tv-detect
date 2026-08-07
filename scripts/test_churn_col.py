@@ -18,6 +18,7 @@ Ausfuehren: python3 scripts/test_churn_col.py
 """
 
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -146,6 +147,45 @@ class TeacherBreiten(unittest.TestCase):
         """Die Unruhe haengt am Temporal-Block; ohne den gibt es sie nicht."""
         self.assertEqual(
             self._breite(wants_whisper=True, wants_churn=True), 1)
+
+
+class FensterbreiteStimmtUeberall(unittest.TestCase):
+    """Die Fensterbreite steht an DREI Stellen. Laufen sie auseinander,
+    sieht der Kopf im Betrieb eine andere Spalte als im Training — und das
+    aeussert sich als leicht schlechteres Modell, nicht als Fehler.
+
+    ⚠️ Genau diese Sorte Bruch hat in dieser Codebasis schon mehrfach
+    Tage gekostet. Der Test liest die Go-Konstante aus dem Quelltext,
+    weil es keinen anderen Weg gibt, die beiden Sprachen aneinander zu
+    binden."""
+
+    def _go_konstante(self):
+        p = Path(__file__).resolve().parent.parent / "internal/signals/nn.go"
+        m = re.search(r"^const churnWindowS = (\d+)$", p.read_text(), re.M)
+        self.assertIsNotNone(m, "churnWindowS nicht in nn.go gefunden — "
+                                "umbenannt? Dann hier nachziehen.")
+        return int(m.group(1))
+
+    def test_go_und_python_gleich(self):
+        import inspect
+        vorgabe = inspect.signature(th._churn_col).parameters["fenster"].default
+        self.assertEqual(
+            vorgabe, self._go_konstante(),
+            "train-head.py _churn_col und nn.go churnWindowS unterscheiden "
+            "sich — stiller Train/Serve-Bruch")
+
+    def test_audit_gleich(self):
+        import importlib.util as iu
+        p = Path(__file__).resolve().parent / "corpus-label-audit.py"
+        sp = iu.spec_from_file_location("cla", str(p))
+        mod = iu.module_from_spec(sp)
+        sp.loader.exec_module(mod)
+        import inspect
+        vorgabe = inspect.signature(mod._churn).parameters["fenster"].default
+        self.assertEqual(
+            vorgabe, self._go_konstante(),
+            "corpus-label-audit.py _churn weicht ab — das Audit urteilt "
+            "dann mit einer anderen Eingabe als die Produktion")
 
 
 if __name__ == "__main__":

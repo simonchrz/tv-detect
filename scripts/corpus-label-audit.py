@@ -181,7 +181,7 @@ def whisper_per_sec(uuid, n):
     return out
 
 
-def _churn(feat, fenster=31):
+def _churn(feat, fenster=61):
     """Unruhe-Niveau: der 1s-L2-Delta, ueber `fenster` Sekunden gemittelt.
     Spiegelt _churn_col in train-head.py (geclipptes Schiebefenster ueber
     Praefixsummen, am Rand auf die vorhandenen Werte normiert)."""

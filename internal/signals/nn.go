@@ -1198,7 +1198,26 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 // churnWindowS ist die Fensterbreite (in Sekunden) der Unruhe-Spalte.
 // Muss dem Vorgabewert von _churn_col in train-head.py entsprechen —
 // eine Abweichung hier ist ein stiller Train/Serve-Bruch, kein Fehler.
-const churnWindowS = 31
+//
+// 2026-08-06 zunaechst 31, aus Sorge um die Chunk-Grenzen: der Kopf laeuft
+// chunkweise, ein Fenster sieht die Nachbarschaft nicht, und bei 4 Chunks
+// waeren das ~8 % der Frames bei 61 s. Diese Sorge war UNBEGRUENDET —
+// 2026-08-07 nachgemessen (dieselben Aufnahmen, Unruhe einmal global und
+// einmal chunkweise gerechnet, gleicher Kopf, gleicher Decoder):
+//
+//	Fenster   global   4 Chunks    Delta   betroffen
+//	  31 s     0.936     0.936    -0.000      0/37
+//	  61 s     0.931     0.930    -0.000      1/37
+//	 121 s     0.934     0.934    +0.000      0/37
+//
+// Die Unruhe ist eine geglaettete Groesse, und der Dauer-Prior des
+// Decoders buegelt lokale Stoerungen weg. Deshalb jetzt 61 — dort trennt
+// das Merkmal deutlich besser (Rang-AUC 0.932 gegen 0.880).
+//
+// ⚠️ Die Breite aendert input_dim NICHT. Das ist Absicht: so bleibt das
+// naechtliche Head-to-Head funktionsfaehig und kann die Aenderung sofort
+// beurteilen, statt wie bei einem Spaltenzuwachs auszufallen.
+const churnWindowS = 61
 
 // confidenceMLPChunk is the chunk-scope MLP forward pass with correctly-
 // timed auxiliary inputs (see ConfidenceChunk for the timing contract).

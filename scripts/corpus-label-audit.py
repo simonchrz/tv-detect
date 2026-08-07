@@ -133,7 +133,22 @@ def load_head(path):
     b1 = take(hdim)
     W2 = take(hdim * odim).reshape(hdim, odim)
     b2 = take(odim)
-    return idim, (W1, b1, W2, b2)
+    # ⚠️ Die Spaltenzahlen aus dem HEADER lesen, nicht aus einer Konstante
+    # ableiten. Am 2026-08-06 wuchs der Temporal-Block von 2 auf 3 Spalten
+    # (Unruhe-Niveau); die hier vorher gerechnete Konstante ergab dann
+    # n_chan 14 statt 13. Die Gesamtbreite stimmte zufaellig weiter, die
+    # SPALTEN waren aber um eins verschoben — das Audit lief durch und
+    # meldete Unsinn. Sichtbar war es nur an einer WARNUNG.
+    #
+    # Reihenfolge im Header (ab Feld 5): backbone, logo, audio, channel,
+    # whisper, temporal, minuteprior, whispermask.
+    felder = {"backbone": hdr[5], "logo": hdr[6], "audio": hdr[7],
+              "channel": hdr[8]}
+    felder["whisper"] = hdr[9] if nh > 9 else 0
+    felder["temporal"] = hdr[10] if nh > 10 else 0
+    felder["minuteprior"] = hdr[11] if nh > 11 else 0
+    felder["whispermask"] = hdr[12] if nh > 12 else 0
+    return idim, (W1, b1, W2, b2), felder
 
 
 def head_prob(X, p):
@@ -166,6 +181,22 @@ def whisper_per_sec(uuid, n):
     return out
 
 
+def _churn(feat, fenster=31):
+    """Unruhe-Niveau: der 1s-L2-Delta, ueber `fenster` Sekunden gemittelt.
+    Spiegelt _churn_col in train-head.py (geclipptes Schiebefenster ueber
+    Praefixsummen, am Rand auf die vorhandenen Werte normiert)."""
+    T = feat.shape[0]
+    d = np.zeros(T, np.float32)
+    if T > 1:
+        d[1:] = np.linalg.norm(feat[1:] - feat[:-1], axis=1).astype(np.float32)
+    halb = fenster // 2
+    cs = np.concatenate([[0.0], np.cumsum(d, dtype=np.float64)])
+    i = np.arange(T)
+    lo = np.maximum(i - halb, 0)
+    hi = np.minimum(i + halb + 1, T)
+    return ((cs[hi] - cs[lo]) / np.maximum(hi - lo, 1.0)).astype(np.float32).reshape(-1, 1)
+
+
 def whisper_present(uuid):
     """Spiegelt train-head.py's _whisper_present: Datei da UND parsebar UND
     `windows` nicht leer. Eine blosse Existenzpruefung liefe bei einer
@@ -180,7 +211,7 @@ def whisper_present(uuid):
 
 
 def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
-            with_whispermask=False):
+            with_whispermask=False, n_temporal=2):
     T = feat.shape[0]
     oh = np.zeros((T, n_chan), np.float32)
     if slug in chan_idx:
@@ -198,7 +229,13 @@ def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
         mp = arr[minutes].reshape(-1, 1)
     else:
         mp = np.full((T, 1), neutral, np.float32)
-    parts = [feat, oh, wp, dp, dn, mp]
+    # ⚠️ Reihenfolge = Header-Vertrag: whisper, temporal(2|3), minuteprior,
+    # maske. Die Unruhe-Spalte gehoert IN den Temporal-Block, nicht ans
+    # Ende — sonst sitzt der minuteprior auf ihrem Platz.
+    parts = [feat, oh, wp, dp, dn]
+    if n_temporal >= 3:
+        parts.append(_churn(feat))
+    parts.append(mp)
     if with_whispermask:
         # v5: 1.0 wenn ueberhaupt Whisper-Daten vorliegen. GANZ HINTEN,
         # damit die v2..v4-Reihenfolge ein Praefix bleibt.
@@ -238,7 +275,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
-    idim, params = load_head(os.path.join(MODELS, "head.bin"))
+    idim, params, felder = load_head(os.path.join(MODELS, "head.bin"))
     # Sidecar is {"ts","version","n","slugs":[...]}; one-hot index is the
     # position in "slugs", which is the order train-head.py built it in.
     cmap = json.loads(open(os.path.join(MODELS, "head.channel-map.json")).read())
@@ -254,8 +291,9 @@ def main():
     # v4: 1282 Backbone + n_chan + whisper + 2 temporal + minute-prior.
     # v5 hat eine Spalte mehr (whispermask) — am Magic erkannt, damit
     # n_chan nicht um eins danebenliegt.
-    is_v5 = open(os.path.join(MODELS, "head.bin"), "rb").read(4) == b"MLP5"
-    n_chan = idim - 1282 - (5 if is_v5 else 4)
+    is_v5 = felder["whispermask"] > 0
+    n_chan = felder["channel"]
+    n_temporal = felder["temporal"]
     print(f"head input_dim={idim}  n_chan={n_chan}  "
           f"channel-map={len(chan_idx)}  prior-slugs={len(prior)}  "
           f"neutral={neutral:.3f}")
@@ -295,7 +333,7 @@ def main():
                 continue
             feat = np.load(fp)
             X = build_X(feat, m.get("slug", ""), u, int(m.get("start_ts") or 0),
-                        chan_idx, n_chan, prior, neutral, is_v5)
+                        chan_idx, n_chan, prior, neutral, is_v5, n_temporal)
             if X.shape[1] != idim:
                 # Older extraction with a different feature width — not a
                 # verification failure, just not comparable.
@@ -347,7 +385,7 @@ def main():
         feat = np.load(fp, mmap_mode="r")
         X = build_X(np.asarray(feat), m.get("slug", ""), u,
                     int(m.get("start_ts") or 0), chan_idx, n_chan, prior,
-                    neutral, is_v5)
+                    neutral, is_v5, n_temporal)
         if X.shape[1] != idim:
             skipped += 1
             continue

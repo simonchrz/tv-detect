@@ -48,9 +48,22 @@ entscheidet allein das Head-to-Head plus Golden-Boden.
 
 ## 2. Rauschboden
 
-| gemessen | Verfahren | Golden Std | Golden Spanne |
+| gemessen | Verfahren | Std | Spanne |
 |---|---|---|---|
-| 2026-08-09 | 5 Seeds, Produktions-Architektur, identische Daten | **0.008** | **0.023** (0.901–0.924) |
+| 2026-08-09 | 5 Seeds, Golden-Satz (38 Aufnahmen) | **0.008** | **0.023** (0.901–0.924) |
+| 2026-08-09 | 3 Seeds, Testsatz (98 Aufnahmen) | — | **0.010** (0.913–0.923) |
+
+Derselbe Zufall, an zweieinhalbmal so vielen Aufnahmen gemessen, ergibt
+weniger als die halbe Streuung. Ein erheblicher Teil des Golden-Rauschens
+kommt schlicht daher, dass 38 Aufnahmen für einen Median wenig sind — ein
+größerer Golden-Satz wäre auch ein ruhigerer.
+
+**Ab 2026-08-09 wird der Boden nicht mehr einmalig gemessen, sondern
+mitgeschrieben:** der Nightly fittet drei Produktionsköpfe mit verschiedenen
+Seeds und liefert den mittleren aus (`--prod-seeds 3`); `seed` und
+`seed_spread` stehen in jeder `golden-trend.jsonl`-Zeile. Jede Nacht liefert
+damit einen Datenpunkt dazu, wie viel von einer Golden-Differenz überhaupt
+Signal sein kann.
 
 Beobachtete Schwankung derselben Schattenzelle über drei Läufe mit fast
 gleichem Korpus (08-08, 08-09 Nightly, 08-09 Handlauf): bis 0.028. Der

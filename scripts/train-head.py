@@ -2401,6 +2401,13 @@ def main():
                          "head.minute-prior.json sidecar; the Go side "
                          "(nn.go v4) + the daemon's --start-ts flag look up "
                          "the same prior at serve time — deployed in tandem.")
+    ap.add_argument("--prod-seeds", type=int, default=1, metavar="N",
+                    help="N Produktions-Koepfe mit verschiedenen Init-Seeds "
+                         "fitten und den MITTLEREN ausliefern (nach "
+                         "Testsatz-Median). Gegen die Seed-Lotterie: ein "
+                         "einzelner Fit traegt laut Seed-Sweep bis zu 0.023 "
+                         "Willkuer. Kostet N-1 zusaetzliche Fits samt "
+                         "Auswertung. 1 = altes Verhalten.")
     ap.add_argument("--seed-sweep", type=int, default=0, metavar="N",
                     help="N-mal dieselbe Architektur auf denselben Daten "
                          "fitten, nur mit anderem Init-Seed, und die "
@@ -4242,6 +4249,9 @@ def main():
                        // 60 % 60).astype(int)
             return prior_arr[minutes].reshape(-1, 1)
         return np.full((T, 1), mp_neutral, dtype=np.float32)
+    # Vorbelegung: der All-Data-Refit und die golden-trend-Zeile lesen beide
+    # diese Werte, laufen aber auch, wenn der MLP-Zweig uebersprungen wurde.
+    prod_seed_used, prod_seed_spread = 0, None
     if wants_mlp and test_recs:
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -4297,12 +4307,6 @@ def main():
               f"{', +temporal' if wants_temporal else ''})")
         print(f"  base train frames: {len(X_train_ch)} "
               f"(true sample_weight, no oversample)")
-        mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
-                                   random_state=0)
-        mlp_prod_clf.fit(X_train_ch, y_train, sw_train)
-        print(f"  fit done in {mlp_prod_clf.n_iter_} epochs, "
-              f"loss={mlp_prod_clf.loss_:.4f}")
-
         # Augment test_recs with the same channel one-hot (and
         # whisper/temporal if active) for eval.
         def _aug_test(recs):
@@ -4313,10 +4317,63 @@ def main():
                 out.append((r[0], r[1], r[2], X_new, r[4]) + tuple(r[5:]))
             return out
         test_recs_ch = _aug_test(test_recs)
+
+        # ── Mehrere Seeds fitten, den MITTLEREN ausliefern ───────────────
+        # Ein Kopf ist eine Ziehung, kein Messwert. Der Seed-Sweep vom
+        # 2026-08-09 hat gemessen: identische Daten, identische Architektur,
+        # nur ein anderer Init-Seed → Golden-Median zwischen 0.901 und 0.924
+        # (Std 0.008, Spanne 0.023). Das ist mehr Streuung, als die Schleife
+        # in sechs Naechten an Fortschritt gemessen hat.
+        #
+        # Folge ohne diese Schleife: der ausgelieferte Kopf ist EIN Los. Ein
+        # Ausreisser nach unten geht in Produktion und bleibt dort stehen,
+        # weil der naechste Kandidat ihn am Head-to-Head nicht schlaegt —
+        # das Gate vergleicht Los gegen Los und kann beide nicht trennen.
+        #
+        # Der MITTLERE, nicht der beste: den besten zu nehmen waere dieselbe
+        # Maximum-Verzerrung, die wir am Golden-Boden gerade entfernt haben,
+        # nur eine Ebene tiefer. Der Median waehlt nicht auf Glueck aus, er
+        # schneidet nur die Ausreisser in BEIDE Richtungen ab.
+        #
+        # Ausgewaehlt wird nach dem TESTSATZ, nicht nach dem Golden-Satz:
+        # der Golden-Satz ist Trend- und Bodeninstrument, und jede
+        # Entscheidung, die gegen ihn getroffen wird, verbraucht ein Stueck
+        # seiner Unabhaengigkeit.
+        #
+        # Nebenprodukt: die Spanne der Seeds wird jede Nacht mitprotokolliert.
+        # Der Rauschboden ist damit eine verfolgte Groesse statt einer
+        # Einzelmessung vom 2026-08-09.
+        def _med(m):
+            return m.get("iou_tv_median", m.get("iou_median", m.get("iou", 0.0)))
+
+        prod_seeds = max(1, int(args.prod_seeds))
+        kandidaten = []
+        for _sd in range(prod_seeds):
+            _clf = WeightedMLP(hidden_dim=32, max_iter=200, random_state=_sd)
+            _clf.fit(X_train_ch, y_train, sw_train)
+            if prod_seeds > 1:
+                print(f"\n=== Seed {_sd}: {_clf.n_iter_} Epochen, "
+                      f"loss={_clf.loss_:.4f} ===")
+            else:
+                print(f"  fit done in {_clf.n_iter_} epochs, "
+                      f"loss={_clf.loss_:.4f}")
+            _m = eval_split(_clf, test_recs_ch, args.fps_extract, smooth_s=10)
+            kandidaten.append((_med(_m), _sd, _clf, _m))
+
+        kandidaten.sort(key=lambda k: k[0])
+        _gewaehlt = kandidaten[len(kandidaten) // 2]
+        prod_seed_used = _gewaehlt[1]
+        mlp_prod_clf = _gewaehlt[2]
+        metrics_smooth_mlp = _gewaehlt[3]
+        prod_seed_spread = round(kandidaten[-1][0] - kandidaten[0][0], 4)
+        if prod_seeds > 1:
+            print(f"\n  Seed-Auswahl: " + "  ".join(
+                f"{sd}={med:.3f}" + ("*" if sd == prod_seed_used else "")
+                for med, sd, _, _ in sorted(kandidaten, key=lambda k: k[1])))
+            print(f"  Spanne {prod_seed_spread:.3f} — ausgeliefert wird der "
+                  f"mittlere (Seed {prod_seed_used}), nicht der beste.")
         print(f"\n=== {args.head_arch} held-out evaluation (smooth=10s) ===")
         eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=0)
-        metrics_smooth_mlp = eval_split(mlp_prod_clf, test_recs_ch,
-                                         args.fps_extract, smooth_s=10)
         # Override the deploy-decision metric — the deploy block
         # downstream uses metrics_smooth to compare against the last
         # deployed run; what gets compared must match what gets
@@ -5370,8 +5427,11 @@ def main():
         print(f"  base: {len(X_all_ch)} frames "
               f"({len(keep_all)}/{len(per_rec)} recs), "
               f"true sample_weight (no oversample)")
+        # Derselbe Seed wie der ausgewaehlte Kopf — sonst waere der
+        # ausgelieferte Refit wieder eine unbeobachtete Einzelziehung und die
+        # Auswahl oben umsonst.
         mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
-                                   random_state=0)
+                                   random_state=prod_seed_used)
         mlp_prod_clf.fit(X_all_ch, y_all_ch, sw_all_ch)
         full_acc = (mlp_prod_clf.predict(X_all_ch) == y_all_ch).mean()
         print(f"  full-data fit acc {full_acc*100:.1f}%, "
@@ -6153,6 +6213,13 @@ def main():
                     "ts": ts, "n": len(_gvals),
                     "golden_median": round(_gmed, 4),
                     "golden_mean": round(_gmean, 4),
+                    # Welcher Init-Seed ausgeliefert wurde und wie weit die
+                    # Geschwister auseinanderlagen. Damit ist der Rauschboden
+                    # eine verfolgte Groesse und keine Einzelmessung mehr —
+                    # jede Nacht liefert einen Datenpunkt dazu, wie viel von
+                    # einer Golden-Differenz ueberhaupt Signal sein kann.
+                    "seed": prod_seed_used,
+                    "seed_spread": prod_seed_spread,
                     "set_version": _gmeta.get("version", 1),
                     "set_hash": _gmeta.get("set_hash"),
                     # Which block former produced this number. Entries

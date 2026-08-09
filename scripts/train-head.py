@@ -4524,6 +4524,27 @@ def main():
                               whisper=True, temporal=True, churn=wants_churn,
                               mp_col=_minuteprior_col)
 
+        def _augment_ct_minuteprior(X, slug, uuid):
+            # DIESELBE Auspraegung wie _augment_cwt_minuteprior, nur OHNE die
+            # Whisper-Spalte (1299 statt 1300). Das Paar der beiden isoliert
+            # genau eine Spalte — alles andere (Kanal, dp/dn, Unruhe,
+            # Minute-Prior, Gewichte, Testsatz) ist identisch.
+            #
+            # Anlass (2026-08-09): der Schattenvergleich zeigt zwei Naechte in
+            # Folge, dass "+ channel + whisper" unter "+ channel" liegt
+            # (-0.027 / -0.020) und dass die schlankste Variante (nur
+            # Zeitdeltas) mit 0.946 ueber allem steht. Die Sonde
+            # channel+whisper misst aber gegen eine Variante OHNE Zeitdeltas
+            # und Minute-Prior — sie beantwortet nicht, ob die Spalte in der
+            # HEUTIGEN Architektur noch traegt. Diese hier tut es.
+            #
+            # Die Whisper-MASKE faellt mit weg: sie sagt "Whisper-Daten
+            # vorhanden ja/nein" und hat ohne die Wahrscheinlichkeitsspalte
+            # keinen Bezug mehr (s. Memory whisper_luecke_und_indikatorspalte).
+            return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
+                              temporal=True, churn=wants_churn,
+                              mp_col=_minuteprior_col)
+
         def _build_train(recs, augment):
             # recs must be train_recs: rows are taken via the parallel
             # keep_masks / sw_train_parts arrays so the shadow variants
@@ -4613,6 +4634,11 @@ def main():
         m_v7, mlp_v7, _ = _fit_eval(
             f"MLP-32 + cwt + minute-prior (+1 dim)",
             _augment_cwt_minuteprior)
+        # Die Whisper-Sonde in der heutigen Architektur: identisch zu v7,
+        # nur ohne die eine Spalte. Δ(v7−v8) ist der Beitrag von Whisper.
+        m_v8, mlp_v8, _ = _fit_eval(
+            f"MLP-32 + ct + minute-prior (OHNE whisper)",
+            _augment_ct_minuteprior)
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -4655,27 +4681,67 @@ def main():
         base_iou = metrics_smooth["iou"]
         base_med = _vmed(metrics_smooth)
         base_acc = metrics_smooth["acc"]
+
+        # Golden-Median je Variante. Der Testsatz wechselt seine
+        # Zusammensetzung mit dem Korpus, der Golden-Satz nicht — nur DIESE
+        # Spalte ist mit dem Nacht-zu-Nacht-Trend und dem Golden-Boden
+        # vergleichbar. Gleiche Rechnung wie golden_boden(): Median der
+        # per-rec-IoU ueber die gepinnten uuids, mit derselben
+        # Vollstaendigkeitspflicht (fehlt eine, ist der Wert nicht
+        # zusammensetzungs-konstant und wird nicht gezeigt).
+        _golden_uuids = set()
+        try:
+            if args.train_archive:
+                _gp = Path(args.train_archive) / "golden-eval-set.json"
+                if _gp.exists():
+                    _golden_uuids = set(
+                        json.loads(_gp.read_text()).get("uuids") or [])
+        except Exception as e:
+            print(f"  Golden-Satz nicht lesbar ({e}) — Spalte entfaellt")
+
+        def _gmed(m):
+            pr = (m or {}).get("per_rec_iou") or {}
+            if not _golden_uuids or not _golden_uuids <= set(pr):
+                return None
+            return float(np.median([pr[u] for u in _golden_uuids]))
+
+        def _gtxt(m):
+            g = _gmed(m)
+            return f"{g:>6.3f}" if g is not None else f"{'—':>6}"
+
         print("\n" + "=" * 70)
         print("SHADOW COMPARISON (smooth=10s, test set)")
         print("=" * 70)
-        print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  {'acc':>6}")
+        print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  "
+              f"{'acc':>6}  {'golden':>6}")
         print(f"  {'baseline (' + args.head_arch + ')':35s}  "
-              f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  {base_acc*100:>5.1f}%")
+              f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  "
+              f"{base_acc*100:>5.1f}%  {_gtxt(metrics_smooth)}")
         for name, m in [("MLP-32", m_v1),
                         (f"MLP-32 + channel ({n_chan})", m_v2),
                         ("MLP-32 + temporal", m_v3),
                         (f"MLP-32 + channel + whisper", m_v4),
                         ("MLP-32 + cwt (prod replica)", m_v6),
-                        ("MLP-32 + cwt + minute-prior", m_v7)]:
+                        ("MLP-32 + cwt + minute-prior", m_v7),
+                        ("MLP-32 + ct + mp (OHNE whisper)", m_v8)]:
             d = _vmed(m) - base_med
             mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
             print(f"  {name:35s}  {_vmed(m):>6.3f}  "
-                  f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%{mark}")
+                  f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%  "
+                  f"{_gtxt(m)}{mark}")
         # The decision number for the minute-prior probe: Δ vs the
         # production replica under identical shadow semantics.
         d_mp = _vmed(m_v7) - _vmed(m_v6)
         print(f"\n  minute-prior probe: cwt {_vmed(m_v6):.3f} → "
               f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_mp:+.3f})")
+        # Die Whisper-Spalte, isoliert in der heutigen Architektur:
+        # v7 und v8 unterscheiden sich in genau dieser einen Spalte.
+        d_wh = _vmed(m_v7) - _vmed(m_v8)
+        g7, g8 = _gmed(m_v7), _gmed(m_v8)
+        g_txt = (f", golden {g8:.3f} → {g7:.3f} (Δ {g7 - g8:+.3f})"
+                 if g7 is not None and g8 is not None else "")
+        print(f"  whisper probe:      ct+mp {_vmed(m_v8):.3f} → "
+              f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_wh:+.3f}){g_txt}")
         # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel).
         # Tells you "is whisper as an MLP input column better than
         # whisper as a post-processor rule set". Migration breaks even

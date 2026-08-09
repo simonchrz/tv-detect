@@ -143,6 +143,13 @@ ist verzerrt (reviewt wird bevorzugt, was auffällt). Aber solange diese Zahl
 nicht fällt, ist jede IoU-Verbesserung eine Behauptung über einen
 Stellvertreter.
 
+⚠️ **Nicht während einer Detect-Welle messen.** Wird die Cutlist gerade neu
+geschrieben, ist die `.txt` zwischenzeitlich leer und `auto` kommt aus einer
+Ersatzquelle (Anker-Fenster), die plausibel aussieht und es nicht ist.
+Gemessen am 2026-08-09 mitten in einer Welle sprang derselbe Titel von 169 auf
+800 s/h. Das Skript verweigert deshalb den Dienst, wenn `/api/integrity`
+laufende oder wartende Detects meldet.
+
 ⚠️ **Die erste Fassung des Skripts meldete für August „100 % exakt".** Grund:
 `edited=true` heißt nicht „ein Mensch war dran" — Auto-Confirm schreibt ein
 synthetisches `ads_user.json`, in dem `user == auto` per Konstruktion gilt.

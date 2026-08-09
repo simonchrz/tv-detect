@@ -100,7 +100,30 @@ def main():
     ap.add_argument("--host", default="http://raspberrypi5lan:9984")
     ap.add_argument("--limit", type=int, default=2000)
     ap.add_argument("--csv", type=Path)
+    ap.add_argument("--trotz-detect", action="store_true",
+                    help="auch messen, waehrend eine Detect-Welle laeuft "
+                         "(die Zahlen sind dann unbrauchbar, s.u.)")
     args = ap.parse_args()
+
+    # Waehrend einer Detect-Welle wird die Cutlist neu geschrieben: die .txt
+    # ist zwischenzeitlich leer, und `auto` kommt dann aus einer Ersatzquelle
+    # (Anker-Fenster), die plausibel aussieht und es nicht ist. Gemessen am
+    # 2026-08-09 mitten in einer Welle: derselbe Titel sprang von 169 auf
+    # 800 s/h. Nicht auffaellig genug, um von selbst aufzufallen — deshalb
+    # der Riegel und nicht bloss eine Warnung.
+    try:
+        iz = hole(f"{args.host}/api/integrity", timeout=8)
+        laufend = int(iz.get("detect_running") or 0)
+        wartend = int((iz.get("queues") or {}).get("detect_pending") or 0)
+        if (laufend or wartend) and not args.trotz_detect:
+            print(f"Detect laeuft ({laufend} aktiv, {wartend} wartend) — "
+                  f"Cutlists werden gerade neu geschrieben, die Messung waere "
+                  f"unbrauchbar. Spaeter erneut, oder --trotz-detect.",
+                  file=sys.stderr)
+            return 3
+    except Exception as e:
+        print(f"warn: Detect-Zustand nicht abfragbar ({e}) — Zahlen mit "
+              f"Vorsicht lesen", file=sys.stderr)
 
     try:
         recs = hole(f"{args.host}/api/recordings?limit={args.limit}")["recordings"]

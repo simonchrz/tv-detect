@@ -109,6 +109,37 @@ Serie.
 | Uneindeutig oder gemischt | O1b aufmachen: dritter Arm mit Maske aber ohne Wahrscheinlichkeit, um die beiden zu trennen. Nicht vorher — ein dritter Arm verwässert den Haupttest. |
 | Δ positiv | O1 geschlossen, Spalte bleibt, Eintrag in den Friedhof. Dann ist die Erklärung für den Abwärtstrend seit 08-07 **woanders** zu suchen, und das ist die eigentliche Erkenntnis. |
 
+## Dieselbe Regel, maschinenlesbar
+
+Nachtrag vom selben Tag, **vor der ersten Serien-Nacht** — Wortlaut oben
+unverändert, hier nur in einer Form, die `scripts/audit-preregistration.py`
+ohne mich auswerten kann. Der Sinn: am Ende der Serie urteilt nicht der, der
+die Registrierung geschrieben hat. Ändert sich dieser Block nach der ersten
+gezählten Nacht, schlägt das Audit Alarm — deshalb steht er hier und nicht
+in meinem Kopf.
+
+```regel
+{
+  "id": "O1",
+  "frage": "Kostet die Whisper-Spalte mehr als sie bringt?",
+  "serie_ab": "20260810",
+  "naechte": 5,
+  "verlaengert_auf": 9,
+  "verlaengerung_wenn_seed_std_ueber": 0.010,
+  "arme": {"mit": "mlp32-cwt-mp", "ohne": "mlp32-ct-mp"},
+  "delta": "mit minus ohne, auf golden_median",
+  "gueltige_nacht": {
+    "set_hash": "c8727e8266a8",
+    "decoder": "--decoder hsmm --hsmm-dur-w 15",
+    "golden_n": 38
+  },
+  "bedingungen": {
+    "median_hoechstens": -0.010,
+    "negative_naechte_mindestens": 4
+  }
+}
+```
+
 ## Was die Migration zusätzlich beachten muss
 
 Der Dimensionswechsel 1301 → 1299 **überspringt das Head-to-Head** — das Gate

@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Prüft eine Vorab-Registrierung gegen die tatsächliche Serie.
+
+Der Punkt dieses Skripts ist NICHT, Arbeit zu sparen. Es ist die einzige
+Instanz in der Schleife, die zu einem Ergebnis "NICHT ERFUELLT" sagen kann,
+ohne dass derjenige mitredet, der die Registrierung geschrieben hat. Wer eine
+Hypothese aufstellt, die Daten sammelt UND am Ende beurteilt, ob sie hielt,
+hat keine Prüfung, sondern eine Erzählung.
+
+Es liest die Regel aus dem ```regel-Block der Registrierung, filtert die
+gültigen Nächte aus shadow-trend.jsonl und rechnet nach. Zusätzlich prüft es
+über die git-Historie, ob die Regel NACH der ersten gezählten Nacht noch
+angefasst wurde — das ist der Weg, auf dem eine Vorab-Registrierung still zu
+einer Nachher-Registrierung wird.
+
+    audit-preregistration.py [--archiv PFAD] [--docs PFAD]
+
+Rückgabewert: 0 = alle Serien noch offen oder erfüllt, 1 = mindestens eine
+Regel verletzt oder Integritätsproblem. Damit taugt es als cron-Wächter.
+"""
+import argparse
+import json
+import re
+import statistics
+import subprocess
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+ARCHIV = Path.home() / ".cache/tvd-train-archive"
+DOCS = Path(__file__).resolve().parent.parent / "docs"
+
+
+def regeln_laden(docs):
+    """Alle ```regel-Blöcke aus den Registrierungen."""
+    out = []
+    for pfad in sorted(docs.glob("*preregistration*.md")):
+        for m in re.finditer(r"^```regel\n(.*?)^```", pfad.read_text(),
+                             flags=re.M | re.S):
+            try:
+                out.append((pfad, json.loads(m.group(1))))
+            except json.JSONDecodeError as e:
+                print(f"  ⚠ {pfad.name}: regel-Block nicht lesbar ({e})")
+    return out
+
+
+def naechte_laden(archiv):
+    """ts → {arch: zeile} aus shadow-trend.jsonl."""
+    pfad = archiv / "shadow-trend.jsonl"
+    if not pfad.exists():
+        return {}
+    nach_ts = defaultdict(dict)
+    for ln in pfad.read_text().splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            e = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        nach_ts[e.get("ts")][e.get("arch")] = e
+    return nach_ts
+
+
+def regel_zuletzt_geaendert(pfad):
+    """Unix-Zeit des letzten Commits, der die Datei angefasst hat.
+
+    Ungetrackte oder uncommittete Änderungen zählen als 'jetzt' — eine Regel,
+    die nur im Arbeitsverzeichnis steht, ist nicht festgeschrieben.
+    """
+    try:
+        r = subprocess.run(["git", "log", "-1", "--format=%at", "--", str(pfad)],
+                           cwd=pfad.parent, capture_output=True, text=True,
+                           timeout=10)
+        schmutzig = subprocess.run(["git", "status", "--porcelain", "--", str(pfad)],
+                                   cwd=pfad.parent, capture_output=True,
+                                   text=True, timeout=10)
+        if schmutzig.stdout.strip():
+            return None, "uncommittete Änderung"
+        if r.returncode == 0 and r.stdout.strip():
+            return int(r.stdout.strip()), None
+    except Exception as e:
+        return None, str(e)
+    return None, "nicht in git"
+
+
+def ts_zu_unix(ts):
+    """'20260810T040512' → Unix-Zeit (lokal). Nur für den Integritätsvergleich."""
+    import time
+    try:
+        return int(time.mktime(time.strptime(ts, "%Y%m%dT%H%M%S")))
+    except Exception:
+        return None
+
+
+def pruefe(pfad, regel, nach_ts):
+    print(f"\n{'=' * 68}")
+    print(f"{regel.get('id', '?')} — {regel.get('frage', '')}")
+    print(f"  Registrierung: {pfad.name}")
+    print("=" * 68)
+
+    g = regel.get("gueltige_nacht", {})
+    arme = regel.get("arme", {})
+    a_mit, a_ohne = arme.get("mit"), arme.get("ohne")
+    ab = str(regel.get("serie_ab") or "")
+
+    gueltig, verworfen = [], []
+    for ts in sorted(nach_ts):
+        if ab and ts[:len(ab)] < ab:
+            continue
+        zeilen = nach_ts[ts]
+        m, o = zeilen.get(a_mit), zeilen.get(a_ohne)
+        if not m or not o:
+            verworfen.append((ts, "ein Arm fehlt"))
+            continue
+        schlecht = [k for k, v in g.items()
+                    if any(z.get(k) != v for z in (m, o))]
+        if schlecht:
+            verworfen.append((ts, "abweichend: " + ", ".join(schlecht)))
+            continue
+        if m.get("golden_median") is None or o.get("golden_median") is None:
+            verworfen.append((ts, "kein golden_median"))
+            continue
+        gueltig.append((ts, round(m["golden_median"] - o["golden_median"], 4)))
+
+    for ts, grund in verworfen:
+        print(f"  verworfen {ts}: {grund} — Serie verlängert sich")
+
+    n_soll = int(regel.get("naechte") or 0)
+    if not gueltig:
+        # "noch nicht begonnen" und "alle Naechte verworfen" sehen im
+        # Ergebnis gleich aus, bedeuten aber Gegenteiliges: das eine ist
+        # Warten, das andere ein kaputter Lauf, der niemandem auffaellt,
+        # solange er als "noch offen" durchgeht.
+        if verworfen:
+            print(f"  Stand: 0/{n_soll} gültige Nächte — ALLE "
+                  f"{len(verworfen)} Nächte verworfen. Das ist kein Warten, "
+                  f"das ist ein Defekt: die Serie kommt so nie zustande.")
+        else:
+            print(f"  Stand: 0/{n_soll} gültige Nächte — Serie hat noch "
+                  f"nicht begonnen.")
+        return True
+
+    print(f"\n  {'Nacht':16s}  Δ (mit − ohne)")
+    for ts, d in gueltig:
+        print(f"  {ts:16s}  {d:+.4f}")
+
+    deltas = [d for _, d in gueltig]
+    med = statistics.median(deltas)
+    neg = sum(1 for d in deltas if d < 0)
+    b = regel.get("bedingungen", {})
+    med_max = b.get("median_hoechstens")
+    neg_min = b.get("negative_naechte_mindestens")
+
+    print(f"\n  Median  {med:+.4f}   negativ  {neg}/{len(deltas)}")
+
+    if len(deltas) < n_soll:
+        print(f"\n  → NOCH OFFEN: {len(deltas)}/{n_soll} gültige Nächte. "
+              f"Zwischenstände sind KEIN Ergebnis.")
+        return True
+
+    c1 = med_max is None or med <= med_max
+    c2 = neg_min is None or neg >= neg_min
+    print(f"\n  Bedingung 1  Median ≤ {med_max}:            "
+          f"{'erfüllt' if c1 else 'NICHT erfüllt'}  ({med:+.4f})")
+    print(f"  Bedingung 2  ≥ {neg_min} von {len(deltas)} negativ:      "
+          f"{'erfüllt' if c2 else 'NICHT erfüllt'}  ({neg})")
+
+    if c1 and c2:
+        print("\n  → REGEL ERFUELLT. Die vorab festgelegte Konsequenz gilt.")
+    else:
+        print("\n  → REGEL NICHT ERFUELLT. Die vorab festgelegte Konsequenz "
+              "für diesen Ausgang gilt — nicht die Geschichte, die sich zu "
+              "den Zahlen erzählen lässt.")
+    return c1 and c2
+
+
+def pruefe_integritaet(pfad, nach_ts, regel):
+    """Wurde die Regel angefasst, nachdem die Serie begonnen hatte?"""
+    ab = str(regel.get("serie_ab") or "")
+    erste = None
+    for ts in sorted(nach_ts):
+        if ab and ts[:len(ab)] >= ab:
+            erste = ts
+            break
+    if erste is None:
+        return True
+    stand, grund = regel_zuletzt_geaendert(pfad)
+    if stand is None:
+        print(f"\n  ⚠ INTEGRITAET: {pfad.name} — {grund}. Eine Regel, die "
+              f"nicht festgeschrieben ist, ist keine Vorab-Registrierung.")
+        return False
+    erste_unix = ts_zu_unix(erste)
+    if erste_unix and stand > erste_unix:
+        print(f"\n  ⚠ INTEGRITAET: {pfad.name} wurde zuletzt NACH der ersten "
+              f"gezählten Nacht ({erste}) geändert. Regel und Ergebnis sind "
+              f"nicht mehr unabhängig — prüfen, was sich geändert hat:\n"
+              f"     git log -p -- {pfad}")
+        return False
+    return True
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--archiv", type=Path, default=ARCHIV)
+    ap.add_argument("--docs", type=Path, default=DOCS)
+    args = ap.parse_args()
+
+    regeln = regeln_laden(args.docs)
+    if not regeln:
+        print("Keine Registrierung mit ```regel-Block gefunden.")
+        return 0
+    nach_ts = naechte_laden(args.archiv)
+    ok = True
+    for pfad, regel in regeln:
+        ok &= pruefe(pfad, regel, nach_ts)
+        ok &= pruefe_integritaet(pfad, nach_ts, regel)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

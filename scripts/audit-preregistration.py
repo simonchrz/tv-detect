@@ -105,6 +105,7 @@ def pruefe(pfad, regel, nach_ts):
     ab = str(regel.get("serie_ab") or "")
 
     gueltig, verworfen = [], []
+    gesehene_tage = {}
     for ts in sorted(nach_ts):
         if ab and ts[:len(ab)] < ab:
             continue
@@ -112,6 +113,21 @@ def pruefe(pfad, regel, nach_ts):
         m, o = zeilen.get(a_mit), zeilen.get(a_ohne)
         if not m or not o:
             verworfen.append((ts, "ein Arm fehlt"))
+            continue
+        # Nur der Nightly zaehlt. Ein Handlauf entsteht unter anderen
+        # Bedingungen (anderer Snapshot-Zeitpunkt, oft anderer Testsatz)
+        # und wuerde die Serie sonst still um eine Nacht weiterzaehlen.
+        quellen = {z.get("quelle") for z in (m, o)}
+        if quellen != {"nightly"}:
+            verworfen.append((ts, f"kein Nightly (quelle={'/'.join(sorted(str(q) for q in quellen))})"))
+            continue
+        # Eine Nacht pro Kalendertag. Zwei Laeufe am selben Tag sind eine
+        # Wiederholung, keine zweite Stichprobe — bei ueber 99 %
+        # Korpus-Ueberlappung erst recht.
+        tag = ts[:8]
+        if tag in gesehene_tage:
+            verworfen.append((ts, f"zweiter Lauf am {tag} (gezählt: "
+                                  f"{gesehene_tage[tag]})"))
             continue
         schlecht = [k for k, v in g.items()
                     if any(z.get(k) != v for z in (m, o))]
@@ -121,6 +137,7 @@ def pruefe(pfad, regel, nach_ts):
         if m.get("golden_median") is None or o.get("golden_median") is None:
             verworfen.append((ts, "kein golden_median"))
             continue
+        gesehene_tage[tag] = ts
         gueltig.append((ts, round(m["golden_median"] - o["golden_median"], 4)))
 
     for ts, grund in verworfen:

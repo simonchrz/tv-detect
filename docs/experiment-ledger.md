@@ -122,6 +122,33 @@ das so ist, kommt nur noch durch, wer den Champion schlägt. `golden_stau()`
 zählt die Nächte in Folge und warnt — die Warnung ernst nehmen, aber
 **nicht** mit einer Erhöhung von `--golden-floor` beantworten (Leitplanke L1).
 
+### O4 — Sinkt der Korrekturaufwand überhaupt?
+
+*Status: erstmals gemessen 2026-08-09, beobachten.*
+
+`scripts/review-effort.py` misst, wie viele Sekunden je Stunde der Mensch am
+Vorschlag der Maschine verschoben hat — die einzige Zahl in diesem Stack, die
+nicht aus der Schleife selbst stammt. Erste Messung, nur von Menschen
+reviewte Aufnahmen, nur solche außerhalb des Trainings:
+
+```
+  2026-05  n=11  Median 49.6 s/h   exakt  9 %
+  2026-06  n= 9  Median 47.6 s/h   exakt 22 %
+  2026-07  n= 5  Median 75.7 s/h   exakt  0 %
+```
+
+Kein sichtbarer Rückgang, bei kleinen n. Das ist **keine** Feststellung, dass
+die Schleife nichts bringt — die Monatsgruppen sind zu klein und die Stichprobe
+ist verzerrt (reviewt wird bevorzugt, was auffällt). Aber solange diese Zahl
+nicht fällt, ist jede IoU-Verbesserung eine Behauptung über einen
+Stellvertreter.
+
+⚠️ **Die erste Fassung des Skripts meldete für August „100 % exakt".** Grund:
+`edited=true` heißt nicht „ein Mensch war dran" — Auto-Confirm schreibt ein
+synthetisches `ads_user.json`, in dem `user == auto` per Konstruktion gilt.
+101 von 250 Dateien. Wer nach `auto_confirmed_at` nicht filtert, misst die
+Schleife gegen sich selbst und bekommt eine perfekte Note.
+
 ## 4. Friedhof — entschieden, nicht neu vorschlagen
 
 | Idee | Verdikt | Wann | Warum |
@@ -166,5 +193,14 @@ Was die Schleife **nie** tut, auch nicht mit guter Begründung:
 | per-rec-IoU (Stabilitäts-Veto) | `~/.cache/tvd-train-archive/per-rec-iou.jsonl` |
 | Golden-Satz + `set_hash` | `~/.cache/tvd-train-archive/golden-eval-set.json` |
 | Split-Ledger | `~/.cache/tvd-train-archive/split-ledger.json` |
+| Auto vs. User-Blöcke | `GET :9984/recording/<uuid>/ads` (nie die Caches catten) |
+| Mensch oder Auto-Confirm | `~/tv-labels-backup/_rec_*/ads_user.json` → `auto_confirmed_at` |
 
-Alle liegen auf dem Mac. Eine Schleife, die sie liest, muss lokal laufen.
+Alle liegen auf dem Mac (bzw. hinter der tv-recorder-API). Eine Schleife, die
+sie liest, muss lokal laufen.
+
+**Gesichert seit 2026-08-09:** `tv-backup-labels.sh` spiegelt
+`~/.cache/tvd-train-archive` nach `~/tv-labels-backup/train-archive/` und
+committet es in das private Repo. Davor lag das gesamte Gedächtnis der
+Schleife — Golden-Verlauf, Golden-Satz, Test-Split, 660 eingefrorene
+Archiv-Aufnahmen — ungesichert in einem Cache-Verzeichnis.

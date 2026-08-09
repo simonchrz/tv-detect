@@ -4890,6 +4890,12 @@ def main():
                             # shadow-Zeilen NICHT seed-gleich sind — und
                             # vergleicht sie arglos.
                             "seed": 0 if _rolle == "baseline" else nacht_seed,
+                            # nightly | hand. Der Wrapper setzt TVD_LAUF; ein
+                            # Handlauf tut es nicht. Ohne dieses Feld zaehlt
+                            # jeder Handlauf als Serien-Nacht mit — und die
+                            # Serie waere um eine Messung laenger, die unter
+                            # anderen Bedingungen entstand.
+                            "quelle": os.environ.get("TVD_LAUF", "hand"),
                             "golden_median": (round(_g, 4)
                                               if _g is not None else None),
                             "golden_mean": (round(float(np.mean(_gm)), 4)

@@ -39,9 +39,11 @@ REGEL = {
 }
 
 
-def nacht(ts, mit, ohne, *, set_hash=HASH, decoder=DEC, n=38):
+def nacht(ts, mit, ohne, *, set_hash=HASH, decoder=DEC, n=38,
+          quelle="nightly"):
     """Zwei jsonl-Zeilen fuer eine Nacht."""
-    gem = {"ts": ts, "set_hash": set_hash, "decoder": decoder, "golden_n": n}
+    gem = {"ts": ts, "set_hash": set_hash, "decoder": decoder, "golden_n": n,
+           "quelle": quelle}
     return [dict(gem, arch="arm-mit", golden_median=mit),
             dict(gem, arch="arm-ohne", golden_median=ohne)]
 
@@ -135,6 +137,36 @@ class ZaehltRichtig(unittest.TestCase):
         self.assertIn("Serie hat noch nicht begonnen", txt)
         self.assertNotIn("20260809", txt.split("Stand:")[0].replace(
             "Registrierung", ""))
+
+    def test_handlauf_zaehlt_nicht(self):
+        # Ein Handlauf mitten in der Serie wuerde sie sonst still um eine
+        # Nacht weiterzaehlen — unter anderen Bedingungen gemessen.
+        z = nacht("20260811T093000", 0.850, 0.900, quelle="hand")
+        for i in (0, 2, 3, 4):
+            z += nacht(f"2026081{i}T040000", 0.890, 0.900)
+        ok, txt = lauf(z)
+        self.assertIn("kein Nightly", txt)
+        self.assertIn("quelle=hand", txt)
+        self.assertIn("NOCH OFFEN", txt)  # 4 statt 5 gueltige
+
+    def test_fehlende_quelle_zaehlt_nicht(self):
+        # Alte Zeilen ohne das Feld sind nicht nachweisbar Nightly-Zeilen.
+        z = nacht("20260810T040000", 0.850, 0.900)
+        for zeile in z:
+            del zeile["quelle"]
+        ok, txt = lauf(z)
+        self.assertIn("kein Nightly", txt)
+
+    def test_zweiter_lauf_am_selben_tag_zaehlt_nicht(self):
+        z = nacht("20260810T040000", 0.880, 0.900)
+        z += nacht("20260810T193000", 0.700, 0.900)   # Wiederholung
+        for i in (1, 2, 3):
+            z += nacht(f"2026081{i}T040000", 0.890, 0.900)
+        ok, txt = lauf(z)
+        self.assertIn("zweiter Lauf am 20260810", txt)
+        self.assertIn("NOCH OFFEN", txt)
+        # Der Ausreisser -0.200 darf den Median nicht erreichen.
+        self.assertNotIn("-0.2000", txt)
 
     def test_zwischenstand_ist_kein_ergebnis(self):
         # 3 von 5 Naechten, alle stark negativ → trotzdem kein Urteil.

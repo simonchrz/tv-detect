@@ -26,6 +26,8 @@
 #   labels:           rsync -av ~/tv-labels-backup/_rec_*/ pi:/mnt/tv/hls/
 #   tv-receiver state: rsync -av ~/tv-labels-backup/tv-receiver-state/ pi:/home/simon/bin/
 #                      (then: docker restart tv-receiver)
+#   Schleifen-Gedaechtnis: rsync -av ~/tv-labels-backup/train-archive/ \
+#                            ~/.cache/tvd-train-archive/     (lokal, Mac)
 LOG="$HOME/Library/Logs/tv-backup-labels.log"
 exec >>"$LOG" 2>&1
 echo "=== $(date '+%F %T') ==="
@@ -72,6 +74,29 @@ rsync -av \
   echo "tv-receiver-state rsync failed — bailing"
   exit 1
 }
+
+# Das Gedaechtnis der Verbesserungs-Schleife (2026-08-09). Liegt NICHT auf dem
+# Pi, sondern lokal in ~/.cache — einem Verzeichnis, dessen Name Aufraeum-
+# werkzeuge zum Loeschen einlaedt. Inhalt: der Golden-Verlauf (die Historie,
+# aus der die Sperrklinke ihren Bestwert zieht), die Definition des
+# Golden-Satzes, der sticky Test-Split, die per-rec-IoU-Historie fuer das
+# Stabilitaets-Veto, die Schatten-Serie — und 660+ eingefrorene
+# Archiv-Aufnahmen, deren Originale auf dem Pi laengst geloescht sind.
+#
+# Ohne diese Dateien beginnt jede laufende Serie von vorn, der Test-Split
+# verliert seine Stickiness und die Sperrklinke steht ohne Bestwert da.
+# 14 MB. Es gab keinen Grund, das nicht zu sichern, ausser dass bis heute
+# niemand hingesehen hat.
+ARCHIVE_SRC="$HOME/.cache/tvd-train-archive"
+if [ -d "$ARCHIVE_SRC" ]; then
+  mkdir -p "$REPO/train-archive"
+  rsync -a --delete "$ARCHIVE_SRC/" "$REPO/train-archive/" || {
+    echo "train-archive rsync failed — bailing"
+    exit 1
+  }
+else
+  echo "warn: $ARCHIVE_SRC fehlt — Schleifen-Gedaechtnis NICHT gesichert"
+fi
 
 cd "$REPO" || exit 1
 

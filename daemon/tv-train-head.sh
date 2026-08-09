@@ -25,6 +25,13 @@ echo "=== $(date '+%F %T') ==="
 # (where tv-detect lives if invoked via the Python path).
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
+# Markiert die Zeilen, die dieser Lauf in shadow-trend.jsonl schreibt, als
+# NIGHTLY. Ein Handlauf setzt die Variable nicht und landet als "hand" in der
+# Datei — das Registrierungs-Audit zaehlt nur Nightly-Zeilen als Serien-Nacht.
+# Ohne diese Unterscheidung wuerde ein beliebiger Handlauf eine laufende Serie
+# um eine Nacht "weiterzaehlen", ohne dass es jemandem auffaellt.
+export TVD_LAUF=nightly
+
 # launchd jobs can't reach the login keychain, so `gh` (used by the
 # off-site model-anchor at deploy time) can't read its keyring-stored
 # token → auto-anchor silently failed every night since 2026-06-02.

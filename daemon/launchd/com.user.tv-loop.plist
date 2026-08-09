@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.user.tv-loop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/simon/bin/tv-loop.sh</string>
+  </array>
+  <!-- 08:07, also nach dem Nightly (03:30, endet gegen 04:10) und nach dem
+       Label-Backup (04:30). Nicht auf :00 oder :30, damit der Termin nicht
+       mit den anderen Agenten dieser Maschine zusammenfaellt. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>8</integer>
+    <key>Minute</key><integer>7</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/simon/Library/Logs/tv-loop.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/simon/Library/Logs/tv-loop.log</string>
+</dict>
+</plist>

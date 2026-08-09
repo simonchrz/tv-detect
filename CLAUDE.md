@@ -40,10 +40,52 @@ history preserved):
   `tv-spot-extract.py`, `tv-detect-daily-summary.sh`,
   plus `daemon/launchd/*.plist`.
 
+⚠️ Von den 7 aktiven `com.user.*`-Agenten liegen nur drei unter
+`daemon/launchd/` — die uebrigen existieren NUR in
+`~/Library/LaunchAgents/` und waeren nach einem Mac-Neuaufbau weg.
+Beim Anlegen eines neuen Agenten die plist mit ins Repo kopieren.
+
 The live launchd agents run via `~/bin/<script>` symlinks pointing into
 `daemon/`. Editing a `daemon/` script + `launchctl kickstart -k
 gui/$(id -u)/com.user.<agent>` deploys it. Hardware split + which agents
 exist: see project memory `pi5_mac_split_design`.
+
+## Die Entscheidungs-Schleife (seit 2026-08-09)
+
+Über der nächtlichen ML-Schleife (Retrain → Gate → Deploy) sitzt seit dem
+2026-08-09 eine zweite: welche Frage als nächstes drankommt, wann eine Serie
+lang genug ist, was schon entschieden wurde. **Einstiegspunkt für jede neue
+Sitzung:**
+
+```sh
+python3 scripts/loop-status.py          # Zustand in einem Aufruf
+python3 scripts/audit-preregistration.py # rechnet laufende Serien unabhaengig nach
+```
+
+- [`docs/experiment-ledger.md`](docs/experiment-ledger.md) — **zuerst lesen.**
+  Entscheidungsregeln (R1–R5), offene Fragen (O1–O5), **Friedhof** (was schon
+  gestorben ist und nicht neu vorgeschlagen wird), Leitplanken (L1–L6).
+- `docs/*-preregistration.md` — Hypothese, Nächtezahl und Schwelle,
+  geschrieben *bevor* die Serie sie beantworten kann. Der ```regel-Block
+  darin wird vom Audit maschinell ausgewertet; das Audit meldet auch, wenn
+  die Regel nach Serienbeginn noch angefasst wurde.
+- `daemon/tv-loop.sh` (launchd, täglich 08:07) — sammelt den Zustand ein und
+  lässt ihn gegen das Ledger bewerten. `--nur-bericht` sammelt nur.
+- `scripts/review-effort.py` — Korrekturaufwand in Sekunden je Stunde. Die
+  einzige Zahl hier, die **nicht** aus der Schleife selbst stammt.
+
+Drei Dinge, die man ohne das Ledger falsch macht:
+
+1. **Der Testsatz-Median ist nicht über Nächte vergleichbar** — seine
+   Zusammensetzung wandert mit dem Korpus. Nur der Golden-Median ist es, und
+   nur mit `set_hash` UND Decoder daneben.
+2. **Ein Einzelwert trägt bis zu 0.023 Willkür.** Gemessen: identische Daten,
+   identische Architektur, anderer Init-Seed → Golden-Median 0.901 bis 0.924.
+   Deshalb fittet der Nightly drei Köpfe und liefert den mittleren aus, und
+   deshalb entscheidet eine Serie und nie eine Nacht.
+3. **Der versiegelte Satz wird nicht ausgewertet.** 20 % der Neuzugänge
+   liegen in einem dritten Eimer, gegen den keine Entscheidung fällt. Ihn
+   regelmäßig anzusehen ist genau die Nutzung, die ihn wertlos macht.
 
 ## Architecture decisions worth remembering
 

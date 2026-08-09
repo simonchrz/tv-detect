@@ -116,11 +116,24 @@ auseinanderzuhalten.
 
 *Status: beobachten.*
 
-Der Boden steht auf 0.921 (08-07), der Champion auf 0.917 (08-08). Der Boden
-liegt damit **über** dem, was der amtierende Kopf selbst erreicht. Solange
-das so ist, kommt nur noch durch, wer den Champion schlägt. `golden_stau()`
-zählt die Nächte in Folge und warnt — die Warnung ernst nehmen, aber
-**nicht** mit einer Erhöhung von `--golden-floor` beantworten (Leitplanke L1).
+**Teilweise entschärft 2026-08-09.** Der Boden war `max()` über alle
+deployten Nächte — und ein Einzelwert trägt laut Seed-Sweep bis zu 0.023
+Glücksanteil. Die Sperrklinke verlangte damit, einen Glückstreffer zu
+wiederholen. Seither ist der Boden **der höchste Wert, der mindestens zweimal
+erreicht wurde** (zweitbester, höchstens ein Wert je Kalendertag). Wirkung:
+
+```
+  vorher   0.9213 (Maximum, 08-07)      effektive Latte 0.9113
+  nachher  0.9173 (zweitbester von 3)   effektive Latte 0.9073
+```
+
+Der gestern abgelehnte Kandidat (0.9111) käme damit durch. Der Boden liegt
+aber **weiterhin 0.0007 über dem Champion** (0.9166) — O3 bleibt offen, die
+Änderung nimmt nur den messbaren Verzerrungsanteil heraus.
+
+⚠️ Das ist **kein** Senken der Latte (L1). Die Latte bleibt „so gut wie schon
+einmal reproduziert". Wer wirklich senken will, ändert `--golden-floor` — und
+begründet es. `golden_stau()` zählt weiterhin die Nächte in Folge und warnt.
 
 ### O4 — Sinkt der Korrekturaufwand überhaupt?
 

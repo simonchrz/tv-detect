@@ -1979,15 +1979,46 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
 # protokolliert und mit "compare night-to-night, this is the real trend"
 # beschriftet — aber nirgends ausgewertet. Reine Beobachtung.
 #
-# Der Boden ist ABSOLUT (gegen den besten je deployten Wert), nicht relativ —
-# sonst waere er dieselbe Ratsche eine Ebene hoeher.
+# Der Boden ist ABSOLUT (gegen den hoechsten je ZWEIMAL erreichten deployten
+# Wert, s. golden_bestwert), nicht relativ — sonst waere er dieselbe Ratsche
+# eine Ebene hoeher.
 #
 # Kein Deadlock: ein Kandidat, der den Champion SCHLAEGT, kommt immer durch,
 # auch wenn er noch unter dem Bestwert liegt. Nur so klettert der Stand nach
 # einem Absacker wieder hoch. Blockiert wird ausschliesslich, wer unter dem
 # Bestwert liegt UND den Champion nicht verbessert.
 def golden_bestwert(trend_pfad, set_hash):
-    """Bester je DEPLOYTER Golden-Median fuer genau diesen Golden-Satz.
+    """Der hoechste Golden-Median, den der Stack MINDESTENS ZWEIMAL erreicht
+    hat — nicht der hoechste ueberhaupt.
+
+    ⚠️ Bis 2026-08-09 war das schlicht max(). Das ist eine bekannte
+    Verzerrung nach oben: der Seed-Sweep vom selben Tag hat gemessen, dass
+    identische Daten und identische Architektur je nach Init-Seed einen
+    Golden-Median zwischen 0.901 und 0.924 liefern (Std 0.008). Das Maximum
+    aus N Ziehungen liegt damit im Erwartungswert deutlich ueber dem, was die
+    Konfiguration reproduzierbar kann — bei N=5 rund +0.009. Die Sperrklinke
+    verlangte also dauerhaft, einen Gluecksstreffer zu wiederholen, und der
+    Champion vom 08-08 (0.917) kam an einem Boden von 0.921 nicht mehr vorbei.
+    Das ist kein Schutz vor Drift mehr, das ist eine Sperre.
+
+    Der Zweitbeste ist die schwaechste Aenderung, die diese Verzerrung
+    entfernt, ohne eine Zahl zu erfinden: "einmal erreicht" kann Zufall sein,
+    "zweimal erreicht" deutlich seltener. Bei genau drei Werten ist der
+    Zweitbeste zugleich der Median — die Verzerrung faellt dort ganz weg.
+
+    ⚠️ Das ist ausdruecklich KEIN Senken der Latte (Leitplanke L1). Die Latte
+    bleibt "so gut wie schon einmal reproduziert"; entfernt wird nur der
+    Anteil, der nachweislich Seed-Glueck war. Wer sie doch senken will, aendert
+    --golden-floor und nicht diese Funktion.
+
+    Hoechstens EIN Wert je Kalendertag (der letzte deployte des Tages). Am
+    2026-08-06 stehen drei deployte Eintraege; mehrere Laeufe am selben Tag
+    sind Wiederholungen derselben Messung und wuerden die Zahl der Ziehungen
+    aufblaehen — genau das, was die Verzerrung antreibt.
+
+    Unter drei Tagen faellt die Funktion auf max() zurueck: mit ein oder zwei
+    Werten gibt es keinen sinnvollen Zweitbesten, und ein zu niedriger Boden
+    waere schlimmer als ein leicht zu hoher.
 
     ⚠️ Nur Eintraege mit demselben set_hash. Ueber eine Satz-Aenderung hinweg
     zu vergleichen waere genau der Fehler, den der Hash verhindern soll — und
@@ -2006,10 +2037,10 @@ def golden_bestwert(trend_pfad, set_hash):
     der ersten hsmm-Nacht neu auf. Das ist gewollt; ein geerbter Boden waere
     schlimmer als keiner.
     """
-    best, best_ts = None, None
     if not trend_pfad or not Path(trend_pfad).exists():
         return None, None
     jetzt = " ".join(EVAL_DECODER) or "form"
+    je_tag = {}   # YYYYMMDD -> (wert, ts) des LETZTEN deployten Laufs des Tages
     for ln in Path(trend_pfad).read_text().splitlines():
         if not ln.strip():
             continue
@@ -2024,9 +2055,26 @@ def golden_bestwert(trend_pfad, set_hash):
         if (e.get("decoder") or "form") != jetzt:
             continue
         v = e.get("golden_median")
-        if v is not None and (best is None or float(v) > best):
-            best, best_ts = float(v), e.get("ts")
-    return best, best_ts
+        ts = str(e.get("ts") or "")
+        if v is None:
+            continue
+        # Der letzte deployte Lauf eines Tages ist der, der am Ende des Tages
+        # stand — nicht der beste des Tages. Den besten zu nehmen waere genau
+        # die Verzerrung, die diese Funktion entfernen soll, eine Ebene tiefer.
+        #
+        # Ein ts, das nicht wie ein Datum aussieht, zaehlt als EIGENER Tag,
+        # statt weggeworfen zu werden. Einen Eintrag stillschweigend fallen zu
+        # lassen wuerde den Boden senken, ohne dass es irgendwo auffaellt — und
+        # ein Gate, das sich unbemerkt abschaltet, ist schlimmer als eines, das
+        # zu streng ist.
+        tag = ts[:8] if (len(ts) >= 8 and ts[:8].isdigit()) else ts
+        je_tag[tag] = (float(v), ts)
+    if not je_tag:
+        return None, None
+    sortiert = sorted(je_tag.values(), key=lambda p: p[0], reverse=True)
+    if len(sortiert) < 3:
+        return sortiert[0]          # zu wenige Tage fuer einen Zweitbesten
+    return sortiert[1]
 
 
 def golden_stau(trend_pfad, set_hash):
@@ -2128,7 +2176,7 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
                       f"gehoert er ueberprueft), oder es gibt ein echtes "
                       f"Datenproblem. NICHT einfach --golden-floor hochsetzen.")
             return False, (reason + f" — ABER GOLDEN-BODEN: {g_cand:.3f} liegt "
-                           f"{-abstand:.3f} unter dem besten je deployten Wert "
+                           f"{-abstand:.3f} unter dem hoechsten zweimal erreichten Wert "
                            f"{best:.3f} ({best_ts}){champ_txt} und verbessert "
                            f"den Champion nicht — langsamer Drift, Champion bleibt")
         melde(f"  Golden-Boden: {g_cand:.3f} vs Bestwert {best:.3f} "

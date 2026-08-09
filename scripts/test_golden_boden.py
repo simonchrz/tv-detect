@@ -11,6 +11,7 @@ Ausfuehren: python3 scripts/test_golden_boden.py
 """
 
 import json
+import statistics
 import sys
 import tempfile
 import unittest
@@ -220,6 +221,77 @@ class GoldenStau(unittest.TestCase):
     def test_zaehlt_nur_den_eigenen_satz(self):
         best = _th.golden_stau(None, HASH)
         self.assertEqual(best, 0)
+
+
+class BestwertIstZweitbester(unittest.TestCase):
+    """Der Boden ist der hoechste ZWEIMAL erreichte Wert, nicht das Maximum.
+
+    Warum das Tests braucht: max() sah jahrelang richtig aus. Erst der
+    Seed-Sweep vom 2026-08-09 hat gezeigt, dass ein Einzelwert bis zu 0.023
+    Gluecksanteil traegt — und dass die Sperrklinke deshalb verlangte, einen
+    Gluecksstreffer zu wiederholen.
+    """
+
+    def _trend(self, p, eintraege):
+        """eintraege: (ts, wert, deployed) — schreibt golden-trend.jsonl."""
+        dec = " ".join(_th.EVAL_DECODER) or "form"
+        with open(Path(p) / "golden-trend.jsonl", "w") as f:
+            for ts, wert, dep in eintraege:
+                f.write(json.dumps({
+                    "ts": ts, "golden_median": wert, "set_hash": HASH,
+                    "decoder": dec, "deployed": dep, "n": 38}) + "\n")
+        return Path(p) / "golden-trend.jsonl"
+
+    def test_nimmt_den_zweitbesten(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend(d, [("20260806T040000", 0.909, True),
+                                ("20260807T040000", 0.921, True),
+                                ("20260808T040000", 0.917, True)])
+            best, ts = _th.golden_bestwert(t, HASH)
+            self.assertAlmostEqual(best, 0.917)
+            self.assertTrue(ts.startswith("20260808"))
+
+    def test_mehrere_laeufe_am_selben_tag_zaehlen_einmal(self):
+        # Drei Laeufe am 08-06 duerfen nicht drei Ziehungen sein — sonst
+        # blaeht jede Wiederholung die Zahl der Ziehungen und damit die
+        # Verzerrung des Maximums auf. Gezaehlt wird der LETZTE des Tages.
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend(d, [("20260806T030000", 0.880, True),
+                                ("20260806T120000", 0.950, True),
+                                ("20260806T190000", 0.909, True),
+                                ("20260807T040000", 0.921, True),
+                                ("20260808T040000", 0.917, True)])
+            best, ts = _th.golden_bestwert(t, HASH)
+            # Tage: 08-06 -> 0.909 (letzter), 08-07 -> 0.921, 08-08 -> 0.917
+            self.assertAlmostEqual(best, 0.917)
+
+    def test_unter_drei_tagen_faellt_auf_max_zurueck(self):
+        # Ein zu niedriger Boden waere schlimmer als ein leicht zu hoher.
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend(d, [("20260807T040000", 0.921, True),
+                                ("20260808T040000", 0.900, True)])
+            best, _ = _th.golden_bestwert(t, HASH)
+            self.assertAlmostEqual(best, 0.921)
+
+    def test_nicht_deployte_zaehlen_nicht(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend(d, [("20260806T040000", 0.909, True),
+                                ("20260807T040000", 0.990, False),
+                                ("20260808T040000", 0.917, True),
+                                ("20260809T040000", 0.921, True)])
+            best, _ = _th.golden_bestwert(t, HASH)
+            self.assertAlmostEqual(best, 0.917)
+
+    def test_boden_ist_niedriger_als_das_maximum(self):
+        # Die eigentliche Aussage: die Aenderung entschaerft, sie verschaerft
+        # nicht. Faellt dieser Test, ist die Rechnung verdreht.
+        with tempfile.TemporaryDirectory() as d:
+            werte = [0.909, 0.907, 0.917, 0.921, 0.9166]
+            t = self._trend(d, [(f"2026080{i+4}T040000", v, True)
+                                for i, v in enumerate(werte)])
+            best, _ = _th.golden_bestwert(t, HASH)
+            self.assertLess(best, max(werte))
+            self.assertGreater(best, statistics.median(werte))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

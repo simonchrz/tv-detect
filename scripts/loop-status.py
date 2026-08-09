@@ -119,9 +119,21 @@ def main():
                        if e.get("set_hash") == hash_jetzt
                        and e.get("decoder") == dec_jetzt]
             if passend:
-                best = max(passend, key=lambda e: e["golden_median"])
+                # MUSS dieselbe Rechnung sein wie golden_bestwert() in
+                # train-head.py: hoechster Wert, der mindestens zweimal
+                # erreicht wurde, hoechstens ein Wert je Kalendertag. Ein
+                # Sensor, der anders rechnet als das Gate, meldet Sperren, die
+                # es nicht gibt — oder verschweigt welche, die es gibt.
+                je_tag = {}
+                for e in passend:
+                    je_tag[e["ts"][:8]] = e
+                sortiert = sorted(je_tag.values(),
+                                  key=lambda e: e["golden_median"],
+                                  reverse=True)
+                best = sortiert[1] if len(sortiert) >= 3 else sortiert[0]
                 champ = passend[-1]
-                print(f"  Boden {best['golden_median']} ({best['ts'][:8]}), "
+                print(f"  Boden {best['golden_median']} ({best['ts'][:8]}, "
+                      f"zweitbester von {len(sortiert)} Tagen), "
                       f"Champion {champ['golden_median']} "
                       f"({champ['ts'][:8]})")
                 if champ["golden_median"] < best["golden_median"]:

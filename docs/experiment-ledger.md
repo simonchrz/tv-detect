@@ -61,8 +61,9 @@ Seed-Sweep.
 
 ### O1 — Kostet die Whisper-Spalte mehr als sie bringt?
 
-*Status: Serie läuft seit 2026-08-09 (erste volle Zeile in der Nacht auf
-08-10).*
+*Status: registriert 2026-08-09, Serie 08-10 bis 08-14 (5 Nächte). Regel und
+Schwellen stehen in [`o1-whisper-preregistration.md`](o1-whisper-preregistration.md)
+— vor der ersten Serien-Nacht geschrieben.*
 
 Drei unabhängige Beobachtungen zeigen in dieselbe Richtung:
 

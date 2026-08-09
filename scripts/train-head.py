@@ -2352,6 +2352,14 @@ def main():
                          "head.minute-prior.json sidecar; the Go side "
                          "(nn.go v4) + the daemon's --start-ts flag look up "
                          "the same prior at serve time — deployed in tandem.")
+    ap.add_argument("--seed-sweep", type=int, default=0, metavar="N",
+                    help="N-mal dieselbe Architektur auf denselben Daten "
+                         "fitten, nur mit anderem Init-Seed, und die "
+                         "Streuung von Golden- und Test-Median melden. "
+                         "Trennt Fit-Zufall von Korpus-Drift — die Zahl, "
+                         "an der sich jede Migrations-Entscheidung messen "
+                         "lassen muss. Braucht --shadow-eval (nutzt dessen "
+                         "Fit/Eval-Pfad); nicht im Nightly.")
     ap.add_argument("--shadow-eval", action="store_true",
                     help="after the production LogReg fit + eval, also "
                          "train + evaluate three architectural variants "
@@ -2485,6 +2493,12 @@ def main():
         args.with_audio = True
         args.with_channel = True
 
+    # EIN Zeitstempel fuer den ganzen Lauf. Er benennt das Kopf-Archiv, die
+    # Zeile in golden-trend.jsonl und die Zeilen in shadow-trend.jsonl — nur
+    # so laesst sich spaeter "welche Schattenvariante gehoerte zu welchem
+    # deployten Kopf" ueber die Dateien hinweg verbinden. Vor 2026-08-09
+    # entstand er erst im Deploy-Block, also nach den Schattenlaeufen.
+    ts = time.strftime("%Y%m%dT%H%M%S")
     cache_dir = Path(args.feature_cache)
     cache_dir.mkdir(parents=True, exist_ok=True)
     archive_dir = Path(args.train_archive).expanduser() if args.train_archive else None
@@ -4576,7 +4590,7 @@ def main():
                 out.append((r[0], r[1], r[2], X_aug, r[4]) + tuple(r[5:]))
             return out
 
-        def _fit_eval(name, augment, hidden=(32,)):
+        def _fit_eval(name, augment, hidden=(32,), seed=0):
             X_aug, y_aug, sw_aug = _build_train(train_recs, augment)
             test_aug = _augment_test_recs(test_recs, augment)
             in_dim, n_train_frames = X_aug.shape[1], len(X_aug)
@@ -4585,7 +4599,7 @@ def main():
                   f"train frames: {n_train_frames} (weighted, no oversample), "
                   f"hidden: {hidden}")
             mlp = WeightedMLP(hidden_dim=hidden[0], max_iter=80,
-                              random_state=0)
+                              random_state=seed)
             mlp.fit(X_aug, y_aug, sw_aug)
             print(f"  fit done in {mlp.n_iter_} epochs, "
                   f"loss={mlp.loss_:.4f}")
@@ -4639,6 +4653,31 @@ def main():
         m_v8, mlp_v8, _ = _fit_eval(
             f"MLP-32 + ct + minute-prior (OHNE whisper)",
             _augment_ct_minuteprior)
+
+        # ── Rauschboden (--seed-sweep N) ─────────────────────────────
+        # Dieselben Daten, dieselbe Architektur, nur ein anderer
+        # Initialisierungs-Seed. Die Streuung DARAUS ist reiner Fit-Zufall;
+        # alles was ueber die Naechte darueber hinaus schwankt, kommt vom
+        # wandernden Korpus. Ohne diese Trennung ist keine
+        # Entscheidungsregel kalibrierbar: am 2026-08-09 schwankte dieselbe
+        # Sondenzelle ueber drei Laeufe um 0.028, und ich konnte nicht
+        # sagen, ob das der Fit war oder die Daten.
+        #
+        # Nicht im Nightly (ein Fit+Eval je Seed). Von Hand aufrufen.
+        seed_rows = []
+        if args.seed_sweep > 1:
+            def _augment_prod(X, slug, uuid):
+                return mit_zusatz(
+                    X, uuid, slug, chan_idx, n_chan,
+                    whisper=wants_whisper, temporal=wants_temporal,
+                    churn=wants_churn,
+                    mp_col=_minuteprior_col if wants_minuteprior else None,
+                    maske=wants_whispermask)
+            for _s in range(args.seed_sweep):
+                _m, _, _dim = _fit_eval(
+                    f"SEED {_s} — Produktions-Architektur", _augment_prod,
+                    seed=_s)
+                seed_rows.append((_s, _m, _dim))
 
         # Persist the MLP+channel variant in v1-MLP head.bin format
         # (= what the Go forward-pass loader will consume). Sidecar
@@ -4753,6 +4792,91 @@ def main():
         print()
         print(f"  Δ vs Stage-3 baseline (MLP+channel): "
               f"{d_stage4:+.3f}{mark4}")
+        print()
+
+        if seed_rows:
+            _gs = [_gmed(m) for _, m, _ in seed_rows]
+            _ts_ = [_vmed(m) for _, m, _ in seed_rows]
+            _gs = [g for g in _gs if g is not None]
+            print("\n" + "=" * 70)
+            print(f"RAUSCHBODEN — {len(seed_rows)} Fits, identische Daten, "
+                  f"nur Init-Seed verschieden")
+            print("=" * 70)
+            print(f"  {'seed':>4}  {'medIoU':>6}  {'golden':>6}")
+            for _s, _m, _ in seed_rows:
+                _g = _gmed(_m)
+                print(f"  {_s:>4}  {_vmed(_m):>6.3f}  "
+                      f"{(f'{_g:.3f}' if _g is not None else '—'):>6}")
+            def _spanne(v, label):
+                if len(v) < 2:
+                    return
+                print(f"  {label}: Spanne {max(v) - min(v):.3f} "
+                      f"({min(v):.3f}–{max(v):.3f}), "
+                      f"Std {float(np.std(v)):.3f}")
+            _spanne(_ts_, "test  ")
+            _spanne(_gs, "golden")
+            print("\n  Lesart: was hier steht, ist NUR Fit-Zufall. Eine "
+                  "Nacht-zu-Nacht-Differenz unterhalb dieser Spanne ist "
+                  "kein Ergebnis — egal wie plausibel die Geschichte dazu "
+                  "klingt.")
+            print()
+
+        # ── Die Serie festhalten ─────────────────────────────────────
+        # Eine Zeile je Nacht UND Variante. Grund (2026-08-09): die
+        # Migrations-Entscheidungen dieses Repos (temporal nach 7 Naechten,
+        # Minute-Prior nach 3) haengen an einer Serie, die bisher nur als
+        # Text in einem 4-MB-Log existierte. Wer sie auswerten wollte,
+        # musste Prosa parsen — und hat dabei zwei zufaellig gleiche
+        # Zahlen (0.946 an zwei Abenden) fuer Reproduzierbarkeit gehalten,
+        # obwohl dieselbe Zelle ueber drei Laeufe um 0.028 schwankt.
+        #
+        # set_hash + decoder + n_test stehen in jeder Zeile, weil ein
+        # Median ohne sie nicht vergleichbar ist: der Golden-Satz hat
+        # schon einmal still seine Zusammensetzung gewechselt, und der
+        # Decoder-Wechsel form→hsmm hat jede Zahl davor entwertet.
+        try:
+            if args.train_archive:
+                _gmeta = {}
+                if _golden_uuids:
+                    _gmeta = json.loads(
+                        (Path(args.train_archive)
+                         / "golden-eval-set.json").read_text())
+                _zeilen = [("baseline", args.head_arch, metrics_smooth)]
+                _zeilen += [("shadow", n, m) for n, m in [
+                    ("mlp32", m_v1),
+                    ("mlp32-channel", m_v2),
+                    ("mlp32-temporal", m_v3),
+                    ("mlp32-channel-whisper", m_v4),
+                    ("mlp32-cwt", m_v6),
+                    ("mlp32-cwt-mp", m_v7),
+                    ("mlp32-ct-mp", m_v8)]]
+                with open(Path(args.train_archive) / "shadow-trend.jsonl",
+                          "a") as _sf:
+                    for _rolle, _name, _m in _zeilen:
+                        _g = _gmed(_m)
+                        _pr = (_m or {}).get("per_rec_iou") or {}
+                        _gm = ([_pr[u] for u in _golden_uuids]
+                               if _g is not None else [])
+                        _sf.write(json.dumps({
+                            "ts": ts, "rolle": _rolle, "arch": _name,
+                            "golden_median": (round(_g, 4)
+                                              if _g is not None else None),
+                            "golden_mean": (round(float(np.mean(_gm)), 4)
+                                            if _gm else None),
+                            "golden_n": len(_gm),
+                            "test_median": round(_vmed(_m), 4),
+                            "test_mean": round(float(_m["iou"]), 4),
+                            "acc": round(float(_m["acc"]), 4),
+                            "n_test": int(_m.get("n_recs") or 0),
+                            "n_train_recs": len(train_recs),
+                            "set_version": _gmeta.get("version"),
+                            "set_hash": _gmeta.get("set_hash"),
+                            "decoder": " ".join(EVAL_DECODER) or "form",
+                        }) + "\n")
+                print(f"  Serie fortgeschrieben → shadow-trend.jsonl "
+                      f"({len(_zeilen)} Zeilen, ts={ts})")
+        except Exception as e:
+            print(f"  shadow-trend.jsonl nicht geschrieben: {e}")
         print()
 
     # ── Self-Training (Phase A, validation only) ─────────────────
@@ -5831,7 +5955,6 @@ def main():
     #   logreg                  → packed float32 weights + bias
     #   mlp32-channel           → MLP1 v1 (magic-prefixed)
     #   mlp32-channel-whisper   → MLP2 v2 (= v1 + n_whisper header field)
-    ts = time.strftime("%Y%m%dT%H%M%S")
     archive_path = archive_dir / f"head.{ts}.bin"
     is_mlp_write = wants_mlp and mlp_prod_clf is not None
 

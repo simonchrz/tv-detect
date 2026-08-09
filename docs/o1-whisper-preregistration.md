@@ -140,6 +140,47 @@ in meinem Kopf.
 }
 ```
 
+## Nachtrag, selber Tag, vor der ersten Serien-Nacht
+
+Der Seed-Sweep vom 08-09 hat einen Konstruktionsfehler in der Fassung oben
+offengelegt. Er wird hier festgehalten statt still korrigiert — eine
+Registrierung, die man nachbessert, ohne die Nachbesserung zu zeigen, ist
+keine mehr.
+
+**Was gemessen wurde:** 5 Fits derselben Architektur auf identischen Daten,
+nur mit anderem Init-Seed → Golden-Median 0.901 bis 0.924, **Std 0.008**,
+Spanne **0.023**.
+
+**Erste Folge — die vorab festgelegte Verlängerung greift NICHT.** 0.008 liegt
+unter der Schwelle von 0.010. N bleibt bei 5. Das war die Regel, sie hat
+gehalten, und sie wird nicht nachträglich angezogen.
+
+**Zweite Folge — die Serie hätte gar nicht gemessen, was sie messen soll.**
+Alle Sonden fitteten jede Nacht mit `random_state=0`. Zwei
+aufeinanderfolgende Nächte überlappen im Korpus zu über 99 %. Fünf Nächte
+wären damit nicht fünf Stichproben gewesen, sondern näherungsweise **eine
+Messung, fünfmal wiederholt** — der Vorzeichentest hätte gezeigt, wie
+reproduzierbar derselbe Seed ist, nicht wie stabil der Effekt.
+
+**Korrektur, ab sofort wirksam:** innerhalb einer Nacht bekommen alle Sonden
+denselben Seed (die gepaarten Vergleiche bleiben sauber), von Nacht zu Nacht
+wechselt er deterministisch mit dem Zeitstempel. Der Wert steht in jeder
+jsonl-Zeile. Ein Median über die Serie mittelt damit auch das Seed-Glück aus.
+Die Produktion bleibt bei 0 — ihren Seed zu bewegen würde den ausgelieferten
+Kopf verändern und mit dem Gate wechselwirken.
+
+**Was das für die Schwelle bedeutet.** Die Differenz zweier unabhängig
+initialisierter Fits streut mit etwa 0.008 · √2 ≈ 0.011. Die Schwelle von
+−0.010 liegt also bei rund einem Sigma des Einzelnacht-Δ; der Median über 5
+Nächte streut mit etwa 0.005. Die Schwelle bleibt bei −0.010 — sie wurde
+nicht danach gewählt und wird jetzt nicht danach verschoben. Aber es ist
+festzuhalten: **das Einzelnacht-Δ ist für sich nicht aussagekräftig**, nur
+Median und Vorzeichenbild über die volle Serie sind es.
+
+Diese Korrektur wurde vorgenommen, bevor eine einzige Serien-Nacht gelaufen
+ist, und ihr Anlass (der Seed-Sweep) ist von O1 unabhängig — er misst die
+Produktions-Architektur, nicht das Sondenpaar.
+
 ## Was die Migration zusätzlich beachten muss
 
 Der Dimensionswechsel 1301 → 1299 **überspringt das Head-to-Head** — das Gate

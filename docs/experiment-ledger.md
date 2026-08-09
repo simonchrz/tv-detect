@@ -48,14 +48,28 @@ entscheidet allein das Head-to-Head plus Golden-Boden.
 
 ## 2. Rauschboden
 
-| gemessen | Verfahren | Streuung Golden | Streuung Test |
+| gemessen | Verfahren | Golden Std | Golden Spanne |
 |---|---|---|---|
-| 2026-08-09 | 5 Seeds, Produktions-Architektur, identische Daten | *(Lauf läuft)* | *(Lauf läuft)* |
+| 2026-08-09 | 5 Seeds, Produktions-Architektur, identische Daten | **0.008** | **0.023** (0.901–0.924) |
 
 Beobachtete Schwankung derselben Schattenzelle über drei Läufe mit fast
-gleichem Korpus (08-08, 08-09 Nightly, 08-09 Handlauf): bis **0.028**. Wie
-viel davon Fit-Zufall und wie viel Korpus-Drift ist, trennt erst der
-Seed-Sweep.
+gleichem Korpus (08-08, 08-09 Nightly, 08-09 Handlauf): bis 0.028. Der
+Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
+
+**Drei Konsequenzen, die weiter reichen als O1:**
+
+* **Der Golden-Verlauf ist flacher als das Rauschen.** Sechs Nächte spannen
+  0.907–0.921 (0.014); ein anderer Seed auf identischen Daten spannt 0.023.
+  Erzählungen über „langsamen Drift" brauchen mehr als diesen Verlauf.
+* **Der Boden ist teilweise Seed-Glück.** 0.921 stammt aus einem
+  `random_state=0`-Fit vom 08-07. Die Sperrklinke verlangt seither, dieses
+  Glück zu schlagen — ein plausibler Mechanismus für O3. **Trotzdem nicht
+  senken** (Leitplanke L1): die richtige Antwort ist ein robusterer
+  Bodenwert, nicht ein niedrigerer.
+* **Serien brauchen wechselnde Seeds.** Bei über 99 % Korpus-Überlappung
+  zwischen zwei Nächten ist eine Serie mit festem Seed eine Messung, N-mal
+  wiederholt. Seit 08-09 wechselt der Seed je Nacht und steht in jeder
+  jsonl-Zeile.
 
 ## 3. Offene Fragen
 

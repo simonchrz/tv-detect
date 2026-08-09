@@ -24,6 +24,7 @@ re-extracted).
 import argparse
 import concurrent.futures as cf
 import gc
+import hashlib
 import json
 import os
 import re
@@ -4608,15 +4609,39 @@ def main():
             metrics = eval_split(mlp, test_aug, args.fps_extract, smooth_s=10)
             return metrics, mlp, in_dim
 
+        # ── Seed je Nacht, nicht je Sonde ────────────────────────────
+        # Bis 2026-08-09 fitteten alle Schattenvarianten jede Nacht mit
+        # random_state=0. Bei ueber 99 % Korpus-Ueberlappung zwischen zwei
+        # Naechten ist eine Serie daraus nicht N Stichproben, sondern
+        # naeherungsweise EINE Messung N-mal wiederholt: der Vorzeichentest
+        # ueber die Naechte misst dann, wie reproduzierbar derselbe Seed
+        # ist, nicht wie stabil der Effekt.
+        #
+        # Der Seed-Sweep vom selben Tag hat gezeigt, wie viel daran haengt:
+        # identische Daten, identische Architektur, nur anderer Seed →
+        # Golden-Median 0.901 bis 0.924 (Std 0.008). Also innerhalb einer
+        # Nacht fuer ALLE Sonden derselbe Seed (die gepaarten Vergleiche
+        # bleiben sauber), aber von Nacht zu Nacht ein anderer, damit ein
+        # Median ueber die Serie auch das Seed-Glueck mit ausmittelt.
+        #
+        # Der Wert steht in jeder jsonl-Zeile — ohne ihn ist im Nachhinein
+        # nicht pruefbar, ob zwei Zeilen ueberhaupt vergleichbar sind.
+        # Die Produktion bleibt bewusst bei 0: ihr Seed zu bewegen wuerde
+        # den ausgelieferten Kopf veraendern und mit dem Gate wechselwirken.
+        nacht_seed = int(hashlib.sha256(ts.encode()).hexdigest()[:8], 16) % 10000
+
         print("\n" + "=" * 70)
-        print(f"SHADOW EVAL — {n_chan} channel slugs in corpus")
+        print(f"SHADOW EVAL — {n_chan} channel slugs in corpus, "
+              f"Seed dieser Nacht: {nacht_seed}")
         print("=" * 70)
         m_v1, mlp_v1, _ = _fit_eval(
-            "MLP-32 (1282→32→1)", lambda X, _s, _u=None: X)
+            "MLP-32 (1282→32→1)", lambda X, _s, _u=None: X, seed=nacht_seed)
         m_v2, mlp_v2, in_dim_v2 = _fit_eval(
-            f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel)
+            f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel,
+            seed=nacht_seed)
         m_v3, mlp_v3, _ = _fit_eval(
-            "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal)
+            "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal,
+            seed=nacht_seed)
         # Whisper Stage 4 prototype — per-second whisper-prob as a
         # direct MLP input column instead of the post-processor rules.
         # n=149 reviews + MLP non-linearity should absorb the new
@@ -4626,7 +4651,7 @@ def main():
         # n=9 and the rules are simpler to reason about).
         m_v4, mlp_v4, _ = _fit_eval(
             f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
-            _augment_channel_whisper)
+            _augment_channel_whisper, seed=nacht_seed)
         # MLP-64 capacity probe (m_v5) and the +temporal combo (m_v6)
         # were retired 2026-07-12: a 7-night --shadow-eval series
         # settled both questions (MLP-64 = noise, keep 32; +temporal =
@@ -4644,15 +4669,15 @@ def main():
         # in Phase A pseudo-labelling only.
         m_v6, mlp_v6, _ = _fit_eval(
             f"MLP-32 + chan + whisper + temporal (prod replica)",
-            _augment_channel_whisper_temporal)
+            _augment_channel_whisper_temporal, seed=nacht_seed)
         m_v7, mlp_v7, _ = _fit_eval(
             f"MLP-32 + cwt + minute-prior (+1 dim)",
-            _augment_cwt_minuteprior)
+            _augment_cwt_minuteprior, seed=nacht_seed)
         # Die Whisper-Sonde in der heutigen Architektur: identisch zu v7,
         # nur ohne die eine Spalte. Δ(v7−v8) ist der Beitrag von Whisper.
         m_v8, mlp_v8, _ = _fit_eval(
             f"MLP-32 + ct + minute-prior (OHNE whisper)",
-            _augment_ct_minuteprior)
+            _augment_ct_minuteprior, seed=nacht_seed)
 
         # ── Rauschboden (--seed-sweep N) ─────────────────────────────
         # Dieselben Daten, dieselbe Architektur, nur ein anderer
@@ -4859,6 +4884,12 @@ def main():
                                if _g is not None else [])
                         _sf.write(json.dumps({
                             "ts": ts, "rolle": _rolle, "arch": _name,
+                            # Produktion fittet fest mit 0, die Sonden mit dem
+                            # Seed dieser Nacht. Ohne das Feld sieht ein
+                            # spaeterer Leser nicht, dass baseline- und
+                            # shadow-Zeilen NICHT seed-gleich sind — und
+                            # vergleicht sie arglos.
+                            "seed": 0 if _rolle == "baseline" else nacht_seed,
                             "golden_median": (round(_g, 4)
                                               if _g is not None else None),
                             "golden_mean": (round(float(np.mean(_gm)), 4)

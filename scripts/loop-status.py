@@ -179,6 +179,22 @@ def main():
             print(f"     {neg}/{len(deltas)} Läufe negativ, "
                   f"Median {sorted(deltas)[len(deltas)//2]:+.3f}")
 
+    # ── Versiegelter Satz ────────────────────────────────────────────
+    # Nur die Groesse, nie ein Ergebnis: ihn taeglich auszuwerten waere
+    # genau die Nutzung, die ihn wertlos macht.
+    sl = args.archiv / "split-ledger.json"
+    if sl.exists():
+        try:
+            eimer = json.loads(sl.read_text())
+            n_v = sum(1 for v in eimer.values() if v == "versiegelt")
+            print(f"\nVersiegelter Satz: {n_v} Aufnahmen "
+                  f"(von {len(eimer)} im Ledger)")
+            if n_v < 30:
+                print("  wächst noch — vor ~30 Aufnahmen nicht öffnen, "
+                      "ein Median über weniger sagt nichts.")
+        except Exception as e:
+            print(f"\nVersiegelter Satz: Ledger nicht lesbar ({e})")
+
     # ── Offene Fragen aus dem Ledger ─────────────────────────────────
     if LEDGER.exists():
         # Der Status darf umbrechen — ohne DOTALL fiel genau die Frage

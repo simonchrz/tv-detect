@@ -199,6 +199,7 @@ done
     --shadow-eval \
     --ablate-minute-prior \
     --prod-seeds 3 \
+    --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
 # 2026-08-06 (spaeter am Tag): der Temporal-Block waechst von 2 auf 3
 # Spalten — dp, dn und NEU das Unruhe-Niveau (1s-Delta ueber 31 s

@@ -182,6 +182,38 @@ synthetisches `ads_user.json`, in dem `user == auto` per Konstruktion gilt.
 101 von 250 Dateien. Wer nach `auto_confirmed_at` nicht filtert, misst die
 Schleife gegen sich selbst und bekommt eine perfekte Note.
 
+### O5 — Hält, was am Golden-Satz gemessen wurde, auch anderswo?
+
+*Status: versiegelter Satz angelegt 2026-08-09, wächst. Frühestens ab ~30
+Aufnahmen öffnen.*
+
+Der Golden-Satz ist der einzige Maßstab, und **jede** Entscheidung wird gegen
+ihn getroffen. Er verliert seine Unabhängigkeit nicht durch Training, sondern
+durch Wiederholung: nach genug Entscheidungen misst er, wie gut wir auf 38
+Aufnahmen selektiert haben. Der versiegelte Satz ist die Gegenprobe.
+
+**Vorwärts versiegelt** (`--sealed-frac 0.20`): 20 % aller Aufnahmen, die neu
+ins Split-Ledger kommen, landen in einem dritten Eimer — weder Training noch
+Auswertung, keine Entscheidung fällt gegen sie. Bestehende Aufnahmen bleiben
+unberührt. Zwei Gründe:
+
+* Ein heute aus dem Bestand geschnittener Satz enthielte Aufnahmen, gegen die
+  bereits hunderte Entscheidungen gefallen sind — von Geburt an halb
+  verbraucht.
+* Es hätte den Korpus mitten in der laufenden O1-Serie verkleinert.
+
+Eigener Hash-Salt (`"versiegelt:" + uuid`), damit die Versiegelung nicht mit
+der Test-Zugehörigkeit korreliert. Nie versiegelt: Golden-Pins und alles
+während der Ledger-Erstbefüllung.
+
+**Die Disziplin ist der ganze Wert.** `loop-status.py` zeigt nur die *Größe*,
+nie ein Ergebnis. Ihn regelmäßig auszuwerten wäre exakt die Nutzung, die ihn
+wertlos macht. Öffnen: selten, und nie um zwischen Kandidaten zu wählen —
+nur um zu prüfen, ob die Kurve am Golden-Satz sich anderswo wiederfindet.
+
+**Kosten:** rund ein Fünftel der neuen Aufnahmen fehlt dem Training.
+Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
+
 ## 4. Friedhof — entschieden, nicht neu vorschlagen
 
 | Idee | Verdikt | Wann | Warum |

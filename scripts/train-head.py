@@ -2401,6 +2401,14 @@ def main():
                          "head.minute-prior.json sidecar; the Go side "
                          "(nn.go v4) + the daemon's --start-ts flag look up "
                          "the same prior at serve time — deployed in tandem.")
+    ap.add_argument("--sealed-frac", type=float, default=0.0, metavar="P",
+                    help="Anteil NEUER Aufnahmen, die versiegelt werden: "
+                         "weder Training noch Auswertung, keine Entscheidung "
+                         "wird gegen sie getroffen. Gegenprobe dafuer, dass "
+                         "die Verbesserungen am Golden-Satz nicht blosse "
+                         "Selektion auf 38 Aufnahmen sind. Wirkt nur "
+                         "vorwaerts (uuids, die noch nicht im Split-Ledger "
+                         "stehen); 0 = aus.")
     ap.add_argument("--prod-seeds", type=int, default=1, metavar="N",
                     help="N Produktions-Koepfe mit verschiedenen Init-Seeds "
                          "fitten und den MITTLEREN ausliefern (nach "
@@ -3645,13 +3653,60 @@ def main():
         _ledger[uuid_str] = "test" if verdict else "train"
         _ledger_dirty[0] = True
         return verdict
+    # ── Versiegelter Satz (2026-08-09) ──────────────────────────────
+    # Ein dritter Eimer neben train und test: Aufnahmen, die WEDER
+    # trainiert NOCH fuer irgendeine Entscheidung ausgewertet werden.
+    #
+    # Warum es ihn braucht: der Golden-Satz ist der einzige Massstab, und
+    # jede Entscheidung wird gegen ihn getroffen. Nicht durch Training,
+    # sondern durch Wiederholung verliert er dabei seine Unabhaengigkeit —
+    # nach genug Entscheidungen misst er, wie gut wir auf 38 Aufnahmen
+    # selektiert haben. Der versiegelte Satz ist die Gegenprobe, und er
+    # taugt dafuer nur, solange ihn nichts anfasst.
+    #
+    # VORWAERTS versiegelt: nur uuids, die noch NICHT im Ledger stehen —
+    # also Neuzugaenge. Bestehende Aufnahmen zu entziehen haette einen
+    # Satz ergeben, gegen den bereits hunderte Entscheidungen gefallen
+    # sind, also einen von Geburt an halb verbrauchten. Und es haette den
+    # Korpus mitten in einer laufenden Serie verkleinert.
+    #
+    # Eigener Hash-Salt: waere es derselbe wie beim Test-Split, waere die
+    # Versiegelung mit der Test-Zugehoerigkeit korreliert und der
+    # versiegelte Satz systematisch anders zusammengesetzt als der Rest.
+    #
+    # Nie versiegelt werden Golden-Pins (die sollen ja gerade vergleichbar
+    # bleiben) und nichts waehrend der Ledger-Erstbefuellung — dort ist
+    # jede uuid "neu" und es wuerde auf einen Schlag ein Fuenftel des
+    # Korpus verschwinden.
+    VERSIEGELT = "versiegelt"
+
+    def _is_sealed(uuid_str):
+        if _ledger.get(uuid_str) == VERSIEGELT:
+            return True
+        if uuid_str in _ledger:
+            return False                  # schon zugeteilt, bleibt es
+        if _ledger_seeding or args.sealed_frac <= 0:
+            return False
+        if uuid_str in _golden_pin or uuid_str in TEST_SET_EXCLUDE:
+            return False
+        h = int(hashlib.md5(("versiegelt:" + uuid_str).encode()).hexdigest(), 16)
+        if h / 2**128 >= args.sealed_frac:
+            return False
+        _ledger[uuid_str] = VERSIEGELT
+        _ledger_dirty[0] = True
+        return True
+
     # Bootstrap recordings (no labels yet, only present so Phase B can
     # predict on their features) are excluded from train AND test —
     # they have nothing to validate against.
     def _is_bootstrap(r): return len(r) > 12 and r[12]
     def _is_pseudo(r): return len(r) > 11 and r[11]
+    # ⚠️ _is_sealed MUSS vor _is_test stehen: _is_test schreibt beim ersten
+    # Sehen einen Eimer ins Ledger, danach ist die uuid nicht mehr neu und
+    # koennte nie mehr versiegelt werden.
     train_recs = [r for r in per_rec
-                  if not _is_test(r[0]) and not _is_bootstrap(r)]
+                  if not _is_sealed(r[0]) and not _is_test(r[0])
+                  and not _is_bootstrap(r)]
     # Pseudo-labelled recordings are excluded from the test set:
     # eval against pseudo-labels is circular (model graded against its
     # own predictions), and the gaps between pseudo-labelled frames
@@ -3659,8 +3714,13 @@ def main():
     # the model predicts ad for a "no-opinion" frame. Train-side they
     # contribute frames via frame_mask filtering at lower weight.
     test_recs  = [r for r in per_rec
-                  if _is_test(r[0]) and not _is_bootstrap(r)
-                                    and not _is_pseudo(r)]
+                  if not _is_sealed(r[0]) and _is_test(r[0])
+                  and not _is_bootstrap(r) and not _is_pseudo(r)]
+    _n_versiegelt = sum(1 for v in _ledger.values() if v == VERSIEGELT)
+    if _n_versiegelt or args.sealed_frac > 0:
+        print(f"versiegelter Satz: {_n_versiegelt} Aufnahmen "
+              f"(weder Training noch Auswertung; Anteil neuer Zugaenge "
+              f"{args.sealed_frac:.0%})")
 
     # Golden pins that did NOT make it into test_recs, with the reason.
     #

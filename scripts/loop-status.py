@@ -101,6 +101,13 @@ def main():
         print(f"\nGolden-Verlauf (letzte {len(gt)}):")
         for e in gt:
             mark = "deployed" if e.get("deployed") else "REJECTED"
+            # ⚠️ Ab 20260810 liefert der Nightly den MITTLEREN von drei Seeds
+            # aus, davor immer Seed 0. Die Zahl misst seither etwas anderes.
+            # seed_golden["0"] ist der Wert nach der alten Regel — nur so ist
+            # die Reihe ueber den Bruch hinweg lesbar.
+            alt_regel = (e.get("seed_golden") or {}).get("0")
+            if alt_regel is not None and e.get("seed") not in (0, None):
+                mark += f"  [alte Regel (Seed 0): {alt_regel}]"
             warn = ""
             if len(haeufig) > 1:
                 warn = f"  [set={e.get('set_hash')} dec={e.get('decoder')}]"

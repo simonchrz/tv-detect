@@ -4311,7 +4311,7 @@ def main():
         return np.full((T, 1), mp_neutral, dtype=np.float32)
     # Vorbelegung: der All-Data-Refit und die golden-trend-Zeile lesen beide
     # diese Werte, laufen aber auch, wenn der MLP-Zweig uebersprungen wurde.
-    prod_seed_used, prod_seed_spread = 0, None
+    prod_seed_used, prod_seed_spread, prod_seed_golden = 0, None, {}
     if wants_mlp and test_recs:
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -4406,6 +4406,23 @@ def main():
         def _med(m):
             return m.get("iou_tv_median", m.get("iou_median", m.get("iou", 0.0)))
 
+        # Golden-Median je Seed — NICHT zur Auswahl (die entscheidet der
+        # Testsatz), sondern damit die Nacht-zu-Nacht-Reihe nicht bricht.
+        #
+        # ⚠️ Bis zum 2026-08-09 lieferte der Nightly immer den Seed-0-Fit aus,
+        # seither den mittleren von dreien. Damit hat sich stillschweigend
+        # geaendert, WAS die Zahl in golden-trend.jsonl misst — genau die
+        # Sorte Neudefinition, gegen die R1 im Experiment-Ledger steht, und
+        # ich habe sie selbst eingebaut, ohne es zu merken. Wer 08-10 mit
+        # 08-09 vergleicht, vergleicht zwei Auswahlregeln, nicht zwei Modelle.
+        # Mit dieser Spalte laesst sich beides nebeneinander lesen: was die
+        # alte Regel gemeldet haette (Seed 0) und was die neue meldet.
+        def _gold(m):
+            pr = (m or {}).get("per_rec_iou") or {}
+            if not _golden_pin or not set(_golden_pin) <= set(pr):
+                return None
+            return round(float(np.median([pr[u] for u in _golden_pin])), 4)
+
         prod_seeds = max(1, int(args.prod_seeds))
         kandidaten = []
         for _sd in range(prod_seeds):
@@ -4426,12 +4443,20 @@ def main():
         mlp_prod_clf = _gewaehlt[2]
         metrics_smooth_mlp = _gewaehlt[3]
         prod_seed_spread = round(kandidaten[-1][0] - kandidaten[0][0], 4)
+        prod_seed_golden = {sd: _gold(m) for _, sd, _, m in kandidaten}
         if prod_seeds > 1:
-            print(f"\n  Seed-Auswahl: " + "  ".join(
+            print(f"\n  Seed-Auswahl (Testsatz): " + "  ".join(
                 f"{sd}={med:.3f}" + ("*" if sd == prod_seed_used else "")
                 for med, sd, _, _ in sorted(kandidaten, key=lambda k: k[1])))
-            print(f"  Spanne {prod_seed_spread:.3f} — ausgeliefert wird der "
-                  f"mittlere (Seed {prod_seed_used}), nicht der beste.")
+            _gtxt = "  ".join(
+                f"{sd}=" + (f"{g:.3f}" if g is not None else "—")
+                + ("*" if sd == prod_seed_used else "")
+                for sd, g in sorted(prod_seed_golden.items()))
+            print(f"  dieselben Koepfe auf dem Golden-Satz: {_gtxt}")
+            print(f"  Spanne {prod_seed_spread:.3f} (Testsatz) — ausgeliefert "
+                  f"wird der mittlere (Seed {prod_seed_used}), nicht der beste. "
+                  f"Der Golden-Wert von Seed 0 ist das, was die Regel VOR dem "
+                  f"2026-08-09 gemeldet haette.")
         print(f"\n=== {args.head_arch} held-out evaluation (smooth=10s) ===")
         eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=0)
         # Override the deploy-decision metric — the deploy block
@@ -6280,6 +6305,11 @@ def main():
                     # einer Golden-Differenz ueberhaupt Signal sein kann.
                     "seed": prod_seed_used,
                     "seed_spread": prod_seed_spread,
+                    # Golden je Seed. seed_golden["0"] ist die Zahl, die die
+                    # Auswahlregel vor dem 2026-08-09 gemeldet haette — ohne
+                    # sie bricht die Reihe an diesem Datum unsichtbar.
+                    "seed_golden": {str(k): v
+                                    for k, v in prod_seed_golden.items()},
                     "set_version": _gmeta.get("version", 1),
                     "set_hash": _gmeta.get("set_hash"),
                     # Which block former produced this number. Entries

@@ -18,6 +18,15 @@ Verwandt: [`hsmm-holdout-preregistration.md`](hsmm-holdout-preregistration.md)
 
 ## 1. Entscheidungsregeln
 
+**⚠️ Bruch in der Reihe am 2026-08-10.** Bis 08-09 lieferte der Nightly
+immer den Seed-0-Fit aus, seither den mittleren von dreien. Damit misst der
+Golden-Median seither **eine andere Größe** — wer 08-10 mit 08-09 vergleicht,
+vergleicht zwei Auswahlregeln und nicht zwei Modelle. Das ist genau die
+stille Neudefinition, gegen die R1 unten steht, und sie stammt aus einer
+Änderung von mir. Seit 08-10 steht `seed_golden` in jeder Zeile; `["0"]` ist
+der Wert nach der alten Regel, `loop-status.py` zeigt ihn neben dem neuen.
+Der Wert für 08-10 selbst fehlt (die Spalte kam einen Lauf zu spät).
+
 **R1 — Nur der Golden-Median ist über Nächte vergleichbar.** Der Testsatz
 wechselt seine Zusammensetzung mit dem Korpus; der Golden-Satz (38 gepinnte
 Aufnahmen, `set_hash c8727e8266a8`) nicht. Jede Zahl ohne `set_hash` und

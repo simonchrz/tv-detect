@@ -136,7 +136,9 @@ auseinanderzuhalten.
 
 ### O3 — Läuft der Golden-Boden in eine Sperre?
 
-*Status: beobachten.*
+*Status: Sperre aktiv seit 08-09 (3 Nächte in Folge). Ursache ab 08-11
+gemessen: Seed-Ziehung ±0.014 gegen Toleranz 0.010 — das Gate urteilt unter
+seiner eigenen Auflösung. Nichts geändert, `seed_golden` sammelt.*
 
 **Teilweise entschärft 2026-08-09.** Der Boden war `max()` über alle
 deployten Nächte — und ein Einzelwert trägt laut Seed-Sweep bis zu 0.023
@@ -156,6 +158,47 @@ aber **weiterhin 0.0007 über dem Champion** (0.9166) — O3 bleibt offen, die
 ⚠️ Das ist **kein** Senken der Latte (L1). Die Latte bleibt „so gut wie schon
 einmal reproduziert". Wer wirklich senken will, ändert `--golden-floor` — und
 begründet es. `golden_stau()` zählt weiterhin die Nächte in Folge und warnt.
+
+**Die Sperre ist da — und sie misst eine Ziehung, keine Drift (2026-08-11).**
+Drei Nächte in Folge abgelehnt (08-09, 08-10, 08-11), alle drei am Boden, nicht
+am Testsatz. In der Nacht 08-11 lief erstmals `seed_golden` mit, also der
+Golden-Median **jedes** der drei Produktionsfits derselben Nacht — identische
+Daten, identische Architektur, nur anderer Init-Seed:
+
+```
+  Seed 0   0.9067   ← Mitte auf dem TESTSATZ, also ausgeliefert
+  Seed 1   0.9205
+  Seed 2   0.9195
+                     Spanne Golden 0.0138 | Spanne Testsatz 0.014
+                     Boden 0.9173, Toleranz 0.010 → Latte 0.9073
+```
+
+Der ausgelieferte Kopf war auf Golden der **schlechteste der drei**; die beiden
+anderen hätten die Latte geräumt. Das REJECT dieser Nacht ist damit ein
+Münzwurf und keine Aussage über den Korpus. Das ist der Seed-Sweep aus §2, nur
+nicht mehr als Einzelmessung, sondern als Eigenschaft jeder Nacht.
+
+Was daraus **nicht** folgt: den Seed mit dem besten Golden ausliefern. Das wäre
+Auswahl auf genau der Metrik, auf der das Gate urteilt — der Boden würde sich
+selbst bestätigen und wäre als Schutz wertlos. Die Wahl per Testsatz-Median ist
+bewusst so und bleibt.
+
+Was folgt: das Gate vergleicht eine Ziehung mit ±0.014 gegen eine Schwelle mit
+Toleranz 0.010 — es urteilt unterhalb seiner eigenen Auflösung. Denkbare
+Antworten, keine davon umgesetzt, keine ohne eigene Messung zu haben:
+
+* **Toleranz an das gemessene Rauschen koppeln** statt sie bei 0.010 zu
+  belassen. Ehrlicher, aber lockert faktisch die Latte — braucht L1-Begründung.
+* **Boden gegen die Seed-Verteilung statt gegen einen Punkt** prüfen (räumt der
+  Kandidatenschwarm die Latte im Median?). Misst nicht mehr, was ausgeliefert
+  wird — das ist der Einwand, an dem es hängt.
+* **Mehr Seeds** (5 statt 3) verengt die Ziehung um ~√(3/5), kostet aber
+  Nightly-Laufzeit linear.
+
+Solange nichts davon gemessen ist, gilt die Sperre als **erwartetes Verhalten
+unter Rauschen** und nicht als Defekt. `seed_golden` läuft ab jetzt jede Nacht
+mit; nach ein paar Nächten ist die Spanne eine Verteilung statt einer Anekdote,
+und dann erst lohnt die Entscheidung.
 
 ### O4 — Sinkt der Korrekturaufwand überhaupt?
 

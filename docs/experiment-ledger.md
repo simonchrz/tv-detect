@@ -136,9 +136,10 @@ auseinanderzuhalten.
 
 ### O3 — Läuft der Golden-Boden in eine Sperre?
 
-*Status: Sperre aktiv seit 08-09 (3 Nächte in Folge). Ursache ab 08-11
-gemessen: Seed-Ziehung ±0.014 gegen Toleranz 0.010 — das Gate urteilt unter
-seiner eigenen Auflösung. Nichts geändert, `seed_golden` sammelt.*
+*Status: Sperre aktiv seit 08-09. Seed-These 08-11 abends WIDERLEGT — bei
+k=3 räumen 95 % der Ziehungen die Latte, drei Ablehnungen in Folge sind kein
+Seed-Pech. Offene Spur: der All-Data-Refit (Golden 0.900 gegen Pool-Minimum
+0.906). `--prod-seeds` bleibt bei 3.*
 
 **Teilweise entschärft 2026-08-09.** Der Boden war `max()` über alle
 deployten Nächte — und ein Einzelwert trägt laut Seed-Sweep bis zu 0.023
@@ -199,6 +200,52 @@ Solange nichts davon gemessen ist, gilt die Sperre als **erwartetes Verhalten
 unter Rauschen** und nicht als Defekt. `seed_golden` läuft ab jetzt jede Nacht
 mit; nach ein paar Nächten ist die Spanne eine Verteilung statt einer Anekdote,
 und dann erst lohnt die Entscheidung.
+
+**Gemessen statt gewartet (2026-08-11 abends): der Seed ist es NICHT.**
+
+12 Fits auf identischen Daten, nur der Init-Seed unterschiedlich, danach die
+Nightly-Auswahlregel über alle Teilmengen durchgespielt (je Teilmenge den
+Kopf mit dem mittleren **Testsatz**-Wert wählen, seinen **Golden**-Wert
+notieren — genau die Kette, die nachts läuft):
+
+```
+  Pool: golden 0.906–0.925, Spanne 0.019, Std 0.0059
+
+   k  Teilmengen  golden-Spanne     Std   räumt die Latte (0.9073)
+   1          12         0.0190  0.0059        83 %
+   3         220         0.0180  0.0047        95 %   ← heutiger Nightly
+   5         792         0.0150  0.0044       100 %
+   7         792         0.0150  0.0040       100 %
+   9         220         0.0070  0.0024       100 %
+```
+
+⚠️ **Damit ist meine eigene Deutung vom Morgen widerlegt.** Ich hatte das
+REJECT einen Münzwurf genannt. Bei k=3 räumen 95 % der Ziehungen die Latte —
+drei Ablehnungen in Folge wären als reines Seed-Pech etwa 1 zu 8000. Es sitzt
+also etwas **systematisch** rund 0.01 unter der Latte, und der Seed erklärt
+das nicht.
+
+**`--prod-seeds` bleibt deshalb bei 3.** Fünf Seeds kosten zwei Fits je Nacht
+und kaufen eine Verbesserung am Rand — als Antwort auf O3 wären sie
+irreführend, weil sie die Sperre wegräumen könnten, ohne ihre Ursache zu
+berühren. Erst die Ursache, dann ggf. die Seeds.
+
+### Die Spur: der Refit auf allen Daten
+
+Der Produktionskopf desselben Laufs kam auf Golden **0.900** — *unterhalb des
+gesamten Pools* (Minimum 0.906). Beides ist dieselbe Architektur auf
+denselben Daten; der Unterschied ist, dass der Produktionskopf nach der
+Auswahl **auf allen Daten neu gefittet** wird, während die Sweep-Köpfe es
+nicht werden.
+
+Wenn sich das reproduziert, ist das die Erklärung für die Blockade — und dann
+ist „mehr Seeds" die Antwort auf die falsche Frage. Nächster Schritt: den
+All-Data-Refit gegen den ausgewählten Kopf messen, mehrfach, nicht einmal.
+
+⚠️ Eine Einzelmessung. Sie stammt aus einem Handlauf (`quelle="hand"`,
+eigenes Archiv), nicht aus dem Nightly, und die Teilmengen oben teilen sich
+Seeds — „100 %" ist eine Aussage über DIESEN Pool aus EINER Nacht, keine
+Wahrscheinlichkeit.
 
 ### O4 — Sinkt der Korrekturaufwand überhaupt?
 

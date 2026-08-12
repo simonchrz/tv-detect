@@ -2439,6 +2439,22 @@ def main():
                     "mlp32-channel-whisper-temporal-mp-wm,mlp32",
                     help="mit,ohne — Architektur-Namen wie in "
                          "shadow-trend.jsonl")
+    ap.add_argument("--tagesserie-nur-arm", default=None, metavar="ARCH",
+                    help="Nur DIESEN Arm fitten. Fuer Parallelbetrieb: ein "
+                         "Prozess je Arm, Paarung ueber gemeinsame "
+                         "--tagesserie-ts und --tagesserie-seeds. "
+                         "Prozessisolation statt Threads — die Numerik je "
+                         "Seed bleibt identisch zum Seriellbetrieb.")
+    ap.add_argument("--tagesserie-ts", default=None, metavar="TS",
+                    help="Zeitstempel-Basis der Serien-Zeilen. MUSS bei "
+                         "parallelen Arm-Prozessen fuer alle gleich sein, "
+                         "sonst findet das Audit die Paare nicht.")
+    ap.add_argument("--tagesserie-seeds", default=None, metavar="S1,S2,…",
+                    help="Feste Seed-Liste statt Ableitung aus dem "
+                         "Zeitstempel. Gleiche Pflicht wie bei "
+                         "--tagesserie-ts — und der Weg, einen Parallel-Lauf "
+                         "gegen einen seriellen auf identische Zahlen zu "
+                         "pruefen.")
     ap.add_argument("--serie-archiv", default=None,
                     help="Wohin die Tagesserie-Zeilen geschrieben werden "
                          "(Vorgabe: --train-archive). Getrennt, damit ein "
@@ -5198,8 +5214,19 @@ def main():
                       f"({_mit_name} vs {_ohne_name}), je Paar EIN Seed")
                 print("=" * 70)
                 _serie_dir = Path(args.serie_archiv or args.train_archive)
-                _seeds = [(nacht_seed + 1 + 997 * _i) % 10000
-                          for _i in range(args.tagesserie)]
+                _serie_ts = args.tagesserie_ts or ts
+                if args.tagesserie_seeds:
+                    _seeds = [int(x) for x in
+                              args.tagesserie_seeds.split(",")][:args.tagesserie]
+                else:
+                    _seeds = [(nacht_seed + 1 + 997 * _i) % 10000
+                              for _i in range(args.tagesserie)]
+                _arm_liste = (_mit_name, _ohne_name)
+                if args.tagesserie_nur_arm:
+                    if args.tagesserie_nur_arm not in _ts_arme:
+                        raise SystemExit(f"--tagesserie-nur-arm: unbekannt "
+                                         f"({args.tagesserie_nur_arm})")
+                    _arm_liste = (args.tagesserie_nur_arm,)
 
                 # ⚠️ Nur den Golden-Satz decodieren (38 statt ~137
                 # Aufnahmen): die registrierte Regel urteilt AUSSCHLIESSLICH
@@ -5218,7 +5245,7 @@ def main():
                 # fitten. Die Paarung bleibt exakt: Paar i = (mit, seed_i)
                 # gegen (ohne, seed_i).
                 _ergebnis = {}
-                for _name in (_mit_name, _ohne_name):
+                for _name in _arm_liste:
                     _aug = _ts_arme[_name]
                     _Xa, _ya, _swa = _build_train(train_recs, _aug)
                     _ta = _augment_test_recs(
@@ -5244,7 +5271,7 @@ def main():
                             with open(_serie_dir / "shadow-trend.jsonl",
                                       "a") as _tf:
                                 _tf.write(json.dumps({
-                                    "ts": f"{ts}p{_i:02d}",
+                                    "ts": f"{_serie_ts}p{_i:02d}",
                                     "rolle": "tagesserie", "arch": _name,
                                     "seed": _seed, "quelle": "tagesserie",
                                     "golden_median": (round(_g, 4)
@@ -5274,7 +5301,7 @@ def main():
                     gc.collect()
 
                 _ds = []
-                for _seed in _seeds:
+                for _seed in (_seeds if len(_arm_liste) == 2 else []):
                     _a = _gmed(_ergebnis.get((_mit_name, _seed)))
                     _b = _gmed(_ergebnis.get((_ohne_name, _seed)))
                     if _a is not None and _b is not None:

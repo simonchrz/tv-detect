@@ -2416,6 +2416,16 @@ def main():
                          "einzelner Fit traegt laut Seed-Sweep bis zu 0.023 "
                          "Willkuer. Kostet N-1 zusaetzliche Fits samt "
                          "Auswertung. 1 = altes Verhalten.")
+    ap.add_argument("--nur-cache", action="store_true",
+                    help="Keine neuen Aufnahmen extrahieren — Korpus = Stand "
+                         "des letzten Laufs. Fuer Tagesserien: die Frage "
+                         "haengt nicht an den juengsten Zugaengen, die "
+                         "Extraktion kostet ~3 min je Aufnahme.")
+    ap.add_argument("--nur-tagesserie", action="store_true",
+                    help="Die 8 Standard-Schattenfits auslassen (~1 h) — nur "
+                         "Produktions-Gate und Tagesserie. Schreibt KEINE "
+                         "regulaeren shadow-trend-Zeilen; die Nacht-Serien "
+                         "bleiben unberuehrt.")
     ap.add_argument("--tagesserie", type=int, default=0, metavar="N",
                     help="N GEPAARTE Fits (beide Arme, gleicher Seed je "
                          "Paar) auf dem heutigen Korpus — die Serie an einem "
@@ -2921,6 +2931,16 @@ def main():
               f"identical. Watch this count: it should not grow.")
         for u, k in resurrect_seen[:10]:
             print(f"    {u}  ({k})")
+
+    if args.nur_cache and todo:
+        # ⚠️ Diese Aufnahmen fehlen dann im Korpus dieses Laufs — sie sind
+        # nicht "billiger" drin, sie sind WEG. Fuer eine Tagesserie ist das
+        # der Handel: N Paare heute statt morgen, gegen einen Korpus, der
+        # dem Nightly von heute frueh entspricht. Der Golden-Satz haengt
+        # nicht daran (38 alte, laengst extrahierte Aufnahmen).
+        print(f"--nur-cache: {len(todo)} neue Aufnahme(n) NICHT extrahiert — "
+              f"Korpus bleibt auf dem Stand des letzten Laufs")
+        todo = []
 
     # Pass 2 — extract uncached features in parallel. Each worker loads
     # its own ONNX session at init (~100 MB resident); 4 workers × that
@@ -4800,9 +4820,10 @@ def main():
                 out.append((r[0], r[1], r[2], X_aug, r[4]) + tuple(r[5:]))
             return out
 
-        def _fit_eval(name, augment, hidden=(32,), seed=0):
+        def _fit_eval(name, augment, hidden=(32,), seed=0, recs=None):
             X_aug, y_aug, sw_aug = _build_train(train_recs, augment)
-            test_aug = _augment_test_recs(test_recs, augment)
+            test_aug = _augment_test_recs(
+                test_recs if recs is None else recs, augment)
             in_dim, n_train_frames = X_aug.shape[1], len(X_aug)
             print(f"\n=== Shadow variant: {name} ===")
             print(f"  feature dim: {in_dim}, "
@@ -4843,50 +4864,58 @@ def main():
         print(f"SHADOW EVAL — {n_chan} channel slugs in corpus, "
               f"Seed dieser Nacht: {nacht_seed}")
         print("=" * 70)
-        m_v1, mlp_v1, _ = _fit_eval(
-            "MLP-32 (1282→32→1)", lambda X, _s, _u=None: X, seed=nacht_seed)
-        m_v2, mlp_v2, in_dim_v2 = _fit_eval(
-            f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel,
-            seed=nacht_seed)
-        m_v3, mlp_v3, _ = _fit_eval(
-            "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal,
-            seed=nacht_seed)
-        # Whisper Stage 4 prototype — per-second whisper-prob as a
-        # direct MLP input column instead of the post-processor rules.
-        # n=149 reviews + MLP non-linearity should absorb the new
-        # column without the L2-balance fragility of a LogReg add.
-        # If +0.03 IoU vs MLP+channel → migrate; if neutral → keep
-        # the post-processor rules (= they already gain +5.4 % on
-        # n=9 and the rules are simpler to reason about).
-        m_v4, mlp_v4, _ = _fit_eval(
-            f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
-            _augment_channel_whisper, seed=nacht_seed)
-        # MLP-64 capacity probe (m_v5) and the +temporal combo (m_v6)
-        # were retired 2026-07-12: a 7-night --shadow-eval series
-        # settled both questions (MLP-64 = noise, keep 32; +temporal =
-        # 6/7 nights positive, migrated into production as
-        # mlp32-channel-whisper-temporal / MLP3 v3). See
-        # _augment_channel_whisper_temporal above if a future capacity
-        # or feature probe needs the same pattern again.
-        #
-        # Minute-prior probe (started 2026-07-15): production replica
-        # (cwt, = shadow-semantics twin of the deployed arch) vs the
-        # same + P(ad|minute) column. Decision rule as with temporal:
-        # consistently positive median Δ across several nights →
-        # migrate (header bump + Go nn.go parity + daemon start_ts
-        # pass-through); noise → drop the column, keep minute-prior
-        # in Phase A pseudo-labelling only.
-        m_v6, mlp_v6, _ = _fit_eval(
-            f"MLP-32 + chan + whisper + temporal (prod replica)",
-            _augment_channel_whisper_temporal, seed=nacht_seed)
-        m_v7, mlp_v7, _ = _fit_eval(
-            f"MLP-32 + cwt + minute-prior (+1 dim)",
-            _augment_cwt_minuteprior, seed=nacht_seed)
-        # Die Whisper-Sonde in der heutigen Architektur: identisch zu v7,
-        # nur ohne die eine Spalte. Δ(v7−v8) ist der Beitrag von Whisper.
-        m_v8, mlp_v8, _ = _fit_eval(
-            f"MLP-32 + ct + minute-prior (OHNE whisper)",
-            _augment_ct_minuteprior, seed=nacht_seed)
+        # ⚠️ --nur-tagesserie: die Standardsonden kosten ~1 h und
+        # beantworten nichts, was die Tagesserie fragt. Die Nacht-Serien
+        # verlieren dadurch KEINE Zeile — dieser Lauf ist ein Handlauf,
+        # seine Zeilen zaehlen dort ohnehin nicht.
+        if args.nur_tagesserie:
+            m_v1 = m_v2 = m_v3 = m_v4 = m_v6 = m_v7 = m_v8 = None
+            mlp_v2 = in_dim_v2 = None
+        else:
+            m_v1, mlp_v1, _ = _fit_eval(
+                "MLP-32 (1282→32→1)", lambda X, _s, _u=None: X, seed=nacht_seed)
+            m_v2, mlp_v2, in_dim_v2 = _fit_eval(
+                f"MLP-32 + channel one-hot (+{n_chan} dim)", _augment_channel,
+                seed=nacht_seed)
+            m_v3, mlp_v3, _ = _fit_eval(
+                "MLP-32 + temporal L2 deltas (+2 dim)", _augment_temporal,
+                seed=nacht_seed)
+            # Whisper Stage 4 prototype — per-second whisper-prob as a
+            # direct MLP input column instead of the post-processor rules.
+            # n=149 reviews + MLP non-linearity should absorb the new
+            # column without the L2-balance fragility of a LogReg add.
+            # If +0.03 IoU vs MLP+channel → migrate; if neutral → keep
+            # the post-processor rules (= they already gain +5.4 % on
+            # n=9 and the rules are simpler to reason about).
+            m_v4, mlp_v4, _ = _fit_eval(
+                f"MLP-32 + channel + whisper-prob (+{n_chan + 1} dim)",
+                _augment_channel_whisper, seed=nacht_seed)
+            # MLP-64 capacity probe (m_v5) and the +temporal combo (m_v6)
+            # were retired 2026-07-12: a 7-night --shadow-eval series
+            # settled both questions (MLP-64 = noise, keep 32; +temporal =
+            # 6/7 nights positive, migrated into production as
+            # mlp32-channel-whisper-temporal / MLP3 v3). See
+            # _augment_channel_whisper_temporal above if a future capacity
+            # or feature probe needs the same pattern again.
+            #
+            # Minute-prior probe (started 2026-07-15): production replica
+            # (cwt, = shadow-semantics twin of the deployed arch) vs the
+            # same + P(ad|minute) column. Decision rule as with temporal:
+            # consistently positive median Δ across several nights →
+            # migrate (header bump + Go nn.go parity + daemon start_ts
+            # pass-through); noise → drop the column, keep minute-prior
+            # in Phase A pseudo-labelling only.
+            m_v6, mlp_v6, _ = _fit_eval(
+                f"MLP-32 + chan + whisper + temporal (prod replica)",
+                _augment_channel_whisper_temporal, seed=nacht_seed)
+            m_v7, mlp_v7, _ = _fit_eval(
+                f"MLP-32 + cwt + minute-prior (+1 dim)",
+                _augment_cwt_minuteprior, seed=nacht_seed)
+            # Die Whisper-Sonde in der heutigen Architektur: identisch zu v7,
+            # nur ohne die eine Spalte. Δ(v7−v8) ist der Beitrag von Whisper.
+            m_v8, mlp_v8, _ = _fit_eval(
+                f"MLP-32 + ct + minute-prior (OHNE whisper)",
+                _augment_ct_minuteprior, seed=nacht_seed)
 
         # ── Rauschboden (--seed-sweep N) ─────────────────────────────
         # Dieselben Daten, dieselbe Architektur, nur ein anderer
@@ -4919,29 +4948,30 @@ def main():
         # below; this dumps to a parallel tree so it doesn't collide
         # with a production deploy. Use this file to bootstrap Go-
         # side regression tests before the production switch.
-        try:
-            shadow_dir = Path(args.output).parent / "shadow"
-            shadow_dir.mkdir(parents=True, exist_ok=True)
-            mlp_path = shadow_dir / "head.mlp32-channel.bin"
-            n_audio_used = 1 if args.with_audio else 0
-            n_logo_used = 1 if args.with_logo else 0
-            sz = write_mlp_head_v1(
-                mlp_path, mlp_v2,
-                input_dim=in_dim_v2, hidden_dim=32,
-                backbone_dim=1280, n_logo=n_logo_used,
-                n_audio=n_audio_used, n_channel=n_chan)
-            # Sidecar with the slug list — deterministic alphabetical
-            # order matching chan_slugs above; Go reads this to map
-            # an inference-time slug to the one-hot column.
-            cm_path = shadow_dir / "head.mlp32-channel.channel-map.json"
-            cm_path.write_text(json.dumps({
-                "version": 1, "n": n_chan,
-                "slugs": chan_slugs,
-            }, indent=2))
-            print(f"\n  shadow MLP head written: {mlp_path} ({sz} B)")
-            print(f"  shadow channel-map:      {cm_path.name}")
-        except Exception as e:
-            print(f"\n  shadow MLP write err: {e}")
+        if not args.nur_tagesserie:
+            try:
+                shadow_dir = Path(args.output).parent / "shadow"
+                shadow_dir.mkdir(parents=True, exist_ok=True)
+                mlp_path = shadow_dir / "head.mlp32-channel.bin"
+                n_audio_used = 1 if args.with_audio else 0
+                n_logo_used = 1 if args.with_logo else 0
+                sz = write_mlp_head_v1(
+                    mlp_path, mlp_v2,
+                    input_dim=in_dim_v2, hidden_dim=32,
+                    backbone_dim=1280, n_logo=n_logo_used,
+                    n_audio=n_audio_used, n_channel=n_chan)
+                # Sidecar with the slug list — deterministic alphabetical
+                # order matching chan_slugs above; Go reads this to map
+                # an inference-time slug to the one-hot column.
+                cm_path = shadow_dir / "head.mlp32-channel.channel-map.json"
+                cm_path.write_text(json.dumps({
+                    "version": 1, "n": n_chan,
+                    "slugs": chan_slugs,
+                }, indent=2))
+                print(f"\n  shadow MLP head written: {mlp_path} ({sz} B)")
+                print(f"  shadow channel-map:      {cm_path.name}")
+            except Exception as e:
+                print(f"\n  shadow MLP write err: {e}")
 
         # Variant comparisons use MEDIAN IoU (like the deploy gate) —
         # the mean is outlier-fragile: 2026-07-07, two same-day runs
@@ -4982,51 +5012,52 @@ def main():
             g = _gmed(m)
             return f"{g:>6.3f}" if g is not None else f"{'—':>6}"
 
-        print("\n" + "=" * 70)
-        print("SHADOW COMPARISON (smooth=10s, test set)")
-        print("=" * 70)
-        print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  "
-              f"{'acc':>6}  {'golden':>6}")
-        print(f"  {'baseline (' + args.head_arch + ')':35s}  "
-              f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  "
-              f"{base_acc*100:>5.1f}%  {_gtxt(metrics_smooth)}")
-        for name, m in [("MLP-32", m_v1),
-                        (f"MLP-32 + channel ({n_chan})", m_v2),
-                        ("MLP-32 + temporal", m_v3),
-                        (f"MLP-32 + channel + whisper", m_v4),
-                        ("MLP-32 + cwt (prod replica)", m_v6),
-                        ("MLP-32 + cwt + minute-prior", m_v7),
-                        ("MLP-32 + ct + mp (OHNE whisper)", m_v8)]:
-            d = _vmed(m) - base_med
-            mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
-            print(f"  {name:35s}  {_vmed(m):>6.3f}  "
-                  f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%  "
-                  f"{_gtxt(m)}{mark}")
-        # The decision number for the minute-prior probe: Δ vs the
-        # production replica under identical shadow semantics.
-        d_mp = _vmed(m_v7) - _vmed(m_v6)
-        print(f"\n  minute-prior probe: cwt {_vmed(m_v6):.3f} → "
-              f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_mp:+.3f})")
-        # Die Whisper-Spalte, isoliert in der heutigen Architektur:
-        # v7 und v8 unterscheiden sich in genau dieser einen Spalte.
-        d_wh = _vmed(m_v7) - _vmed(m_v8)
-        g7, g8 = _gmed(m_v7), _gmed(m_v8)
-        g_txt = (f", golden {g8:.3f} → {g7:.3f} (Δ {g7 - g8:+.3f})"
-                 if g7 is not None and g8 is not None else "")
-        print(f"  whisper probe:      ct+mp {_vmed(m_v8):.3f} → "
-              f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_wh:+.3f}){g_txt}")
-        # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel).
-        # Tells you "is whisper as an MLP input column better than
-        # whisper as a post-processor rule set". Migration breaks even
-        # somewhere around +0.03 IoU.
-        d_stage4 = _vmed(m_v4) - _vmed(m_v2)
-        mark4 = ("  ↑ migrate" if d_stage4 > 0.03 else
-                 ("  ↓ keep post-processor" if d_stage4 < -0.01 else
-                  "  ≈ neutral, keep post-processor"))
-        print()
-        print(f"  Δ vs Stage-3 baseline (MLP+channel): "
-              f"{d_stage4:+.3f}{mark4}")
-        print()
+        if not args.nur_tagesserie:
+            print("\n" + "=" * 70)
+            print("SHADOW COMPARISON (smooth=10s, test set)")
+            print("=" * 70)
+            print(f"  {'arch':35s}  {'medIoU':>6}  {'Δ vs LR':>9}  {'mean':>6}  "
+                  f"{'acc':>6}  {'golden':>6}")
+            print(f"  {'baseline (' + args.head_arch + ')':35s}  "
+                  f"{base_med:>6.3f}  {'(ref)':>9}  {base_iou:>6.3f}  "
+                  f"{base_acc*100:>5.1f}%  {_gtxt(metrics_smooth)}")
+            for name, m in [("MLP-32", m_v1),
+                            (f"MLP-32 + channel ({n_chan})", m_v2),
+                            ("MLP-32 + temporal", m_v3),
+                            (f"MLP-32 + channel + whisper", m_v4),
+                            ("MLP-32 + cwt (prod replica)", m_v6),
+                            ("MLP-32 + cwt + minute-prior", m_v7),
+                            ("MLP-32 + ct + mp (OHNE whisper)", m_v8)]:
+                d = _vmed(m) - base_med
+                mark = "  ↑" if d > 0.01 else ("  ↓" if d < -0.01 else "")
+                print(f"  {name:35s}  {_vmed(m):>6.3f}  "
+                      f"{d:>+9.3f}  {m['iou']:>6.3f}  {m['acc']*100:>5.1f}%  "
+                      f"{_gtxt(m)}{mark}")
+            # The decision number for the minute-prior probe: Δ vs the
+            # production replica under identical shadow semantics.
+            d_mp = _vmed(m_v7) - _vmed(m_v6)
+            print(f"\n  minute-prior probe: cwt {_vmed(m_v6):.3f} → "
+                  f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_mp:+.3f})")
+            # Die Whisper-Spalte, isoliert in der heutigen Architektur:
+            # v7 und v8 unterscheiden sich in genau dieser einen Spalte.
+            d_wh = _vmed(m_v7) - _vmed(m_v8)
+            g7, g8 = _gmed(m_v7), _gmed(m_v8)
+            g_txt = (f", golden {g8:.3f} → {g7:.3f} (Δ {g7 - g8:+.3f})"
+                     if g7 is not None and g8 is not None else "")
+            print(f"  whisper probe:      ct+mp {_vmed(m_v8):.3f} → "
+                  f"cwt+mp {_vmed(m_v7):.3f}  (Δ {d_wh:+.3f}){g_txt}")
+            # Stage-4 specific Δ vs Stage-3 baseline (= MLP+channel).
+            # Tells you "is whisper as an MLP input column better than
+            # whisper as a post-processor rule set". Migration breaks even
+            # somewhere around +0.03 IoU.
+            d_stage4 = _vmed(m_v4) - _vmed(m_v2)
+            mark4 = ("  ↑ migrate" if d_stage4 > 0.03 else
+                     ("  ↓ keep post-processor" if d_stage4 < -0.01 else
+                      "  ≈ neutral, keep post-processor"))
+            print()
+            print(f"  Δ vs Stage-3 baseline (MLP+channel): "
+                  f"{d_stage4:+.3f}{mark4}")
+            print()
 
         if seed_rows:
             _gs = [_gmed(m) for _, m, _ in seed_rows]
@@ -5068,61 +5099,62 @@ def main():
         # Median ohne sie nicht vergleichbar ist: der Golden-Satz hat
         # schon einmal still seine Zusammensetzung gewechselt, und der
         # Decoder-Wechsel form→hsmm hat jede Zahl davor entwertet.
-        try:
-            if args.train_archive:
-                _gmeta = {}
-                if _golden_uuids:
-                    _gmeta = json.loads(
-                        (Path(args.train_archive)
-                         / "golden-eval-set.json").read_text())
-                _zeilen = [("baseline", args.head_arch, metrics_smooth)]
-                _zeilen += [("shadow", n, m) for n, m in [
-                    ("mlp32", m_v1),
-                    ("mlp32-channel", m_v2),
-                    ("mlp32-temporal", m_v3),
-                    ("mlp32-channel-whisper", m_v4),
-                    ("mlp32-cwt", m_v6),
-                    ("mlp32-cwt-mp", m_v7),
-                    ("mlp32-ct-mp", m_v8)]]
-                with open(Path(args.train_archive) / "shadow-trend.jsonl",
-                          "a") as _sf:
-                    for _rolle, _name, _m in _zeilen:
-                        _g = _gmed(_m)
-                        _pr = (_m or {}).get("per_rec_iou") or {}
-                        _gm = ([_pr[u] for u in _golden_uuids]
-                               if _g is not None else [])
-                        _sf.write(json.dumps({
-                            "ts": ts, "rolle": _rolle, "arch": _name,
-                            # Produktion fittet fest mit 0, die Sonden mit dem
-                            # Seed dieser Nacht. Ohne das Feld sieht ein
-                            # spaeterer Leser nicht, dass baseline- und
-                            # shadow-Zeilen NICHT seed-gleich sind — und
-                            # vergleicht sie arglos.
-                            "seed": 0 if _rolle == "baseline" else nacht_seed,
-                            # nightly | hand. Der Wrapper setzt TVD_LAUF; ein
-                            # Handlauf tut es nicht. Ohne dieses Feld zaehlt
-                            # jeder Handlauf als Serien-Nacht mit — und die
-                            # Serie waere um eine Messung laenger, die unter
-                            # anderen Bedingungen entstand.
-                            "quelle": os.environ.get("TVD_LAUF", "hand"),
-                            "golden_median": (round(_g, 4)
-                                              if _g is not None else None),
-                            "golden_mean": (round(float(np.mean(_gm)), 4)
-                                            if _gm else None),
-                            "golden_n": len(_gm),
-                            "test_median": round(_vmed(_m), 4),
-                            "test_mean": round(float(_m["iou"]), 4),
-                            "acc": round(float(_m["acc"]), 4),
-                            "n_test": int(_m.get("n_recs") or 0),
-                            "n_train_recs": len(train_recs),
-                            "set_version": _gmeta.get("version"),
-                            "set_hash": _gmeta.get("set_hash"),
-                            "decoder": " ".join(EVAL_DECODER) or "form",
-                        }) + "\n")
-                print(f"  Serie fortgeschrieben → shadow-trend.jsonl "
-                      f"({len(_zeilen)} Zeilen, ts={ts})")
-        except Exception as e:
-            print(f"  shadow-trend.jsonl nicht geschrieben: {e}")
+        if not args.nur_tagesserie:
+            try:
+                if args.train_archive:
+                    _gmeta = {}
+                    if _golden_uuids:
+                        _gmeta = json.loads(
+                            (Path(args.train_archive)
+                             / "golden-eval-set.json").read_text())
+                    _zeilen = [("baseline", args.head_arch, metrics_smooth)]
+                    _zeilen += [("shadow", n, m) for n, m in [
+                        ("mlp32", m_v1),
+                        ("mlp32-channel", m_v2),
+                        ("mlp32-temporal", m_v3),
+                        ("mlp32-channel-whisper", m_v4),
+                        ("mlp32-cwt", m_v6),
+                        ("mlp32-cwt-mp", m_v7),
+                        ("mlp32-ct-mp", m_v8)]]
+                    with open(Path(args.train_archive) / "shadow-trend.jsonl",
+                              "a") as _sf:
+                        for _rolle, _name, _m in _zeilen:
+                            _g = _gmed(_m)
+                            _pr = (_m or {}).get("per_rec_iou") or {}
+                            _gm = ([_pr[u] for u in _golden_uuids]
+                                   if _g is not None else [])
+                            _sf.write(json.dumps({
+                                "ts": ts, "rolle": _rolle, "arch": _name,
+                                # Produktion fittet fest mit 0, die Sonden mit dem
+                                # Seed dieser Nacht. Ohne das Feld sieht ein
+                                # spaeterer Leser nicht, dass baseline- und
+                                # shadow-Zeilen NICHT seed-gleich sind — und
+                                # vergleicht sie arglos.
+                                "seed": 0 if _rolle == "baseline" else nacht_seed,
+                                # nightly | hand. Der Wrapper setzt TVD_LAUF; ein
+                                # Handlauf tut es nicht. Ohne dieses Feld zaehlt
+                                # jeder Handlauf als Serien-Nacht mit — und die
+                                # Serie waere um eine Messung laenger, die unter
+                                # anderen Bedingungen entstand.
+                                "quelle": os.environ.get("TVD_LAUF", "hand"),
+                                "golden_median": (round(_g, 4)
+                                                  if _g is not None else None),
+                                "golden_mean": (round(float(np.mean(_gm)), 4)
+                                                if _gm else None),
+                                "golden_n": len(_gm),
+                                "test_median": round(_vmed(_m), 4),
+                                "test_mean": round(float(_m["iou"]), 4),
+                                "acc": round(float(_m["acc"]), 4),
+                                "n_test": int(_m.get("n_recs") or 0),
+                                "n_train_recs": len(train_recs),
+                                "set_version": _gmeta.get("version"),
+                                "set_hash": _gmeta.get("set_hash"),
+                                "decoder": " ".join(EVAL_DECODER) or "form",
+                            }) + "\n")
+                    print(f"  Serie fortgeschrieben → shadow-trend.jsonl "
+                          f"({len(_zeilen)} Zeilen, ts={ts})")
+            except Exception as e:
+                print(f"  shadow-trend.jsonl nicht geschrieben: {e}")
         print()
 
         # ── Tagesserie (--tagesserie N) ──────────────────────────────
@@ -5166,57 +5198,87 @@ def main():
                       f"({_mit_name} vs {_ohne_name}), je Paar EIN Seed")
                 print("=" * 70)
                 _serie_dir = Path(args.serie_archiv or args.train_archive)
-                _paare = []
-                for _i in range(args.tagesserie):
-                    # Deterministisch aus dem Lauf-Stempel, je Paar anders.
-                    _seed = (nacht_seed + 1 + 997 * _i) % 10000
-                    _mm, _, _ = _fit_eval(
-                        f"PAAR {_i} seed={_seed} — {_mit_name}",
-                        _ts_arme[_mit_name], seed=_seed)
-                    _mo, _, _ = _fit_eval(
-                        f"PAAR {_i} seed={_seed} — {_ohne_name}",
-                        _ts_arme[_ohne_name], seed=_seed)
-                    _gm_, _go_ = _gmed(_mm), _gmed(_mo)
-                    _paare.append((_i, _seed, _gm_, _go_, _mm, _mo))
-                    d = (None if _gm_ is None or _go_ is None
-                         else round(_gm_ - _go_, 4))
-                    print(f"  Paar {_i}: golden mit={_gm_} ohne={_go_} "
-                          f"Δ={d}")
-                    # Jede Zeile SOFORT schreiben, nicht am Ende gesammelt:
-                    # stirbt der Lauf bei Paar 4, sind 3 Paare gerettet.
-                    try:
-                        with open(_serie_dir / "shadow-trend.jsonl", "a") as _tf:
-                            for _name, _m in ((_mit_name, _mm),
-                                              (_ohne_name, _mo)):
-                                _g = _gmed(_m)
-                                _pr = (_m or {}).get("per_rec_iou") or {}
-                                _gl = ([_pr[u] for u in _golden_uuids]
-                                       if _g is not None else [])
+                _seeds = [(nacht_seed + 1 + 997 * _i) % 10000
+                          for _i in range(args.tagesserie)]
+
+                # ⚠️ Nur den Golden-Satz decodieren (38 statt ~137
+                # Aufnahmen): die registrierte Regel urteilt AUSSCHLIESSLICH
+                # auf golden_median. Die test_*-Felder der Zeilen bleiben
+                # dann leer — leer ist ehrlicher als eine Zahl, die wie der
+                # Testsatz aussieht, aber nur der Golden-Satz ist.
+                _gold_recs = [r for r in test_recs if r[0] in _golden_uuids]
+                _nur_gold = len(_gold_recs) == len(_golden_uuids) > 0
+                if not _nur_gold:
+                    print(f"  ⚠ Golden-Satz nicht vollstaendig im Testsplit "
+                          f"({len(_gold_recs)}/{len(_golden_uuids)}) — "
+                          f"Tagesserie faellt auf volle Eval zurueck")
+
+                # Arm-major statt paar-major: der Matrixaufbau je Arm kostet
+                # Minuten und haengt NICHT am Seed — einmal bauen, N-mal
+                # fitten. Die Paarung bleibt exakt: Paar i = (mit, seed_i)
+                # gegen (ohne, seed_i).
+                _ergebnis = {}
+                for _name in (_mit_name, _ohne_name):
+                    _aug = _ts_arme[_name]
+                    _Xa, _ya, _swa = _build_train(train_recs, _aug)
+                    _ta = _augment_test_recs(
+                        _gold_recs if _nur_gold else test_recs, _aug)
+                    print(f"\n  Arm {_name}: dim {_Xa.shape[1]}, "
+                          f"{len(_Xa)} Frames, Eval auf {len(_ta)} Aufnahmen")
+                    for _i, _seed in enumerate(_seeds):
+                        _mlp = WeightedMLP(hidden_dim=32, max_iter=80,
+                                           random_state=_seed)
+                        _mlp.fit(_Xa, _ya, _swa)
+                        _m = eval_split(_mlp, _ta, args.fps_extract,
+                                        smooth_s=10)
+                        _ergebnis[(_name, _seed)] = _m
+                        _g = _gmed(_m)
+                        print(f"    seed {_seed}: {_mlp.n_iter_} Epochen, "
+                              f"golden {_g}")
+                        try:
+                            # Jede Zeile SOFORT schreiben: stirbt der Lauf,
+                            # sind die fertigen Fits gerettet.
+                            _pr = (_m or {}).get("per_rec_iou") or {}
+                            _gl = ([_pr[u] for u in _golden_uuids]
+                                   if _g is not None else [])
+                            with open(_serie_dir / "shadow-trend.jsonl",
+                                      "a") as _tf:
                                 _tf.write(json.dumps({
-                                    # Eigener ts je Paar: das Audit gruppiert
-                                    # nach ts, und zwei Paare desselben Laufs
-                                    # sind zwei Stichproben, keine eine.
                                     "ts": f"{ts}p{_i:02d}",
                                     "rolle": "tagesserie", "arch": _name,
                                     "seed": _seed, "quelle": "tagesserie",
                                     "golden_median": (round(_g, 4)
-                                                      if _g is not None else None),
+                                                      if _g is not None
+                                                      else None),
                                     "golden_mean": (round(float(np.mean(_gl)), 4)
                                                     if _gl else None),
                                     "golden_n": len(_gl),
-                                    "test_median": round(_vmed(_m), 4),
-                                    "test_mean": round(float(_m["iou"]), 4),
-                                    "acc": round(float(_m["acc"]), 4),
+                                    # Bei Golden-only-Eval sind Testsatz-
+                                    # Zahlen nicht messbar — leer lassen.
+                                    "test_median": (None if _nur_gold
+                                                    else round(_vmed(_m), 4)),
+                                    "test_mean": (None if _nur_gold
+                                                  else round(float(_m["iou"]), 4)),
+                                    "acc": (None if _nur_gold
+                                            else round(float(_m["acc"]), 4)),
                                     "n_test": int(_m.get("n_recs") or 0),
                                     "n_train_recs": len(train_recs),
                                     "set_version": _gmeta.get("version"),
                                     "set_hash": _gmeta.get("set_hash"),
                                     "decoder": " ".join(EVAL_DECODER) or "form",
                                 }) + "\n")
-                    except Exception as e:
-                        print(f"  ⚠ Tagesserie-Zeile nicht geschrieben: {e}")
-                _ds = [round(a - b, 4) for _, _, a, b, _, _ in _paare
-                       if a is not None and b is not None]
+                        except Exception as e:
+                            print(f"  ⚠ Tagesserie-Zeile nicht "
+                                  f"geschrieben: {e}")
+                    del _Xa, _ya, _swa
+                    gc.collect()
+
+                _ds = []
+                for _seed in _seeds:
+                    _a = _gmed(_ergebnis.get((_mit_name, _seed)))
+                    _b = _gmed(_ergebnis.get((_ohne_name, _seed)))
+                    if _a is not None and _b is not None:
+                        _ds.append(round(_a - _b, 4))
                 if _ds:
                     import statistics as _st
                     print(f"\n  Tagesserie: Median Δ {_st.median(_ds):+.4f}, "

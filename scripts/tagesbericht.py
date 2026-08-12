@@ -108,7 +108,12 @@ def serien(audit_text):
     for i, t in enumerate(treffer):
         ende = treffer[i + 1].start() if i + 1 < len(treffer) else len(audit_text)
         block = audit_text[t.end():ende]
-        stand = re.search(r"→ (.+)$", block, flags=re.M)
+        # ⚠️ Auch die noch nicht begonnenen Serien einsammeln. Sonst
+        # verschweigt der Bericht genau die Fragen, die in der
+        # Warteschlange stehen — und die Schleife sieht leerer aus als sie
+        # ist.
+        stand = re.search(r"→ (.+)$", block, flags=re.M) \
+            or re.search(r"^\s*(Stand: .+)$", block, flags=re.M)
         med = re.search(r"Median\s+([-+]?[\d.]+)\s+negativ\s+(\d+/\d+)", block)
         if not stand:
             continue
@@ -178,6 +183,10 @@ def baue():
                         + (f", Median {e['median']} ({e['negativ']} negativ)"
                            if e["median"] else "")
                         + " — läuft")
+        elif "noch nicht begonnen" in e["stand"]:
+            ab = re.search(r"(\d{8})", e["stand"])
+            kopf.append(f"{kurzTitel(e['frage'])}: eingereiht"
+                        + (f", ab {ab.group(1)}" if ab else ""))
         else:
             kopf.append(f"{kurzTitel(e['frage'])}: {e['stand'][:90]}")
             warnungen.append("Serie entschieden — Urteil steht an")
@@ -230,6 +239,8 @@ def main():
                 n = re.search(r"Nacht (\d+/\d+)", z)
                 kuerzel = z.split(" ")[0]
                 teile.append(f"{kuerzel} {n.group(1)}" if n else kuerzel)
+            elif ": eingereiht" in z:
+                teile.append(z.split(" ")[0] + " wartet")
         if teile:
             print(" · ".join(teile))
         return 0

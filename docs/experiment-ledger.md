@@ -124,15 +124,60 @@ Leitplanke L5.
 
 ### O2 — Schaden die Zusatzspalten in Summe?
 
-*Status: offen, noch keine Sonde.*
+*Status: registriert 2026-08-12, Serie 08-13 bis 08-17 (5 Nächte). Regel in
+[`o2-zusatzspalten-preregistration.md`](o2-zusatzspalten-preregistration.md).
+Läuft PARALLEL zu O1.*
 
 Im Handlauf 2026-08-09 hatte die schlankste Variante überhaupt — `MLP-32`
-ohne jede Zusatzspalte — den höchsten Golden-Median der Tabelle (0.938 gegen
-0.920 der Produktion). Das ist eine Einzelmessung und widerspricht der
-Migrations-Historie (Kanal und temporal wurden über Serien positiv
-gemessen). Die Frage verdient dieselbe Isolationsbehandlung wie O1, aber
-**nach** O1 — zwei Serien gleichzeitig auf demselben Rauschboden sind nicht
-auseinanderzuhalten.
+ohne jede Zusatzspalte — den höchsten Golden-Median der Tabelle. Die
+Schattenreihe hat das seither bestätigt:
+
+```
+                                        0810   0811   0812
+  mlp32-channel-whisper-temporal-mp-wm  0.906  0.907  0.910   (Produktion)
+  mlp32                                 0.930  0.923  0.936
+                                    Δ  -0.024 -0.016 -0.026
+```
+
+Drei Nächte, ~−0.022 im Mittel, bei einer Seed-Streuung von Std 0.006. Das
+ist das stärkste Signal der gesamten Tabelle — deutlich stärker als O1.
+
+⚠️ **Meine Begründung, O2 hinter O1 zu stellen, war falsch.** Sie lautete:
+„zwei Serien gleichzeitig auf demselben Rauschboden sind nicht
+auseinanderzuhalten." Das gilt für zwei Änderungen an DEMSELBEN Kopf. Die
+Sonden hier sind aber **gepaart innerhalb einer Nacht**, unterscheiden sich
+um genau eine Sache, fassen die Produktion nicht an — und der Nightly fährt
+ohnehin acht Varianten. O1 und O2 sind zwei unabhängige Differenzen aus
+demselben Lauf. Die Serialisierung hat die Schleife grundlos verlangsamt.
+
+⚠️ Die drei Nächte oben zählen für die Serie **nicht** — ich habe sie
+gesehen, bevor ich die Regel schrieb. Serienbeginn ist der 13.08., und die
+Schwelle ist wortgleich die von O1, damit sie nicht an den beobachteten
+Effekt angepasst ist. Beides steht in der Registrierung.
+
+## 3a. Warteschlange
+
+Eine Frage ist **eingereiht**, sobald ihre Registrierung existiert und
+`serie_ab` in der Zukunft liegt; das Audit führt sie dann als „Serie hat
+noch nicht begonnen". Es braucht kein eigenes Queue-Format — die
+Registrierung IST der Eintrag, und damit gilt R4 (Regel vor den Daten)
+automatisch auch für alles, was noch wartet.
+
+Was ansteht, in dieser Reihenfolge:
+
+1. **Welche Spalte genau?** Erst wenn O1 und O2 entschieden sind. Je eine
+   Sonde, die sich um genau eine Spalte unterscheidet. Kanal und temporal
+   sind über Serien positiv gemessen, Minute-Prior über acht Nächte als
+   inert (Δ ≈ −0.001) — die Reihenfolge richtet sich nach der
+   Einzelmessung der Schattenreihe.
+2. **Trägt der Schatten-Vorsprung in die Produktion?** Der offene O3-Faden:
+   Schatten-Varianten durchlaufen den All-Data-Refit nicht. Bevor eine
+   Architektur wechselt, muss das gemessen sein — sonst wechselt man auf
+   eine Zahl, die es in der Produktion nicht gibt.
+3. **Kapazität (MLP-64).** Am 07.07. getestet, Urteil kippte zwischen zwei
+   Läufen desselben Tages — es lag im Rauschen. Heute mit gepaarten Sonden
+   und gemessenem Boden sauber wiederholbar, aber unterste Priorität: die
+   Tabelle zeigt auf Spalten, nicht auf Kapazität.
 
 ### O3 — Läuft der Golden-Boden in eine Sperre?
 

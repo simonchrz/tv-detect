@@ -77,7 +77,16 @@ Deine Aufgabe, in dieser Reihenfolge:
    Decoder. Defekte haben Vorrang vor Erkenntnissen.
 2. Ist eine laufende Serie reif? Nur dann entscheiden, und nur nach der
    vorab registrierten Regel — nicht nach dem, was die Zahlen nahelegen.
-3. Sonst: nichts tun und das auch so sagen. Ein Zwischenstand ist kein
+   Danach: Ledger fortschreiben, Verlierer in den Friedhof.
+3. Ist dadurch ein Platz frei geworden? Die Warteschlange steht in
+   experiment-ledger.md §3a. Eine Frage wird eingereiht, indem ihre
+   Registrierung ANGELEGT wird — mit `serie_ab` in der Zukunft, Regel und
+   Schwelle VOR der ersten Nacht. Die Schwelle wird NICHT an einen schon
+   gesehenen Effekt angepasst; sind die Zahlen der Arme bereits sichtbar,
+   gehoert das in die Registrierung und die gesehenen Naechte zaehlen nicht.
+   Serien laufen parallel, solange ihre Arme gepaart in derselben Nacht
+   liegen und die Produktion nicht anfassen.
+4. Sonst: nichts tun und das auch so sagen. Ein Zwischenstand ist kein
    Ergebnis. Die meisten Tage enden hier, und das ist richtig.
 
 Was du NIE tust, auch nicht mit guter Begruendung: den Golden-Boden senken,

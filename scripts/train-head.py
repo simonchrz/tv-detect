@@ -4816,17 +4816,38 @@ def main():
             # user-2× survived — the variant table compared apples to
             # slightly rotten apples.)
             assert recs is train_recs, "_build_train is keyed to train_recs"
-            Xs, ys, sws = [], [], []
-            for r, mask, sw in zip(recs, keep_masks, sw_train_parts):
-                if len(sw) == 0:
-                    continue  # age>180d — skipped entirely upstream
-                slug = uuid_slug.get(r[0], "")
-                X_aug = augment(r[3], slug, r[0])[mask]
-                Xs.append(X_aug)
-                ys.append(r[4][mask])
-                sws.append(sw)
-            return (np.concatenate(Xs), np.concatenate(ys),
-                    np.concatenate(sws))
+            # ⚠️ Vorab dimensionieren und HINEINSCHREIBEN statt Liste +
+            # np.concatenate. Der alte Weg hielt beim Zusammenkleben ZWEI
+            # Kopien der ~10-GB-Matrix gleichzeitig — diese Spitze (nicht
+            # die Matrix selbst) hat am 2026-08-12 beim Parallel-Versuch
+            # den OOM-Killer geholt. Das Ergebnis ist BITIDENTISCH zum
+            # alten Weg: gleiche Werte, gleiche Reihenfolge — kein Bruch
+            # in der Golden-Reihe (R1).
+            teile = [(r, mask, sw)
+                     for r, mask, sw in zip(recs, keep_masks, sw_train_parts)
+                     if len(sw) != 0]  # age>180d — skipped entirely upstream
+            gesamt = sum(int(m.sum()) for _, m, _ in teile)
+            r0, m0, sw0 = teile[0]
+            # Breite aus der ERSTEN voll augmentierten Aufnahme — nicht aus
+            # einem 1-Zeilen-Probelauf: mit_zusatz richtet Zusatzspalten an
+            # der Frame-Zahl der Aufnahme aus, ein Schnipsel wuerde dort
+            # falsch ausrichten.
+            X0 = augment(r0[3], uuid_slug.get(r0[0], ""), r0[0])[m0]
+            X = np.empty((gesamt, X0.shape[1]), dtype=np.float32)
+            y = np.empty(gesamt, dtype=r0[4].dtype)
+            sw = np.empty(gesamt, dtype=np.asarray(sw0).dtype)
+            ofs = 0
+            for i, (r, mask, w) in enumerate(teile):
+                Xa = X0 if i == 0 else augment(
+                    r[3], uuid_slug.get(r[0], ""), r[0])[mask]
+                k = len(Xa)
+                X[ofs:ofs + k] = Xa
+                y[ofs:ofs + k] = r[4][mask]
+                sw[ofs:ofs + k] = w
+                ofs += k
+            del X0
+            assert ofs == gesamt
+            return X, y, sw
 
         def _augment_test_recs(recs, augment):
             out = []

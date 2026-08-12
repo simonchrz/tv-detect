@@ -343,5 +343,24 @@ class Tagesserie(unittest.TestCase):
         self.assertIn("quelle=hand", txt)
 
 
+
+
+class FremdeSerien(unittest.TestCase):
+    def test_fremde_tagesserie_stoert_nicht(self):
+        # Eine Tagesserie zu einer ANDEREN Frage (fremde arch-Namen,
+        # gleiche quelle) darf hier weder zaehlen noch als "ein Arm
+        # fehlt" erscheinen — sonst waechst dieses Audit mit jeder
+        # weiteren Frage um Laermzeilen.
+        fremd = [{"ts": "20260813T100000p00", "arch": "ganz-anderer-arm",
+                  "golden_median": 0.9, "seed": 5, "quelle": "tagesserie",
+                  "set_hash": HASH, "decoder": DEC, "golden_n": 38}]
+        z = fremd + [x for i in range(3)
+                     for x in paar(f"20260812T100000p{i:02d}", 0.88, 0.90,
+                                   seed=100 + i)]
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("NOCH OFFEN: 3/5", txt)
+        self.assertNotIn("verworfen 20260813", txt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

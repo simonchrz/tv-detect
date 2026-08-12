@@ -128,6 +128,13 @@ def pruefe(pfad, regel, nach_ts):
         andere = {"tagesserie"} if quelle_soll == "nightly" else {"nightly"}
         m, o = zeilen.get(a_mit), zeilen.get(a_ohne)
         if not m or not o:
+            # ⚠️ "Ein Arm fehlt" nur, wenn ueberhaupt einer der Arme DIESER
+            # Regel da ist. Sonst flutet jede Tagesserie einer ANDEREN
+            # Frage (fremde arch-Namen, gleiche quelle) dieses Audit fuer
+            # immer mit verworfen-Zeilen — Laerm, der echte Luecken
+            # unsichtbar macht.
+            if not (m or o):
+                continue
             vorhanden = {z.get("quelle") for z in zeilen.values()}
             if vorhanden and vorhanden <= andere:
                 continue

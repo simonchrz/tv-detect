@@ -175,10 +175,23 @@ Was ansteht, in dieser Reihenfolge:
    sind über Serien positiv gemessen, Minute-Prior über acht Nächte als
    inert (Δ ≈ −0.001) — die Reihenfolge richtet sich nach der
    Einzelmessung der Schattenreihe.
-2. **Trägt der Schatten-Vorsprung in die Produktion?** Der offene O3-Faden:
-   Schatten-Varianten durchlaufen den All-Data-Refit nicht. Bevor eine
-   Architektur wechselt, muss das gemessen sein — sonst wechselt man auf
-   eine Zahl, die es in der Produktion nicht gibt.
+2. **Trägt der Schatten-Vorsprung in die Produktion? — BEANTWORTET
+   2026-08-12 abends, ohne neuen Lauf.** Zwei Code-Funde und ein
+   Daten-Kreuzvergleich:
+   * Die Gate-Golden-Zahl stammt vom **train-only** gewählten Kopf über
+     denselben `eval_split`-Pfad wie die Schatten-Fits. Der All-Data-Refit
+     fließt in sie **gar nicht ein** (er passiert später, nur für
+     `head.bin`). Meine Refit-These war damit unprüfbar falsch gestellt.
+   * Prod-Pfad und Schatten-Replika benutzen **dieselbe** konsolidierte
+     Spaltenfunktion — kein versteckter Spaltenunterschied.
+   * Verteilungen auf fast demselben Korpus: Prod-Nightly-Seeds
+     0.907–0.921, Replika-Tagesserie 0.904–0.919 → **vollständig
+     überlappend, kein Pfad-Malus**. Die 0.900 vom 08-11 war ein
+     gewöhnlicher Zieh-Ausreißer (Replika erreicht selbst 0.904).
+     `mlp32` liegt mit 0.929–0.936 **disjunkt über beiden** — der
+     Vorsprung überlebt beide Pfadvarianten.
+   Offen bleibt allein das Gate selbst (Boden-Ratsche, O3) — kein
+   Messpfad-Problem mehr.
 3. **Kapazität (MLP-64).** Am 07.07. getestet, Urteil kippte zwischen zwei
    Läufen desselben Tages — es lag im Rauschen. Heute mit gepaarten Sonden
    und gemessenem Boden sauber wiederholbar, aber unterste Priorität: die
@@ -188,8 +201,8 @@ Was ansteht, in dieser Reihenfolge:
 
 *Status: Sperre aktiv seit 08-09. Seed-These 08-11 abends WIDERLEGT — bei
 k=3 räumen 95 % der Ziehungen die Latte, drei Ablehnungen in Folge sind kein
-Seed-Pech. Offene Spur: der All-Data-Refit (Golden 0.900 gegen Pool-Minimum
-0.906). `--prod-seeds` bleibt bei 3.*
+Seed-Pech. Die Refit-Spur ist GESCHLOSSEN (08-12 abends, s. §3a Punkt 2):
+kein Pfad-Malus, 0.900 war ein Zieh-Ausreißer. `--prod-seeds` bleibt bei 3.*
 
 **Teilweise entschärft 2026-08-09.** Der Boden war `max()` über alle
 deployten Nächte — und ein Einzelwert trägt laut Seed-Sweep bis zu 0.023

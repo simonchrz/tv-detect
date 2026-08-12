@@ -1,0 +1,12 @@
+{
+  "O2": {
+    "datum": "2026-08-12",
+    "urteil": "REGEL ERFUELLT — Zusatzspalten schaden in Summe (Median -0.0249, 5/5 negativ)",
+    "verbucht": "experiment-ledger.md §3 O2"
+  },
+  "O6": {
+    "datum": "2026-08-12",
+    "urteil": "REGEL NICHT ERFUELLT — Kapazitaet bringt auf dem nackten Kopf nichts (Median +0.0000, 2/5 negativ)",
+    "verbucht": "experiment-ledger.md §4 Friedhof (MLP-64, zweite Beerdigung)"
+  }
+}

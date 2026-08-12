@@ -93,7 +93,7 @@ def ts_zu_unix(ts):
         return None
 
 
-def pruefe(pfad, regel, nach_ts):
+def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
     print(f"\n{'=' * 68}")
     print(f"{regel.get('id', '?')} — {regel.get('frage', '')}")
     print(f"  Registrierung: {pfad.name}")
@@ -130,11 +130,14 @@ def pruefe(pfad, regel, nach_ts):
         m, o = zeilen.get(a_mit), zeilen.get(a_ohne)
         if not m or not o:
             # ⚠️ "Ein Arm fehlt" nur, wenn ueberhaupt einer der Arme DIESER
-            # Regel da ist. Sonst flutet jede Tagesserie einer ANDEREN
-            # Frage (fremde arch-Namen, gleiche quelle) dieses Audit fuer
-            # immer mit verworfen-Zeilen — Laerm, der echte Luecken
-            # unsichtbar macht.
-            if not (m or o):
+            # Regel da ist — und die Gruppe nicht einer ANDEREN Regel
+            # vollstaendig gehoert. Fragen TEILEN sich Arme (mlp32 steckt
+            # in O2 und O6): O2s fertige Paare enthalten mlp32, aber nie
+            # mlp64, und erschienen hier sonst als Defekt. Eine Gruppe,
+            # die fuer irgendeine Regel BEIDE Arme traegt, ist deren
+            # Serie — nicht unsere Luecke. Halbe Gruppen ohne Besitzer
+            # (der OOM-Abbruch vom 2026-08-12) bleiben LAUT.
+            if not (m or o) or ts in fremd_belegt:
                 continue
             vorhanden = {z.get("quelle") for z in zeilen.values()}
             if vorhanden and vorhanden <= andere:
@@ -209,9 +212,13 @@ def pruefe(pfad, regel, nach_ts):
             print(f"  Stand: 0/{n_soll} gültige {einheit} — ALLE "
                   f"{len(verworfen)} {einheit} verworfen. Das ist kein Warten, "
                   f"das ist ein Defekt: die Serie kommt so nie zustande.")
-        else:
-            print(f"  Stand: 0/{n_soll} gültige {einheit} — Serie hat noch "
-                  f"nicht begonnen.")
+            # ⚠️ DAS ist der Fall fuer Exit 1 — nicht ein widerlegtes
+            # Ergebnis weiter unten. Eine sauber entschiedene Serie ist
+            # gesunde Wissenschaft, egal wie sie ausgeht; ein Lauf, der
+            # nie zustande kommt, ist kaputt.
+            return False
+        print(f"  Stand: 0/{n_soll} gültige {einheit} — Serie hat noch "
+              f"nicht begonnen.")
         return True
 
     print(f"\n  {'Paar' if art == 'tagesserie' else 'Nacht':16s}  Δ (mit − ohne)")
@@ -245,7 +252,11 @@ def pruefe(pfad, regel, nach_ts):
         print("\n  → REGEL NICHT ERFUELLT. Die vorab festgelegte Konsequenz "
               "für diesen Ausgang gilt — nicht die Geschichte, die sich zu "
               "den Zahlen erzählen lässt.")
-    return c1 and c2
+    # ⚠️ Beide Ausgaenge sind GESUNDE Ausgaenge — Exit 1 ist fuer Defekte
+    # und Integritaetsprobleme reserviert. Bis 2026-08-12 meldete ein
+    # widerlegtes Ergebnis Exit 1, und der Tagesbericht haette ab dem
+    # ersten "nicht erfuellt" jeden Morgen "Handlung noetig" gepusht.
+    return True
 
 
 def pruefe_integritaet(pfad, nach_ts, regel):
@@ -268,8 +279,14 @@ def pruefe_integritaet(pfad, nach_ts, regel):
     for ts in sorted(nach_ts):
         if ab and ts[:len(ab)] < ab:
             continue
-        if any(z.get("quelle") == quelle_soll and z.get("arch") in arme
-               for z in nach_ts[ts].values()):
+        # ⚠️ Ein ECHTES Paar dieser Regel (beide Arme, richtige Quelle) —
+        # ein einzelner geteilter Arm reicht nicht. O2s fertige Paare
+        # enthalten mlp32 (auch ein O6-Arm) und liessen den Anker sonst
+        # VOR O6s Registrierung schnappen: Fehlalarm auf einer Regel, die
+        # nachweislich vor ihren Daten stand.
+        da = {z.get("arch") for z in nach_ts[ts].values()
+              if z.get("quelle") == quelle_soll}
+        if arme and arme <= da:
             erste = ts
             break
     if erste is None:
@@ -298,13 +315,48 @@ def main():
     args = ap.parse_args()
 
     regeln = regeln_laden(args.docs)
+    # Welche ts-Gruppen gehoeren welcher Regel VOLLSTAENDIG (beide Arme)?
+    def _belegt_von(regel, nach_ts):
+        q = ("tagesserie" if regel.get("serie_art") == "tagesserie"
+             else "nightly")
+        a = set((regel.get("arme") or {}).values())
+        aus = set()
+        for ts, zeilen in nach_ts.items():
+            da = {z.get("arch") for z in zeilen.values()
+                  if z.get("quelle") == q}
+            if a and a <= da:
+                aus.add(ts)
+        return aus
     if not regeln:
         print("Keine Registrierung mit ```regel-Block gefunden.")
         return 0
     nach_ts = naechte_laden(args.archiv)
+    # Abgeschlossene Serien: Urteil gefaellt UND Konsequenz im Ledger
+    # verbucht. Steht in einer EIGENEN Datei, weil jede Aenderung an der
+    # Registrierung selbst den Integritaetsalarm ausloest — zu Recht.
+    # Ein Abschluss beendet die taegliche Neubewertung; das Urteil steht
+    # im Ledger, nicht hier.
+    abschluss = {}
+    ab_pfad = args.docs / "serien-abschluss.json"
+    if ab_pfad.exists():
+        try:
+            abschluss = json.loads(ab_pfad.read_text())
+        except Exception as e:
+            print(f"⚠ serien-abschluss.json nicht lesbar ({e})")
     ok = True
     for pfad, regel in regeln:
-        ok &= pruefe(pfad, regel, nach_ts)
+        rid = regel.get("id")
+        if rid in abschluss:
+            a = abschluss[rid]
+            print(f"\n{rid} — {regel.get('frage','')}")
+            print(f"  → abgeschlossen am {a.get('datum')}: {a.get('urteil')}"
+                  f" (verbucht in {a.get('verbucht', 'experiment-ledger.md')})")
+            continue
+        fremd = set()
+        for _, andere_regel in regeln:
+            if andere_regel.get("id") != regel.get("id"):
+                fremd |= _belegt_von(andere_regel, nach_ts)
+        ok &= pruefe(pfad, regel, nach_ts, fremd_belegt=fremd)
         ok &= pruefe_integritaet(pfad, nach_ts, regel)
     return 0 if ok else 1
 

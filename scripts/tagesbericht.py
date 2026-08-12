@@ -183,6 +183,9 @@ def baue():
                         + (f", Median {e['median']} ({e['negativ']} negativ)"
                            if e["median"] else "")
                         + " — läuft")
+        elif "abgeschlossen am" in e["stand"]:
+            # Entschieden UND verbucht — Information, kein Handlungsbedarf.
+            kopf.append(f"{kurzTitel(e['frage'])}: {e['stand'][:70]}")
         elif "noch nicht begonnen" in e["stand"]:
             ab = re.search(r"(\d{8})", e["stand"])
             kopf.append(f"{kurzTitel(e['frage'])}: eingereiht"

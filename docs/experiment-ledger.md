@@ -192,11 +192,10 @@ Was ansteht, in dieser Reihenfolge:
      Vorsprung überlebt beide Pfadvarianten.
    Offen bleibt allein das Gate selbst (Boden-Ratsche, O3) — kein
    Messpfad-Problem mehr.
-3. **Kapazität (MLP-64).** → **O6, registriert 2026-08-12 abends** als
-   Tagesserie ([`o6-kapazitaet-preregistration.md`](o6-kapazitaet-preregistration.md)).
-   Friedhofs-Wiedergänger mit dokumentierter Begründung: die Juli-Serie
-   lief mit festem Seed (methodisch leer), und geprüft wird jetzt der
-   NACKTE Kopf — die seit O2 relevante Architektur.
+3. **Kapazität (MLP-64).** → **O6, ENTSCHIEDEN 2026-08-12 noch am selben
+   Abend: NICHT ERFÜLLT** (Median +0.0000, 2/5 negativ). Kapazität bringt
+   auf dem nackten Kopf nichts → §4 Friedhof, zweite Beerdigung. Abschluss
+   in [`serien-abschluss.json`](serien-abschluss.json).
 
 ### O3 — Läuft der Golden-Boden in eine Sperre?
 
@@ -378,6 +377,13 @@ nur um zu prüfen, ob die Kurve am Golden-Satz sich anderswo wiederfindet.
 Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
 ## 4. Friedhof — entschieden, nicht neu vorschlagen
+
+**MLP-64 — zweite und letzte Beerdigung (2026-08-12, O6).** Erste Serie
+(Juli, 7 Nächte) methodisch leer (fester Seed). Wiedervorlage mit
+dokumentierter Begründung als Tagesserie auf dem NACKTEN Kopf: Median Δ
++0.0000, 2/5 negativ — Kapazität bringt nichts, auch nicht auf der seit O2
+relevanten Architektur. Wer 64 (oder 128) erneut vorschlägt, braucht einen
+Grund, der DIESE Serie entwertet, nicht nur die alte.
 
 | Idee | Verdikt | Wann | Warum |
 |---|---|---|---|

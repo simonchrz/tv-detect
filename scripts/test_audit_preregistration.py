@@ -64,7 +64,13 @@ def lauf(naechte, regel=None, docs_pfad=None):
 
 
 class SagtNein(unittest.TestCase):
-    """Die Faelle, in denen das Audit ausloesen MUSS."""
+    """Die Faelle, in denen das Audit NICHT ERFUELLT sagen muss.
+
+    ⚠️ Seit 2026-08-12 gibt ein WIDERLEGTES Ergebnis True zurueck (Exit 0):
+    beide Ausgaenge einer sauberen Serie sind gesund. Exit 1 ist fuer
+    Defekte (alle verworfen) und Integritaetsprobleme reserviert — sonst
+    pusht der Tagesbericht ab dem ersten "nicht erfuellt" jeden Morgen
+    "Handlung noetig", fuer immer."""
 
     def test_median_verfehlt(self):
         # Alle 5 negativ, aber viel zu klein: Vorzeichen erfuellt, Schwelle nicht.
@@ -72,7 +78,8 @@ class SagtNein(unittest.TestCase):
         for i, d in enumerate([-0.002, -0.001, -0.003, -0.002, -0.001]):
             z += nacht(f"2026081{i}T040000", 0.900 + d, 0.900)
         ok, txt = lauf(z)
-        self.assertFalse(ok)
+        self.assertTrue(ok)
+        self.assertIn("NICHT ERFUELLT", txt)
         self.assertIn("NICHT ERFUELLT", txt)
         self.assertIn("Bedingung 1", txt)
 
@@ -83,7 +90,8 @@ class SagtNein(unittest.TestCase):
         for i, d in enumerate([-0.090, -0.030, -0.012, +0.020, +0.030]):
             z += nacht(f"2026081{i}T040000", 0.900 + d, 0.900)
         ok, txt = lauf(z)
-        self.assertFalse(ok)
+        self.assertTrue(ok)
+        self.assertIn("NICHT ERFUELLT", txt)
         self.assertIn("NICHT ERFUELLT", txt)
 
     def test_positives_delta(self):
@@ -91,7 +99,8 @@ class SagtNein(unittest.TestCase):
         for i in range(5):
             z += nacht(f"2026081{i}T040000", 0.930, 0.900)
         ok, txt = lauf(z)
-        self.assertFalse(ok)
+        self.assertTrue(ok)
+        self.assertIn("NICHT ERFUELLT", txt)
         self.assertIn("NICHT ERFUELLT", txt)
 
 
@@ -206,8 +215,11 @@ class Integritaet(unittest.TestCase):
             doc.write_text("egal")
             # Der Anker braucht seit dem O2-Fehlalarm-Fix eine Zeile, die
             # zur REGEL gehoert (Quelle+Arm) — eine leere Nacht reicht nicht.
+            # Der Anker verlangt seit dem Geteilte-Arme-Fix ein ECHTES
+            # Paar (beide Arme dieser Regel).
             nach_ts = {"20260810T040000": {
-                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"}}}
+                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"},
+                "arm-ohne": {"quelle": "nightly", "arch": "arm-ohne"}}}
             buf = io.StringIO()
             with redirect_stdout(buf):
                 ok = A.pruefe_integritaet(doc, nach_ts, REGEL)
@@ -223,7 +235,8 @@ class Integritaet(unittest.TestCase):
             subprocess.run(["git", "commit", "-qm", "v1"], cwd=p, check=True)
             # Serie beginnt weit VOR dem Commit von eben (1970).
             nach_ts = {"19700102T000000": {
-                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"}}}
+                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"},
+                "arm-ohne": {"quelle": "nightly", "arch": "arm-ohne"}}}
             regel = dict(REGEL, serie_ab="19700101")
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -391,6 +404,49 @@ class SerieIstVoll(unittest.TestCase):
         ok, txt = lauf(z, regel=TAGES_REGEL)
         self.assertNotIn("verworfen 20260813", txt)
         self.assertIn("→ REGEL ERFUELLT", txt)
+
+
+class GeteilteArme(unittest.TestCase):
+    def test_fremdbelegte_gruppe_ist_keine_luecke(self):
+        # O2s fertige Paare enthalten mlp32 (= auch O6-Arm), nie mlp64.
+        # Mit fremd_belegt erscheinen sie in O6s Audit weder als Paar noch
+        # als "ein Arm fehlt".
+        fremde_gruppe = [
+            {"ts": "20260812T170000p00", "arch": "arm-mit",
+             "golden_median": 0.9, "seed": 1, "quelle": "tagesserie",
+             "set_hash": HASH, "decoder": DEC, "golden_n": 38},
+            {"ts": "20260812T170000p00", "arch": "dritter-arm",
+             "golden_median": 0.92, "seed": 1, "quelle": "tagesserie",
+             "set_hash": HASH, "decoder": DEC, "golden_n": 38}]
+        eigene = [x for i in range(5)
+                  for x in paar(f"20260812T210000p{i:02d}", 0.88, 0.90,
+                                seed=100 + i)]
+        regel = dict(TAGES_REGEL)
+        with tempfile.TemporaryDirectory() as d:
+            pfad = Path(d)
+            with open(pfad / "shadow-trend.jsonl", "w") as f:
+                for z in fremde_gruppe + eigene:
+                    f.write(json.dumps(z) + "\n")
+            nach_ts = A.naechte_laden(pfad)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                A.pruefe(Path("r.md"), regel, nach_ts,
+                         fremd_belegt={"20260812T170000p00"})
+            txt = buf.getvalue()
+        self.assertNotIn("ein Arm fehlt", txt)
+        self.assertIn("→ REGEL ERFUELLT", txt)
+
+    def test_halbe_gruppe_ohne_besitzer_bleibt_laut(self):
+        # Der OOM-Fall: ein Arm geschrieben, der andere tot, KEINE fremde
+        # Regel besitzt die Gruppe — das MUSS sichtbar bleiben.
+        halbe = [{"ts": "20260812T170000p00", "arch": "arm-ohne",
+                  "golden_median": 0.9, "seed": 1, "quelle": "tagesserie",
+                  "set_hash": HASH, "decoder": DEC, "golden_n": 38}]
+        ok, txt = lauf(halbe + [x for i in range(3)
+                                for x in paar(f"20260812T210000p{i:02d}",
+                                              0.88, 0.90, seed=100 + i)],
+                       regel=TAGES_REGEL)
+        self.assertIn("ein Arm fehlt", txt)
 
 
 if __name__ == "__main__":

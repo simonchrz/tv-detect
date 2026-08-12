@@ -110,6 +110,7 @@ def pruefe(pfad, regel, nach_ts):
     art = regel.get("serie_art", "naechte")
     quelle_soll = "tagesserie" if art == "tagesserie" else "nightly"
 
+    n_soll = int(regel.get("naechte") or 0)
     gueltig, verworfen = [], []
     gesehene_tage = {}
     gesehene_seeds = {}
@@ -185,11 +186,19 @@ def pruefe(pfad, regel, nach_ts):
         if art != "tagesserie":
             gesehene_tage[ts[:8]] = ts
         gueltig.append((ts, round(m["golden_median"] - o["golden_median"], 4)))
+        # ⚠️ Nach dem N-ten gueltigen Punkt ist die Serie VOLL — aufhoeren.
+        # Zwei Gruende, beide keine Kosmetik: (1) spaetere gueltige Punkte
+        # wuerden den Median einer bereits entschiedenen Serie retroaktiv
+        # verschieben — ein Urteil, das sich mit jedem weiteren Lauf
+        # aendert, ist keins. (2) Fragen TEILEN sich Arme (mlp32 steckt in
+        # O2 UND der Kapazitaetsfrage) — ohne den Stopp erschiene jede
+        # spaetere Serie hier als "ein Arm fehlt", fuer immer.
+        if n_soll and len(gueltig) >= n_soll:
+            break
 
     for ts, grund in verworfen:
         print(f"  verworfen {ts}: {grund} — Serie verlängert sich")
 
-    n_soll = int(regel.get("naechte") or 0)
     einheit = "Paare" if art == "tagesserie" else "Nächte"
     if not gueltig:
         # "noch nicht begonnen" und "alle Naechte verworfen" sehen im

@@ -192,10 +192,11 @@ Was ansteht, in dieser Reihenfolge:
      Vorsprung überlebt beide Pfadvarianten.
    Offen bleibt allein das Gate selbst (Boden-Ratsche, O3) — kein
    Messpfad-Problem mehr.
-3. **Kapazität (MLP-64).** Am 07.07. getestet, Urteil kippte zwischen zwei
-   Läufen desselben Tages — es lag im Rauschen. Heute mit gepaarten Sonden
-   und gemessenem Boden sauber wiederholbar, aber unterste Priorität: die
-   Tabelle zeigt auf Spalten, nicht auf Kapazität.
+3. **Kapazität (MLP-64).** → **O6, registriert 2026-08-12 abends** als
+   Tagesserie ([`o6-kapazitaet-preregistration.md`](o6-kapazitaet-preregistration.md)).
+   Friedhofs-Wiedergänger mit dokumentierter Begründung: die Juli-Serie
+   lief mit festem Seed (methodisch leer), und geprüft wird jetzt der
+   NACKTE Kopf — die seit O2 relevante Architektur.
 
 ### O3 — Läuft der Golden-Boden in eine Sperre?
 

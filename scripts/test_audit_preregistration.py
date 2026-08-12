@@ -362,5 +362,36 @@ class FremdeSerien(unittest.TestCase):
         self.assertNotIn("verworfen 20260813", txt)
 
 
+
+
+class SerieIstVoll(unittest.TestCase):
+    def test_spaetere_punkte_aendern_ein_urteil_nicht(self):
+        # 5 Paare deutlich negativ → erfuellt. Ein SECHSTES, positives Paar
+        # danach darf den Median nicht mehr anfassen — ein Urteil, das sich
+        # mit jedem weiteren Lauf aendert, ist keins.
+        z = []
+        for i in range(5):
+            z += paar(f"20260812T100000p{i:02d}", 0.88, 0.90, seed=100 + i)
+        z += paar("20260813T090000p00", 0.99, 0.90, seed=999)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("→ REGEL ERFUELLT", txt)
+        self.assertIn("Median  -0.0200", txt)
+        self.assertNotIn("20260813", txt)
+
+    def test_geteilter_arm_nach_serienende_stoert_nicht(self):
+        # Eine SPAETERE Serie einer anderen Frage benutzt denselben
+        # ohne-Arm (mlp32-Muster). Nach Serienende darf das hier weder
+        # zaehlen noch als "ein Arm fehlt" erscheinen.
+        z = []
+        for i in range(5):
+            z += paar(f"20260812T100000p{i:02d}", 0.88, 0.90, seed=100 + i)
+        z += [{"ts": "20260813T090000p00", "arch": "arm-ohne",
+               "golden_median": 0.9, "seed": 7, "quelle": "tagesserie",
+               "set_hash": HASH, "decoder": DEC, "golden_n": 38}]
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertNotIn("verworfen 20260813", txt)
+        self.assertIn("→ REGEL ERFUELLT", txt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

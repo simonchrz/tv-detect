@@ -5218,10 +5218,18 @@ def main():
                     churn=wants_churn,
                     mp_col=_minuteprior_col if wants_minuteprior else None,
                     maske=wants_whispermask)
-            _ts_arme["mlp32-channel-whisper-temporal-mp-wm"] = _arm_prod
-            _ts_arme["mlp32"] = lambda X, _s, _u=None: X
-            _ts_arme["mlp32-cwt-mp"] = _augment_cwt_minuteprior
-            _ts_arme["mlp32-ct-mp"] = _augment_ct_minuteprior
+            # Eintrag = (Spaltenbauer, Kopfbreite). Die Breite gehoert in
+            # die Registry, nicht in den Fit-Aufruf — der Arm-NAME in den
+            # Serien-Zeilen muss die ganze Architektur benennen.
+            _ident = lambda X, _s, _u=None: X
+            _ts_arme["mlp32-channel-whisper-temporal-mp-wm"] = (_arm_prod, 32)
+            _ts_arme["mlp32"] = (_ident, 32)
+            _ts_arme["mlp32-cwt-mp"] = (_augment_cwt_minuteprior, 32)
+            _ts_arme["mlp32-ct-mp"] = (_augment_ct_minuteprior, 32)
+            # Kapazitaetsfrage (O6): nackter Kopf, doppelte Breite. Die
+            # 7-Naechte-Serie vom Juli, die MLP-64 als Rauschen beerdigte,
+            # lief mit FESTEM Seed — eine Messung, siebenmal wiederholt.
+            _ts_arme["mlp64"] = (_ident, 64)
 
             _mit_name, _ohne_name = [
                 a.strip() for a in args.tagesserie_arme.split(",")][:2]
@@ -5282,14 +5290,14 @@ def main():
                 # gegen (ohne, seed_i).
                 _ergebnis = {}
                 for _name in _arm_liste:
-                    _aug = _ts_arme[_name]
+                    _aug, _hidden = _ts_arme[_name]
                     _Xa, _ya, _swa = _build_train(train_recs, _aug)
                     _ta = _augment_test_recs(
                         _gold_recs if _nur_gold else test_recs, _aug)
                     print(f"\n  Arm {_name}: dim {_Xa.shape[1]}, "
                           f"{len(_Xa)} Frames, Eval auf {len(_ta)} Aufnahmen")
                     for _i, _seed in enumerate(_seeds):
-                        _mlp = WeightedMLP(hidden_dim=32, max_iter=80,
+                        _mlp = WeightedMLP(hidden_dim=_hidden, max_iter=80,
                                            random_state=_seed)
                         _mlp.fit(_Xa, _ya, _swa)
                         _m = eval_split(_mlp, _ta, args.fps_extract,

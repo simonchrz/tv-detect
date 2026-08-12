@@ -93,3 +93,48 @@ claude -p "$PROMPT
 
 Zustandsbericht: $BERICHT" 2>&1
 echo "loop exit=$?"
+
+# ── 3. Tagesbericht zustellen ───────────────────────────────────────────
+# Bis 2026-08-12 landete alles nur in diesem Protokoll — also musste jemand
+# danach FRAGEN, wie das Training lief. Genau das soll wegfallen.
+#
+# Zwei Wege, mit Absicht: die Langfassung an einem festen Ort zum Nachlesen,
+# und eine kurze Push-Meldung, die mit dem fuehrt, was zu TUN ist, nicht mit
+# Zahlen. Ein taeglicher Bericht, der eine Zahl in den Vordergrund stellt,
+# erzieht zum Deuten von Rauschen.
+BERICHT_DATEI="$HOME/Library/Logs/tv-loop-tagesbericht.txt"
+"$PY" scripts/tagesbericht.py >"$BERICHT_DATEI" 2>&1 || true
+cat "$BERICHT_DATEI"
+
+# ⚠️ Der Push geht ueber die PI, nicht von hier. Home Assistant laeuft im
+# Host-Netz der Pi und ist vom Mac aus nicht erreichbar (Connection refused) —
+# das steht so im Kopf von secrets.env und hat mich beim Bauen prompt einen
+# Fehlversuch gekostet.
+#
+# ⚠️ Text ueber stdin, nicht als Argument: der Bericht enthaelt Klammern und
+# Sonderzeichen, und ueber ssh zerbricht das an den Zitierregeln der
+# entfernten Shell.
+#
+# ⚠️ HA_NOTIFY_IPHONE traegt das Praefix "notify." bereits — bleibt es in der
+# URL stehen, antwortet HA mit 400.
+if "$PY" scripts/tagesbericht.py --kurz 2>/dev/null | head -6 \
+   | ssh -o ConnectTimeout=10 raspberrypi5lan 'set -a; . /home/simon/.config/tv-stack/secrets.env; set +a; python3 -c "
+import json, os, sys, urllib.request
+text = sys.stdin.read().strip()
+dienst = os.environ.get(\"HA_NOTIFY_IPHONE\", \"\")
+if dienst.startswith(\"notify.\"): dienst = dienst[len(\"notify.\"):]
+if not dienst or not os.environ.get(\"HA_TOKEN\"): sys.exit(2)
+daten = json.dumps({\"title\": \"tv-detect Schleife\", \"message\": text}).encode()
+req = urllib.request.Request(\"http://localhost:8123/api/services/notify/\" + dienst,
+                             data=daten,
+                             headers={\"Authorization\": \"Bearer \" + os.environ[\"HA_TOKEN\"],
+                                      \"Content-Type\": \"application/json\"})
+with urllib.request.urlopen(req, timeout=10) as r:
+    print(\"Push zugestellt, HTTP\", r.status)
+"'; then
+  :
+else
+  # Zustellung darf den Lauf nie zum Scheitern bringen: der Bericht ist das
+  # Ergebnis, die Meldung nur der Bote.
+  echo "(Push nicht zugestellt — Bericht liegt trotzdem unter $BERICHT_DATEI)"
+fi

@@ -256,5 +256,88 @@ class EchteRegistrierung(unittest.TestCase):
         self.assertEqual(o1["arme"]["ohne"], "mlp32-ct-mp")
 
 
+
+
+TAGES_REGEL = dict(REGEL, serie_art="tagesserie")
+
+
+def paar(ts, mit, ohne, *, seed, seed_ohne=None, quelle="tagesserie", n=38):
+    """Zwei jsonl-Zeilen fuer ein Tagesserien-Paar."""
+    gem = {"set_hash": HASH, "decoder": DEC, "golden_n": n, "quelle": quelle}
+    return [dict(gem, ts=ts, arch="arm-mit", golden_median=mit, seed=seed),
+            dict(gem, ts=ts, arch="arm-ohne", golden_median=ohne,
+                 seed=seed if seed_ohne is None else seed_ohne)]
+
+
+class Tagesserie(unittest.TestCase):
+    """serie_art=tagesserie: Stichproben aus der Seed-Ziehung statt aus
+    Naechten. Der Grund fuer den Serientyp: die baseline-Zeile der
+    Nacht-Serie fittet fest mit Seed 0, eine Paarung gegen sie vermischt
+    Spaltenwirkung und Seed-Differenz."""
+
+    def test_fuenf_paare_entscheiden(self):
+        z = []
+        for i in range(5):
+            z += paar(f"20260812T100000p{i:02d}", 0.880, 0.900, seed=100 + i)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertTrue(ok)  # erfuellt = kein Integritaetsproblem
+        self.assertIn("→ REGEL ERFUELLT", txt)
+        self.assertIn("Paar", txt)
+
+    def test_arme_muessen_seed_gepaart_sein(self):
+        # DER Grund fuer den Serientyp — ungleiche Seeds sind kein Paar.
+        z = paar("20260812T100000p00", 0.880, 0.900, seed=1, seed_ohne=2)
+        for i in range(1, 5):
+            z += paar(f"20260812T100000p{i:02d}", 0.880, 0.900, seed=100 + i)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("nicht seed-gepaart", txt)
+        self.assertIn("NOCH OFFEN", txt)  # 4 statt 5
+
+    def test_gleicher_seed_zaehlt_nur_einmal(self):
+        # Derselbe Seed nochmal = Wiederholung, keine zweite Stichprobe —
+        # dieselbe Logik wie der Kalendertag der Nacht-Serie.
+        z = []
+        for i in range(5):
+            z += paar(f"20260812T100000p{i:02d}", 0.880, 0.900, seed=7)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("bereits gezählt", txt)
+        self.assertIn("NOCH OFFEN: 1/5", txt)
+
+    def test_mehrere_paare_am_selben_tag_zaehlen(self):
+        # Der ganze Punkt: KEINE Kalendertag-Deduplikation.
+        z = []
+        for i in range(5):
+            z += paar(f"20260812T100000p{i:02d}", 0.895, 0.900, seed=100 + i)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertNotIn("zweiter Lauf am", txt)
+        self.assertIn("5/5", txt.replace("NOCH OFFEN: ", ""))
+
+    def test_nachtzeilen_stoeren_die_tagesserie_nicht(self):
+        # Die parallel laufende Nacht-Serie ist planmaessig da — sie darf
+        # weder zaehlen noch als verworfen erscheinen.
+        z = nacht("20260813T033000", 0.880, 0.900)  # quelle=nightly
+        for i in range(3):
+            z += paar(f"20260812T100000p{i:02d}", 0.880, 0.900, seed=100 + i)
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("NOCH OFFEN: 3/5", txt)
+        self.assertNotIn("verworfen 20260813", txt)
+
+    def test_tagesserienzeilen_stoeren_die_nachtserie_nicht(self):
+        # Und umgekehrt.
+        z = paar("20260812T100000p00", 0.880, 0.900, seed=100)
+        for i in range(3):
+            z += nacht(f"2026081{i}T040000", 0.880, 0.900)
+        ok, txt = lauf(z)  # Nacht-Regel
+        self.assertIn("NOCH OFFEN: 3/5", txt)
+        self.assertNotIn("verworfen 20260812T100000p00", txt)
+
+    def test_handlauf_bleibt_auch_hier_laut(self):
+        # Die Stille gilt NUR der jeweils anderen Serienart.
+        z = paar("20260812T100000p00", 0.880, 0.900, seed=100, quelle="hand")
+        ok, txt = lauf(z, regel=TAGES_REGEL)
+        self.assertIn("keine Tagesserie", txt)
+        self.assertIn("quelle=hand", txt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

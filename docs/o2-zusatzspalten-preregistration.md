@@ -39,18 +39,38 @@ und ein Vielfaches der Seed-Streuung (Std 0.006). Wenn er echt ist, wird die
 Serie das zeigen. Wenn nicht, war er ein Artefakt der drei Nächte — und
 genau dafür gibt es die Serie.
 
+## Nachtrag 2026-08-12 (vor dem ersten Datenpunkt): Tagesserie statt Nächte
+
+Die ursprüngliche Fassung (Serie 08-13 bis 08-17, nächtlich) trug einen
+**Konstruktionsfehler**, der beim Bau des Tagesserien-Modus auffiel: die
+`baseline`-Zeile der Schattenreihe — der „mit"-Arm dieser Frage — fittet
+fest mit **Seed 0**, die Sonden mit dem Nacht-Seed. Die nächtliche Paarung
+hätte also Spaltenwirkung und Seed-Differenz vermischt; bei einer
+Seed-Streuung von Std 0.006 ist das kein Randfehler.
+
+Deshalb, **bevor ein einziger Datenpunkt der Serie existiert**, Umstellung
+auf eine Tagesserie: fünf gepaarte Fits auf dem heutigen Korpus, beide Arme
+je Paar mit **demselben** Seed, Seeds über die Paare verschieden. Das ist
+dieselbe Bauart wie die Nacht-Serie — der Seed-Sweep hat gemessen, dass die
+Nächte ohnehin fast nur die Seed-Ziehung variieren (>99 %
+Korpus-Überlappung). Was die Tagesserie NICHT misst, ist Korpus-Drift; die
+Schwellen bleiben unverändert die vor jedem Datenblick festgelegten.
+
+Präzedenz für einen Nachtrag vor Serienbeginn: der O1-Nachtrag vom
+2026-08-09 (Seed-Konstruktionsfehler, ebenfalls vor der ersten Serien-Nacht
+korrigiert und dokumentiert statt still ersetzt).
+
 ## Regel
 
 ```regel
 {
   "id": "O2",
   "frage": "Schaden die Zusatzspalten in Summe?",
-  "serie_ab": "20260813",
+  "serie_art": "tagesserie",
+  "serie_ab": "20260812",
   "naechte": 5,
-  "verlaengert_auf": 9,
-  "verlaengerung_wenn_seed_std_ueber": 0.010,
   "arme": {"mit": "mlp32-channel-whisper-temporal-mp-wm", "ohne": "mlp32"},
-  "delta": "mit minus ohne, auf golden_median",
+  "delta": "mit minus ohne, auf golden_median, beide Arme gleicher Seed",
   "gueltige_nacht": {
     "set_hash": "c8727e8266a8",
     "decoder": "--decoder hsmm --hsmm-dur-w 15",

@@ -2416,6 +2416,25 @@ def main():
                          "einzelner Fit traegt laut Seed-Sweep bis zu 0.023 "
                          "Willkuer. Kostet N-1 zusaetzliche Fits samt "
                          "Auswertung. 1 = altes Verhalten.")
+    ap.add_argument("--tagesserie", type=int, default=0, metavar="N",
+                    help="N GEPAARTE Fits (beide Arme, gleicher Seed je "
+                         "Paar) auf dem heutigen Korpus — die Serie an einem "
+                         "Tag statt ueber N Naechte. Traegt, weil der "
+                         "Seed-Sweep gezeigt hat, dass die Nacht-zu-Nacht-"
+                         "Schwankung fast vollstaendig Fit-Zufall ist "
+                         "(>99 %% Korpus-Ueberlappung). Was dabei NICHT "
+                         "mitgemessen wird, ist Korpus-Drift. Braucht "
+                         "--shadow-eval.")
+    ap.add_argument("--tagesserie-arme", default=
+                    "mlp32-channel-whisper-temporal-mp-wm,mlp32",
+                    help="mit,ohne — Architektur-Namen wie in "
+                         "shadow-trend.jsonl")
+    ap.add_argument("--serie-archiv", default=None,
+                    help="Wohin die Tagesserie-Zeilen geschrieben werden "
+                         "(Vorgabe: --train-archive). Getrennt, damit ein "
+                         "Handlauf gegen eine ARCHIV-KOPIE laufen kann "
+                         "(Split-Ledger, .npz) und trotzdem die ECHTE Serie "
+                         "fortschreibt — nur die jsonl-Zeilen, nichts sonst.")
     ap.add_argument("--seed-sweep", type=int, default=0, metavar="N",
                     help="N-mal dieselbe Architektur auf denselben Daten "
                          "fitten, nur mit anderem Init-Seed, und die "
@@ -5105,6 +5124,104 @@ def main():
         except Exception as e:
             print(f"  shadow-trend.jsonl nicht geschrieben: {e}")
         print()
+
+        # ── Tagesserie (--tagesserie N) ──────────────────────────────
+        # Die Serie an einem Tag: N gepaarte Fits, beide Arme mit DEMSELBEN
+        # Seed je Paar, Seeds ueber die Paare verschieden. Gleiche Bauart
+        # wie die Nacht-Serie, nur dass die Stichproben aus der
+        # Seed-Ziehung kommen statt aus Naechten — und der Seed-Sweep hat
+        # gemessen, dass die Naechte ohnehin fast nur die Seed-Ziehung
+        # variieren (>99 % Korpus-Ueberlappung).
+        #
+        # ⚠️ Beide Arme MUESSEN hier gefittet werden, auch der
+        # Produktions-Arm. Die baseline-Zeile der Nacht-Serie fittet fest
+        # mit Seed 0 — eine "Paarung" gegen sie vermischt Spaltenwirkung
+        # und Seed-Differenz. Genau dieser Fehler steckte in der ersten
+        # O2-Registrierung (2026-08-12) und fiel erst beim Bau dieses
+        # Blocks auf.
+        if args.tagesserie > 1:
+            _ts_arme = {}
+
+            def _arm_prod(X, slug, uuid):
+                return mit_zusatz(
+                    X, uuid, slug, chan_idx, n_chan,
+                    whisper=wants_whisper, temporal=wants_temporal,
+                    churn=wants_churn,
+                    mp_col=_minuteprior_col if wants_minuteprior else None,
+                    maske=wants_whispermask)
+            _ts_arme["mlp32-channel-whisper-temporal-mp-wm"] = _arm_prod
+            _ts_arme["mlp32"] = lambda X, _s, _u=None: X
+            _ts_arme["mlp32-cwt-mp"] = _augment_cwt_minuteprior
+            _ts_arme["mlp32-ct-mp"] = _augment_ct_minuteprior
+
+            _mit_name, _ohne_name = [
+                a.strip() for a in args.tagesserie_arme.split(",")][:2]
+            if _mit_name not in _ts_arme or _ohne_name not in _ts_arme:
+                print(f"  ⚠ Tagesserie: unbekannter Arm in "
+                      f"{args.tagesserie_arme!r} — kenne "
+                      f"{sorted(_ts_arme)}")
+            else:
+                print("\n" + "=" * 70)
+                print(f"TAGESSERIE — {args.tagesserie} Paare "
+                      f"({_mit_name} vs {_ohne_name}), je Paar EIN Seed")
+                print("=" * 70)
+                _serie_dir = Path(args.serie_archiv or args.train_archive)
+                _paare = []
+                for _i in range(args.tagesserie):
+                    # Deterministisch aus dem Lauf-Stempel, je Paar anders.
+                    _seed = (nacht_seed + 1 + 997 * _i) % 10000
+                    _mm, _, _ = _fit_eval(
+                        f"PAAR {_i} seed={_seed} — {_mit_name}",
+                        _ts_arme[_mit_name], seed=_seed)
+                    _mo, _, _ = _fit_eval(
+                        f"PAAR {_i} seed={_seed} — {_ohne_name}",
+                        _ts_arme[_ohne_name], seed=_seed)
+                    _gm_, _go_ = _gmed(_mm), _gmed(_mo)
+                    _paare.append((_i, _seed, _gm_, _go_, _mm, _mo))
+                    d = (None if _gm_ is None or _go_ is None
+                         else round(_gm_ - _go_, 4))
+                    print(f"  Paar {_i}: golden mit={_gm_} ohne={_go_} "
+                          f"Δ={d}")
+                    # Jede Zeile SOFORT schreiben, nicht am Ende gesammelt:
+                    # stirbt der Lauf bei Paar 4, sind 3 Paare gerettet.
+                    try:
+                        with open(_serie_dir / "shadow-trend.jsonl", "a") as _tf:
+                            for _name, _m in ((_mit_name, _mm),
+                                              (_ohne_name, _mo)):
+                                _g = _gmed(_m)
+                                _pr = (_m or {}).get("per_rec_iou") or {}
+                                _gl = ([_pr[u] for u in _golden_uuids]
+                                       if _g is not None else [])
+                                _tf.write(json.dumps({
+                                    # Eigener ts je Paar: das Audit gruppiert
+                                    # nach ts, und zwei Paare desselben Laufs
+                                    # sind zwei Stichproben, keine eine.
+                                    "ts": f"{ts}p{_i:02d}",
+                                    "rolle": "tagesserie", "arch": _name,
+                                    "seed": _seed, "quelle": "tagesserie",
+                                    "golden_median": (round(_g, 4)
+                                                      if _g is not None else None),
+                                    "golden_mean": (round(float(np.mean(_gl)), 4)
+                                                    if _gl else None),
+                                    "golden_n": len(_gl),
+                                    "test_median": round(_vmed(_m), 4),
+                                    "test_mean": round(float(_m["iou"]), 4),
+                                    "acc": round(float(_m["acc"]), 4),
+                                    "n_test": int(_m.get("n_recs") or 0),
+                                    "n_train_recs": len(train_recs),
+                                    "set_version": _gmeta.get("version"),
+                                    "set_hash": _gmeta.get("set_hash"),
+                                    "decoder": " ".join(EVAL_DECODER) or "form",
+                                }) + "\n")
+                    except Exception as e:
+                        print(f"  ⚠ Tagesserie-Zeile nicht geschrieben: {e}")
+                _ds = [round(a - b, 4) for _, _, a, b, _, _ in _paare
+                       if a is not None and b is not None]
+                if _ds:
+                    import statistics as _st
+                    print(f"\n  Tagesserie: Median Δ {_st.median(_ds):+.4f}, "
+                          f"{sum(1 for d in _ds if d < 0)}/{len(_ds)} negativ "
+                          f"— das URTEIL faellt das Audit, nicht dieser Lauf.")
 
     # ── Self-Training (Phase A, validation only) ─────────────────
     # Test how reliable our pseudo-labels would be: for each TEST

@@ -103,32 +103,70 @@ def pruefe(pfad, regel, nach_ts):
     arme = regel.get("arme", {})
     a_mit, a_ohne = arme.get("mit"), arme.get("ohne")
     ab = str(regel.get("serie_ab") or "")
+    # naechte (Vorgabe) | tagesserie: N gepaarte Fits an EINEM Tag, je Paar
+    # ein eigener Seed. Die Stichproben kommen dann aus der Seed-Ziehung
+    # statt aus Naechten — der Seed-Sweep hat gemessen, dass die Naechte
+    # ohnehin fast nur die Seed-Ziehung variieren.
+    art = regel.get("serie_art", "naechte")
+    quelle_soll = "tagesserie" if art == "tagesserie" else "nightly"
 
     gueltig, verworfen = [], []
     gesehene_tage = {}
+    gesehene_seeds = {}
     for ts in sorted(nach_ts):
         if ab and ts[:len(ab)] < ab:
             continue
         zeilen = nach_ts[ts]
+        # ⚠️ Still uebersprungen wird NUR, was nachweislich zur jeweils
+        # anderen Serienart gehoert (Nacht-Zeilen in einer Tagesserie und
+        # umgekehrt) — die laufen planmaessig parallel und sind kein
+        # Defekt. ALLES andere bleibt laut: ein Handlauf oder eine Zeile
+        # ohne quelle-Feld wuerde die Serie sonst still weiterzaehlen,
+        # unter anderen Bedingungen gemessen. Der erste Entwurf dieser
+        # Erweiterung hat genau das kaputt gemacht, und zwei bestehende
+        # Tests haben ihn zurueckgewiesen.
+        andere = {"tagesserie"} if quelle_soll == "nightly" else {"nightly"}
         m, o = zeilen.get(a_mit), zeilen.get(a_ohne)
         if not m or not o:
+            vorhanden = {z.get("quelle") for z in zeilen.values()}
+            if vorhanden and vorhanden <= andere:
+                continue
             verworfen.append((ts, "ein Arm fehlt"))
             continue
-        # Nur der Nightly zaehlt. Ein Handlauf entsteht unter anderen
-        # Bedingungen (anderer Snapshot-Zeitpunkt, oft anderer Testsatz)
-        # und wuerde die Serie sonst still um eine Nacht weiterzaehlen.
         quellen = {z.get("quelle") for z in (m, o)}
-        if quellen != {"nightly"}:
-            verworfen.append((ts, f"kein Nightly (quelle={'/'.join(sorted(str(q) for q in quellen))})"))
+        if quellen != {quelle_soll}:
+            if quellen <= andere:
+                continue
+            wer = ("kein Nightly" if quelle_soll == "nightly"
+                   else "keine Tagesserie")
+            verworfen.append((ts, f"{wer} (quelle="
+                             f"{'/'.join(sorted(str(q) for q in quellen))})"))
             continue
-        # Eine Nacht pro Kalendertag. Zwei Laeufe am selben Tag sind eine
-        # Wiederholung, keine zweite Stichprobe — bei ueber 99 %
-        # Korpus-Ueberlappung erst recht.
-        tag = ts[:8]
-        if tag in gesehene_tage:
-            verworfen.append((ts, f"zweiter Lauf am {tag} (gezählt: "
-                                  f"{gesehene_tage[tag]})"))
-            continue
+        if art == "tagesserie":
+            # ⚠️ Gepaart heisst: BEIDE Arme mit demselben Seed. Die
+            # baseline-Zeile der Nacht-Serie fittet fest mit Seed 0 —
+            # genau deshalb gibt es diesen Serientyp ueberhaupt.
+            if m.get("seed") != o.get("seed"):
+                verworfen.append((ts, f"Arme nicht seed-gepaart "
+                                      f"({m.get('seed')}/{o.get('seed')})"))
+                continue
+            # Ein Seed = eine Stichprobe. Derselbe Seed nochmal ist eine
+            # Wiederholung — dieselbe Logik wie der Kalendertag unten.
+            sd = m.get("seed")
+            if sd in gesehene_seeds:
+                verworfen.append((ts, f"Seed {sd} bereits gezählt "
+                                      f"({gesehene_seeds[sd]})"))
+                continue
+            gesehene_seeds[sd] = ts
+        else:
+            # Eine Nacht pro Kalendertag. Zwei Laeufe am selben Tag sind
+            # eine Wiederholung, keine zweite Stichprobe — bei ueber 99 %
+            # Korpus-Ueberlappung erst recht.
+            tag = ts[:8]
+            if tag in gesehene_tage:
+                verworfen.append((ts, f"zweiter Lauf am {tag} (gezählt: "
+                                      f"{gesehene_tage[tag]})"))
+                continue
         schlecht = [k for k, v in g.items()
                     if any(z.get(k) != v for z in (m, o))]
         if schlecht:
@@ -137,28 +175,30 @@ def pruefe(pfad, regel, nach_ts):
         if m.get("golden_median") is None or o.get("golden_median") is None:
             verworfen.append((ts, "kein golden_median"))
             continue
-        gesehene_tage[tag] = ts
+        if art != "tagesserie":
+            gesehene_tage[ts[:8]] = ts
         gueltig.append((ts, round(m["golden_median"] - o["golden_median"], 4)))
 
     for ts, grund in verworfen:
         print(f"  verworfen {ts}: {grund} — Serie verlängert sich")
 
     n_soll = int(regel.get("naechte") or 0)
+    einheit = "Paare" if art == "tagesserie" else "Nächte"
     if not gueltig:
         # "noch nicht begonnen" und "alle Naechte verworfen" sehen im
         # Ergebnis gleich aus, bedeuten aber Gegenteiliges: das eine ist
         # Warten, das andere ein kaputter Lauf, der niemandem auffaellt,
         # solange er als "noch offen" durchgeht.
         if verworfen:
-            print(f"  Stand: 0/{n_soll} gültige Nächte — ALLE "
-                  f"{len(verworfen)} Nächte verworfen. Das ist kein Warten, "
+            print(f"  Stand: 0/{n_soll} gültige {einheit} — ALLE "
+                  f"{len(verworfen)} {einheit} verworfen. Das ist kein Warten, "
                   f"das ist ein Defekt: die Serie kommt so nie zustande.")
         else:
-            print(f"  Stand: 0/{n_soll} gültige Nächte — Serie hat noch "
+            print(f"  Stand: 0/{n_soll} gültige {einheit} — Serie hat noch "
                   f"nicht begonnen.")
         return True
 
-    print(f"\n  {'Nacht':16s}  Δ (mit − ohne)")
+    print(f"\n  {'Paar' if art == 'tagesserie' else 'Nacht':16s}  Δ (mit − ohne)")
     for ts, d in gueltig:
         print(f"  {ts:16s}  {d:+.4f}")
 
@@ -172,7 +212,7 @@ def pruefe(pfad, regel, nach_ts):
     print(f"\n  Median  {med:+.4f}   negativ  {neg}/{len(deltas)}")
 
     if len(deltas) < n_soll:
-        print(f"\n  → NOCH OFFEN: {len(deltas)}/{n_soll} gültige Nächte. "
+        print(f"\n  → NOCH OFFEN: {len(deltas)}/{n_soll} gültige {einheit}. "
               f"Zwischenstände sind KEIN Ergebnis.")
         return True
 

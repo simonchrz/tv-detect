@@ -124,9 +124,14 @@ Leitplanke L5.
 
 ### O2 — Schaden die Zusatzspalten in Summe?
 
-*Status: registriert 2026-08-12, Serie 08-13 bis 08-17 (5 Nächte). Regel in
-[`o2-zusatzspalten-preregistration.md`](o2-zusatzspalten-preregistration.md).
-Läuft PARALLEL zu O1.*
+*Status: **ENTSCHIEDEN 2026-08-12, REGEL ERFÜLLT** — als erste Frage per
+Tagesserie am selben Tag. Median Δ **−0.0249**, 5/5 Paare negativ (Schwelle
+−0.010 / ≥4), Paare seed-gleich auf identischem Korpus (577 Train-Aufnahmen).
+Audit sauber, Regel committet 16:31, erster Datenpunkt 17:21. Die Zusatz-
+spalten schaden IN SUMME. Konsequenz laut Registrierung: NICHT alle Spalten
+in einem Schritt entfernen — O1 abwarten (14.08.), dann Einzelspalten-Fragen
+(§3a Punkt 1) und die Refit-Frage (§3a Punkt 2), BEVOR ein Architektur-
+wechsel ansteht (L5).*
 
 Im Handlauf 2026-08-09 hatte die schlankste Variante überhaupt — `MLP-32`
 ohne jede Zusatzspalte — den höchsten Golden-Median der Tabelle. Die

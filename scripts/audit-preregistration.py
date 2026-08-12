@@ -233,11 +233,27 @@ def pruefe(pfad, regel, nach_ts):
 
 
 def pruefe_integritaet(pfad, nach_ts, regel):
-    """Wurde die Regel angefasst, nachdem die Serie begonnen hatte?"""
+    """Wurde die Regel angefasst, nachdem die Serie begonnen hatte?
+
+    ⚠️ Geankert wird auf der ersten Zeile, die zu DIESER Regel gehoert
+    (Quelle + Arme) — nicht auf der ersten Zeile nach serie_ab ueberhaupt.
+    Sonst schlaegt der Pruefer an, weil eine FREMDE Serie am selben Tag
+    frueher lief: am 2026-08-12 markierte er die O2-Registrierung als
+    nachtraeglich geaendert, weil die O1-Nightly-Zeilen von 03:30 vor dem
+    16:31-Nachtrag lagen — O2s eigene Daten begannen erst 17:21. Ein
+    Integritaetspruefer mit Fehlalarmen wird ignoriert, und dann uebersieht
+    man den echten.
+    """
     ab = str(regel.get("serie_ab") or "")
+    art = regel.get("serie_art", "naechte")
+    quelle_soll = "tagesserie" if art == "tagesserie" else "nightly"
+    arme = set((regel.get("arme") or {}).values())
     erste = None
     for ts in sorted(nach_ts):
-        if ab and ts[:len(ab)] >= ab:
+        if ab and ts[:len(ab)] < ab:
+            continue
+        if any(z.get("quelle") == quelle_soll and z.get("arch") in arme
+               for z in nach_ts[ts].values()):
             erste = ts
             break
     if erste is None:
@@ -247,7 +263,9 @@ def pruefe_integritaet(pfad, nach_ts, regel):
         print(f"\n  ⚠ INTEGRITAET: {pfad.name} — {grund}. Eine Regel, die "
               f"nicht festgeschrieben ist, ist keine Vorab-Registrierung.")
         return False
-    erste_unix = ts_zu_unix(erste)
+    # Tagesserien-ts tragen ein p-Suffix (…T172134p00) — fuer den
+    # Zeitvergleich zaehlt die Basis.
+    erste_unix = ts_zu_unix(erste.split("p")[0])
     if erste_unix and stand > erste_unix:
         print(f"\n  ⚠ INTEGRITAET: {pfad.name} wurde zuletzt NACH der ersten "
               f"gezählten Nacht ({erste}) geändert. Regel und Ergebnis sind "

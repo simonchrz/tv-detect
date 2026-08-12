@@ -204,7 +204,10 @@ class Integritaet(unittest.TestCase):
             p = self._repo(d)
             doc = p / "x-preregistration.md"
             doc.write_text("egal")
-            nach_ts = {"20260810T040000": {}}
+            # Der Anker braucht seit dem O2-Fehlalarm-Fix eine Zeile, die
+            # zur REGEL gehoert (Quelle+Arm) — eine leere Nacht reicht nicht.
+            nach_ts = {"20260810T040000": {
+                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"}}}
             buf = io.StringIO()
             with redirect_stdout(buf):
                 ok = A.pruefe_integritaet(doc, nach_ts, REGEL)
@@ -219,7 +222,8 @@ class Integritaet(unittest.TestCase):
             subprocess.run(["git", "add", "-A"], cwd=p, check=True)
             subprocess.run(["git", "commit", "-qm", "v1"], cwd=p, check=True)
             # Serie beginnt weit VOR dem Commit von eben (1970).
-            nach_ts = {"19700102T000000": {}}
+            nach_ts = {"19700102T000000": {
+                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"}}}
             regel = dict(REGEL, serie_ab="19700101")
             buf = io.StringIO()
             with redirect_stdout(buf):

@@ -136,7 +136,8 @@ def baue():
     s = serien(a_text)
 
     kopf = []
-    warnungen = []
+    warnungen = []   # Handlungsbedarf — gehört in die Push-Meldung
+    chronisch = []   # bekannte Dauerzustände — nur in die Langfassung
 
     # ── Letzte Nacht ────────────────────────────────────────────────
     if not lauf:
@@ -160,7 +161,11 @@ def baue():
                 if lauf["ausgang"] == "DEPLOYED" and abs(abstand) < SEED_STD:
                     zeile += " — innerhalb der Seed-Streuung, kein Beleg für Verbesserung"
             if champ and best and champ["golden_median"] < best["golden_median"]:
-                warnungen.append("Boden über Champion (O3)")
+                # ⚠️ CHRONISCH, nicht Handlungsbedarf. Der Zustand steht seit
+                # 08-09 und ist als O3 offen — täglich zu pushen wäre genau
+                # die Meldung, die man nach drei Tagen wegwischt und dann
+                # auch die echte übersieht.
+                chronisch.append("Boden über Champion (O3)")
         kopf.append(zeile)
         if lauf["ausgang"] == "unklar (Lauf abgebrochen?)":
             warnungen.append("Lauf abgebrochen")
@@ -190,7 +195,7 @@ def baue():
         except Exception:
             pass
 
-    return kopf, warnungen, a_text
+    return kopf, warnungen, chronisch, a_text
 
 
 def main():
@@ -199,16 +204,34 @@ def main():
                     help="Fassung für die Push-Meldung")
     args = ap.parse_args()
 
-    kopf, warnungen, a_text = baue()
+    kopf, warnungen, chronisch, a_text = baue()
 
     if args.kurz:
-        # Die Push-Meldung führt mit dem, was zu tun ist — nicht mit Zahlen.
-        if warnungen:
-            print("⚠ " + "; ".join(dict.fromkeys(warnungen)))
-        else:
-            print("nichts zu tun")
-        for z in kopf[:3]:
-            print(z)
+        # ⚠️ Eine Benachrichtigung ist KEIN Bericht — und iOS zeigt
+        # zusammengeklappt nur ZWEI Zeilen. Der erste Entwurf schob den
+        # ganzen Kopf hinein und wurde mitten im Satz gekappt, der zweite
+        # hatte eine zu lange zweite Zeile. Deshalb: Zeile 1 sagt, ob jemand
+        # hinsehen muss, Zeile 2 fasst den Rest in Stichworten. Alles
+        # Weitere steht in der Langfassung.
+        print("Handlung nötig: " + "; ".join(dict.fromkeys(warnungen))
+              if warnungen else "Nichts zu tun.")
+
+        teile = []
+        for z in kopf:
+            if z.startswith("Nightly"):
+                t = f"Nightly {'DEPLOYED' if 'DEPLOYED' in z else 'REJECTED'}"
+                g = re.search(r"Golden ([\d.]+)", z)
+                if g:
+                    t += f" {float(g.group(1)):.3f}"
+                if "innerhalb der Seed-Streuung" in z:
+                    t += " (Rauschen)"
+                teile.append(t)
+            elif " — läuft" in z:
+                n = re.search(r"Nacht (\d+/\d+)", z)
+                kuerzel = z.split(" ")[0]
+                teile.append(f"{kuerzel} {n.group(1)}" if n else kuerzel)
+        if teile:
+            print(" · ".join(teile))
         return 0
 
     print("=" * 68)
@@ -218,9 +241,11 @@ def main():
         print("  " + z)
     print()
     if warnungen:
-        print("  ⚠ " + "; ".join(dict.fromkeys(warnungen)))
+        print("  ⚠ Handlung nötig: " + "; ".join(dict.fromkeys(warnungen)))
     else:
         print("  Nichts zu entscheiden. Das ist der Normalfall, kein Stillstand.")
+    for c in dict.fromkeys(chronisch):
+        print(f"  · bekannt und offen: {c}")
     print()
     print(a_text)
     return 0

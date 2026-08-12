@@ -120,7 +120,11 @@ cat "$BERICHT_DATEI"
 if "$PY" scripts/tagesbericht.py --kurz 2>/dev/null | head -6 \
    | ssh -o ConnectTimeout=10 raspberrypi5lan 'set -a; . /home/simon/.config/tv-stack/secrets.env; set +a; python3 -c "
 import json, os, sys, urllib.request
-text = sys.stdin.read().strip()
+# ⚠️ stdin als BYTES lesen und selbst dekodieren. Python auf der Pi
+# laeuft unter ISO-8859-15 (nachgemessen), und sys.stdin.read() dekodiert
+# damit — aus \"ueber\" wird \"ÃŒber\", aus dem Warnzeichen ein \"â\".
+# Dieselbe Falle wie beim Schreiben von Config-Dateien auf der Pi.
+text = sys.stdin.buffer.read().decode(\"utf-8\", \"replace\").strip()
 dienst = os.environ.get(\"HA_NOTIFY_IPHONE\", \"\")
 if dienst.startswith(\"notify.\"): dienst = dienst[len(\"notify.\"):]
 if not dienst or not os.environ.get(\"HA_TOKEN\"): sys.exit(2)

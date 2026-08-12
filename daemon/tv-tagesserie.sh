@@ -37,6 +37,12 @@ echo "Tagesserie $TS — Arme: $ARME, $N Paare, Seeds: $SEEDS"
   --gateway-url https://raspberrypi5lan:8443 --out /tmp/tv-train-snapshot \
   || { echo "Snapshot-Fetch scheiterte"; exit 1; }
 
+# ⚠️ Arme NACHEINANDER, nicht parallel. Der erste Parallel-Versuch
+# (2026-08-12) endete mit Killed:9 durch den OOM-Killer: jeder Arm baut
+# eine ~10-GB-Trainingsmatrix, zwei gleichzeitig drueckten die Maschine
+# in 50 GB Swap. Sequentiell kostet die Fits-Phase doppelt — dafuer
+# stirbt nichts still nach 40 Minuten Vorlauf. Wer Parallelitaet will,
+# misst vorher den freien Speicher, nicht hinterher den Swap.
 PIDS=()
 IFS=',' read -ra ARMLISTE <<< "$ARME"
 for ARM in "${ARMLISTE[@]}"; do

@@ -5214,6 +5214,21 @@ def main():
                       f"({_mit_name} vs {_ohne_name}), je Paar EIN Seed")
                 print("=" * 70)
                 _serie_dir = Path(args.serie_archiv or args.train_archive)
+                # ⚠️ Eigene Kopie der Golden-Satz-Metadaten. Die des
+                # Nightly-Writers (_gmeta) entsteht in einem Block, der
+                # unter --nur-tagesserie ABGESCHALTET ist — die erste
+                # schnelle Tagesserie hat deshalb 10 Fits gerechnet und
+                # KEINE einzige Zeile geschrieben (UnboundLocalError je
+                # Zeile, sichtbar nur als ⚠ im Log).
+                _serie_meta = {}
+                try:
+                    _serie_meta = json.loads(
+                        (Path(args.train_archive)
+                         / "golden-eval-set.json").read_text())
+                except Exception as e:
+                    print(f"  ⚠ golden-eval-set.json nicht lesbar ({e}) — "
+                          f"set_hash fehlt in den Zeilen, das Audit wird "
+                          f"sie verwerfen")
                 _serie_ts = args.tagesserie_ts or ts
                 if args.tagesserie_seeds:
                     _seeds = [int(x) for x in
@@ -5290,8 +5305,8 @@ def main():
                                             else round(float(_m["acc"]), 4)),
                                     "n_test": int(_m.get("n_recs") or 0),
                                     "n_train_recs": len(train_recs),
-                                    "set_version": _gmeta.get("version"),
-                                    "set_hash": _gmeta.get("set_hash"),
+                                    "set_version": _serie_meta.get("version"),
+                                    "set_hash": _serie_meta.get("set_hash"),
                                     "decoder": " ".join(EVAL_DECODER) or "form",
                                 }) + "\n")
                         except Exception as e:

@@ -160,6 +160,27 @@ gesehen, bevor ich die Regel schrieb. Serienbeginn ist der 13.08., und die
 Schwelle ist wortgleich die von O1, damit sie nicht an den beobachteten
 Effekt angepasst ist. Beides steht in der Registrierung.
 
+## 3y. Label-Konventionen (Simon, 2026-08-13 abends — BINDEND)
+
+1. **Kostenpflichtige Gewinnspiel-Inserts sind SENDUNG** (winario,
+   Gewinnarena — auch show-gebrandet mit 01379-Nummern).
+2. **Werbung beginnt und endet meist mit einem kurzen Sendungstrailer —
+   diese Rand-Trailer gehören ZUR WERBUNG.** ⚠️ Das REVIDIERT den
+   End-Snap-Entscheid vom 28.07. („Trailer = Sendung"): der dortige Guard
+   wurde auf der alten Lesart kalibriert und gehört neu bewertet.
+
+Erste Anwendung: 10 Kanten in 7 Golden-Aufnahmen agent-reviewt korrigiert
+(Frames gesichtet durch 4 Prüf-Agenten, Urteile mit Konfidenz; Anwendung
+über den offiziellen Edit-Endpunkt, `agent_reviewed`-Marker, Backups in
+scratchpad/label-review/label-backups.json). NICHT korrigiert: 3
+Gewinnspiel-Spannen (Konvention 1), 1 bestätigte Sendung, 2 Übergänge mit
+Kante innerhalb der Spanne.
+
+⚠️ R1-Vermerk: die Golden-Ground-Truth dieser 7 Aufnahmen hat sich damit
+geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
+Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung
+bleibt fair.
+
 ## 3z. Ziel und Außenmetriken (festgeschrieben 2026-08-13)
 
 **Das Ziel ist nicht eine IoU-Zahl, sondern: eine Aufnahme ansehen, ohne an

@@ -184,15 +184,22 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
 2. **Selektive Autonomie.** Kalibrierte Sicherheit routet: sichere
    Aufnahmen ohne Review-Angebot, unsichere in die Queue. Metrik:
    Abdeckung bei null Fehlern. Produktsprung aus vorhandenen Teilen.
-3. **Episoden-Gedächtnis (O9, in Vorbereitung).** Break-Grammatik derselben
-   SENDUNG aus ihren bestätigten Alt-Cutlists als Prior-Spalte. Der
-   Fehler-Schwanz zeigt genau dorthin (3× Galileo). Minute-Prior-Lehre
-   beachtet: Werbung hängt an der Sendung, nicht an der Uhr.
+3. **Episoden-Gedächtnis (zurückgestellt 2026-08-13 mittags).** Meine
+   Begründung („der Schwanz zeigt auf Struktur") hat die Fehlermoden-
+   Zerlegung noch am selben Tag widerlegt: über den ganzen Golden-Satz
+   **30× Grenze, 0× verpasst, 0× Phantom** — es gibt keine Struktur-
+   Fehler, die ein Episoden-Prior heilen könnte. Wieder vorlegen nur mit
+   Belegen aus VERPASST-Fällen (z. B. außerhalb des Golden-Satzes).
 4. **Spot-Datenbank als Erstklasse-Signal.** Bekannter Spot per
    Fingerprint-Lookup = Werbung mit p≈1; ML nur noch für Neues und
    Grenzen. Baut auf der bestehenden spot-fp-Pipeline auf.
-5. **Asymmetrische Decoder-Kosten.** „Nie Sendung schneiden" als
-   HSMM-Kostenparameter, gemessen an der Exakt-Rate.
+5. **Asymmetrische Decoder-Kosten — seit der Fehlermoden-Zerlegung die
+   VORDERSTE Modell-Frage.** `scripts/fehlermoden.py` über den Golden-
+   Satz: der gesamte Restfehler sind Grenzverschiebungen, davon 301 s
+   weggeschnittene Sendung (Einzelfälle −20,6 s / +18 s) gegen 522 s
+   harmlos stehende Werbung. „Nie Sendung schneiden" als HSMM-Kosten,
+   gemessen an Sendung-geschnitten-Sekunden und Exakt-Rate — nicht an
+   der IoU, die beide Richtungen gleich bestraft.
 
 **Neue Fähigkeiten mit derselben Technik** (Backlog, je eigener Entwurf):
 Intro/Outro-Skip über Episoden-Matching · Kapitelmarken für Magazine ·

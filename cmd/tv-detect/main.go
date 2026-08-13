@@ -90,12 +90,13 @@ func main() {
 		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
 		replayNNCSV     = flag.String("replay-nn-csv", "", "with --replay-signals: replace the embedded nn_confs with fresh per-frame confidences from this CSV (idx,time_s,nn_confidence — the same format --emit-nn-csv writes). Lets an external/candidate classifier be block-formed against the cached decode-signals without re-running ffmpeg.")
 		decoderName     = flag.String("decoder", "form", "block formation: form | hsmm | hsmm-blend | hsmm-refine | hsmm-full. 'form' is the hysteresis state machine plus the deterministic snap chain (every --*-snap flag applies). 'hsmm' is explicit-duration Viterbi over the RAW per-second NN probability; it ignores the logo blend, every snap and both --*-extend flags BY DESIGN, because that is exactly what was measured. Over 58 faithful dumps it is +0.022 mean block-IoU vs 'form', but it raises floors and lowers ceilings: +0.083 where form scores below 0.90, -0.085 where form scores above, with single losses down to -0.404. Not a free win — see internal/blocks/hsmm.go. Requires NN confidences; only --min-block-sec / --max-block-sec still apply. The -blend/-refine/-full variants are stage-2/3 experiments (logo-blended emission / narrow deterministic edge snaps / both). PRODUCTION runs 'hsmm' with --hsmm-dur-w 15 since 2026-07-29: the blind edge test showed the corpus labels had inherited form's edges (form-echo), and against blind-corrected labels hsmm measures +0.061 IoU [+0.032,+0.090] over form (n=68) with the user's blind verdicts siding with hsmm on 22/23 disputed edges. With no NN confidences hsmm falls back to form automatically. See internal/blocks/hsmm.go + hsmm_refine.go for the full measurement history.")
-		hsmmAdMu   = flag.Float64("hsmm-ad-mu", 0, "hsmm* only: median ad-block length in seconds (0 = built-in 240). Per-channel values live in hsmm-priors.json (fit-hsmm-priors.py); the fitted medians are ~2x the built-in default on most channels.")
-		hsmmAdSd   = flag.Float64("hsmm-ad-sd", 0, "hsmm* only: log-space sd of ad-block length (0 = built-in 0.55)")
-		hsmmShowMu = flag.Float64("hsmm-show-mu", 0, "hsmm* only: median show-segment length in seconds (0 = built-in 720)")
-		hsmmShowSd = flag.Float64("hsmm-show-sd", 0, "hsmm* only: log-space sd of show-segment length (0 = built-in 0.9)")
-		hsmmDurW   = flag.Float64("hsmm-dur-w", 0, "hsmm* only: weight of the duration prior vs the per-second emission (0 = built-in 60; measured optimum 5-15). Only the ratio to the emission matters; the emission weight is fixed at 1.")
-		hsmmBumpW  = flag.Float64("hsmm-bumper-w", 0, "hsmm* only: weight of soft bumper boundary evidence in the Viterbi (0 = off). End-idents are NN-guarded (trailer convention), start idents are not. Uses --bumper-threshold as the hit cutoff.")
+		hsmmAdMu        = flag.Float64("hsmm-ad-mu", 0, "hsmm* only: median ad-block length in seconds (0 = built-in 240). Per-channel values live in hsmm-priors.json (fit-hsmm-priors.py); the fitted medians are ~2x the built-in default on most channels.")
+		hsmmAdSd        = flag.Float64("hsmm-ad-sd", 0, "hsmm* only: log-space sd of ad-block length (0 = built-in 0.55)")
+		hsmmShowMu      = flag.Float64("hsmm-show-mu", 0, "hsmm* only: median show-segment length in seconds (0 = built-in 720)")
+		hsmmShowSd      = flag.Float64("hsmm-show-sd", 0, "hsmm* only: log-space sd of show-segment length (0 = built-in 0.9)")
+		hsmmAdBias      = flag.Float64("hsmm-ad-bias", 0, "hsmm* only: per-second log-prior on the AD emission. Negative = ad-averse: boundary seconds near p=0.5 flip to show, edges move inward, ad remnants instead of cut programme. 0 = off (parity with every published hsmm number).")
+		hsmmDurW        = flag.Float64("hsmm-dur-w", 0, "hsmm* only: weight of the duration prior vs the per-second emission (0 = built-in 60; measured optimum 5-15). Only the ratio to the emission matters; the emission weight is fixed at 1.")
+		hsmmBumpW       = flag.Float64("hsmm-bumper-w", 0, "hsmm* only: weight of soft bumper boundary evidence in the Viterbi (0 = off). End-idents are NN-guarded (trailer convention), start idents are not. Uses --bumper-threshold as the hit cutoff.")
 	)
 	flag.Parse()
 	// The duration prior reaches the decoder via package globals rather than
@@ -103,7 +104,8 @@ func main() {
 	// it — the decoder-agreement triage signal stays pinned to the defaults
 	// every published agreement number used.
 	hsmmPrior = blocks.HSMMOpts{AdMuS: *hsmmAdMu, AdSD: *hsmmAdSd,
-		ShowMuS: *hsmmShowMu, ShowSD: *hsmmShowSd, DurW: *hsmmDurW}
+		ShowMuS: *hsmmShowMu, ShowSD: *hsmmShowSd, DurW: *hsmmDurW,
+		AdBiasLP: *hsmmAdBias}
 	hsmmBumperW = *hsmmBumpW
 
 	// buildOpts assembles blocks.Opts from the CLI flags — shared by the

@@ -93,6 +93,16 @@ type HSMMOpts struct {
 	// nil inputs keep the decoder byte-identical to the parity reference.
 	EndBoundaryLP   []float64
 	StartBoundaryLP []float64
+
+	// AdBiasLP: per-second log-prior added to the AD emission. Negative =
+	// ad-averse ("im Zweifel Sendung"): seconds whose evidence sits near
+	// p=0.5 — exactly the boundary zone — flip to show, so ad edges move
+	// INWARD and leave ad remnants instead of cutting programme. The
+	// motivating measurement (2026-08-13): every remaining golden error is
+	// a boundary shift, 301 s of cut programme vs 522 s of tolerated ad
+	// remnant. 0 = off, keeps the decoder byte-identical to the parity
+	// reference.
+	AdBiasLP float64
 }
 
 func hsmmDefaults(o *HSMMOpts) {
@@ -196,7 +206,7 @@ func FormHSMM(p []float64, o HSMMOpts) []Block {
 		} else if v > 1-eps {
 			v = 1 - eps
 		}
-		cumAd[i+1] = cumAd[i] + math.Log(v)*o.EmitW
+		cumAd[i+1] = cumAd[i] + math.Log(v)*o.EmitW + o.AdBiasLP
 		cumShow[i+1] = cumShow[i] + math.Log(1-v)*o.EmitW
 	}
 

@@ -133,3 +133,44 @@ func TestHSMMOutputWellFormed(t *testing.T) {
 		t.Errorf("empty input must give nil, got %v", got)
 	}
 }
+
+// AdBiasLP: negativ = ad-avers. Der Test baut einen Block mit eindeutigem
+// Kern und ambivalenten Raendern (p≈0.5) — genau die Zone, um die es geht.
+func TestHSMMAdBias(t *testing.T) {
+	p := make([]float64, 600)
+	for i := range p {
+		p[i] = 0.02
+	}
+	for i := 200; i < 210; i++ { // ambivalenter Vorlauf (Trailer-Zone)
+		p[i] = 0.55
+	}
+	for i := 210; i < 330; i++ { // eindeutiger Werbe-Kern
+		p[i] = 0.97
+	}
+	for i := 330; i < 340; i++ { // ambivalenter Nachlauf
+		p[i] = 0.55
+	}
+	ohne := FormHSMM(p, HSMMOpts{DurW: 15})
+	avers := FormHSMM(p, HSMMOpts{DurW: 15, AdBiasLP: -0.4})
+	if len(ohne) != 1 || len(avers) != 1 {
+		t.Fatalf("Blockzahl: ohne=%d avers=%d, will je 1", len(ohne), len(avers))
+	}
+	// Der Kern muss ueberleben — Bias darf keine Bloecke fressen.
+	if avers[0].EndS-avers[0].StartS < 100 {
+		t.Fatalf("avers-Block zu kurz: %v", avers[0])
+	}
+	// Ad-avers: Start NICHT frueher, Ende NICHT spaeter; und mindestens
+	// eine Kante rueckt messbar nach innen.
+	if avers[0].StartS < ohne[0].StartS || avers[0].EndS > ohne[0].EndS {
+		t.Errorf("Bias weitet den Block: ohne=%v avers=%v", ohne[0], avers[0])
+	}
+	if (avers[0].StartS-ohne[0].StartS)+(ohne[0].EndS-avers[0].EndS) < 5 {
+		t.Errorf("Bias bewegt die Raender nicht: ohne=%v avers=%v",
+			ohne[0], avers[0])
+	}
+	// Bias 0 == Referenz (Paritaet der Nullstellung).
+	null := FormHSMM(p, HSMMOpts{DurW: 15, AdBiasLP: 0})
+	if len(null) != 1 || null[0] != ohne[0] {
+		t.Errorf("AdBiasLP=0 nicht byte-identisch: %v vs %v", null, ohne)
+	}
+}

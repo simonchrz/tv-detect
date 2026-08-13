@@ -136,6 +136,7 @@ func formBlocks(decoder string, opts blocks.Opts,
 			ShowMuS:   hsmmPrior.ShowMuS,
 			ShowSD:    hsmmPrior.ShowSD,
 			DurW:      hsmmPrior.DurW,
+			AdBiasLP:  hsmmPrior.AdBiasLP,
 			MinBlockS: opts.MinBlockS,
 			MaxBlockS: opts.MaxBlockS,
 		}

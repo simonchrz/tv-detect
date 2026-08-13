@@ -32,6 +32,15 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOM
 # um eine Nacht "weiterzaehlen", ohne dass es jemandem auffaellt.
 export TVD_LAUF=nightly
 
+# ── ARCHITEKTURWECHSEL (vorbereitet 2026-08-13, L5) ──────────────────────
+# Der nackte Kopf (--head-arch mlp32) ist durchverdrahtet, paritaets-
+# gefixt (TestMLP1BareParitaetMitTraining) und im Probelauf End-zu-Ende
+# gruen (Golden 0.936 gegen Champion 0.910). Scharf schalten NACH dem
+# O1-Urteil (14.08.), indem die naechste Zeile einkommentiert wird —
+# argparse gewinnt beim doppelten Flag mit dem SPAETEREN Wert:
+# TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"
+TVH_HEAD_ARCH_OVERRIDE=""
+
 # launchd jobs can't reach the login keychain, so `gh` (used by the
 # off-site model-anchor at deploy time) can't read its keyring-stored
 # token → auto-anchor silently failed every night since 2026-06-02.
@@ -196,6 +205,7 @@ done
     --write-pseudo-labels \
     --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper-temporal-mp-wm \
+    $TVH_HEAD_ARCH_OVERRIDE \
     --shadow-eval \
     --ablate-minute-prior \
     --prod-seeds 3 \

@@ -4423,7 +4423,7 @@ def main():
         X_train_ch = np.hstack([X_train, zusatz_train])
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
-              f"({n_chan} channels"
+              f"({n_chan if wants_kanal else 'KEINE'} channels"
               f"{', +whisper' if wants_whisper else ''}"
               f"{', +temporal' if wants_temporal else ''})")
         print(f"  base train frames: {len(X_train_ch)} "

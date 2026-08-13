@@ -5230,17 +5230,21 @@ def main():
             # 7-Naechte-Serie vom Juli, die MLP-64 als Rauschen beerdigte,
             # lief mit FESTEM Seed — eine Messung, siebenmal wiederholt.
             _ts_arme["mlp64"] = (_ident, 64)
+            # Einzelspalten (O7/O8): genau EINE Spalte gegen den nackten Kopf.
+            _ts_arme["mlp32-channel"] = (_augment_channel, 32)
+            _ts_arme["mlp32-temporal"] = (_augment_temporal, 32)
 
-            _mit_name, _ohne_name = [
-                a.strip() for a in args.tagesserie_arme.split(",")][:2]
-            if _mit_name not in _ts_arme or _ohne_name not in _ts_arme:
-                print(f"  ⚠ Tagesserie: unbekannter Arm in "
-                      f"{args.tagesserie_arme!r} — kenne "
-                      f"{sorted(_ts_arme)}")
+            _namen = [a.strip() for a in args.tagesserie_arme.split(",")
+                      if a.strip()]
+            _fremde = [n for n in _namen if n not in _ts_arme]
+            if _fremde or len(_namen) < 2:
+                print(f"  ⚠ Tagesserie: unbekannte/zu wenige Arme "
+                      f"{_fremde or _namen} — kenne {sorted(_ts_arme)}")
             else:
+                _mit_name, _ohne_name = _namen[0], _namen[1]
                 print("\n" + "=" * 70)
-                print(f"TAGESSERIE — {args.tagesserie} Paare "
-                      f"({_mit_name} vs {_ohne_name}), je Paar EIN Seed")
+                print(f"TAGESSERIE — {args.tagesserie} Seeds, Arme: "
+                      f"{', '.join(_namen)} (je Seed alle Arme)")
                 print("=" * 70)
                 _serie_dir = Path(args.serie_archiv or args.train_archive)
                 # ⚠️ Eigene Kopie der Golden-Satz-Metadaten. Die des
@@ -5265,7 +5269,7 @@ def main():
                 else:
                     _seeds = [(nacht_seed + 1 + 997 * _i) % 10000
                               for _i in range(args.tagesserie)]
-                _arm_liste = (_mit_name, _ohne_name)
+                _arm_liste = tuple(_namen)
                 if args.tagesserie_nur_arm:
                     if args.tagesserie_nur_arm not in _ts_arme:
                         raise SystemExit(f"--tagesserie-nur-arm: unbekannt "

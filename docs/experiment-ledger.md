@@ -170,7 +170,11 @@ automatisch auch für alles, was noch wartet.
 
 Was ansteht, in dieser Reihenfolge:
 
-1. **Welche Spalte genau?** Erst wenn O1 und O2 entschieden sind. Je eine
+1. **Welche Spalte genau?** → Kanal und Temporal sind whisper-frei und
+   laufen als **O7/O8** seit 2026-08-13 (ein Lauf, drei Arme, geteilter
+   bare-Arm; Abweichung von der O2-Konsequenz in beiden Registrierungen
+   dokumentiert). Whisper selbst ist O1; Maske hängt an dessen Urteil.
+   Ursprünglicher Plan: erst wenn O1 und O2 entschieden sind. Je eine
    Sonde, die sich um genau eine Spalte unterscheidet. Kanal und temporal
    sind über Serien positiv gemessen, Minute-Prior über acht Nächte als
    inert (Δ ≈ −0.001) — die Reihenfolge richtet sich nach der

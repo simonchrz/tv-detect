@@ -176,6 +176,13 @@ scratchpad/label-review/label-backups.json). NICHT korrigiert: 3
 Gewinnspiel-Spannen (Konvention 1), 1 bestätigte Sendung, 2 Übergänge mit
 Kante innerhalb der Spanne.
 
+Dritte Anwendung: **18 Blockanfänge vorgezogen** (24 Kandidaten/464 s
+signal-hergeleitet, 51 Frames, 2 Agenten: 10× Werbung, 8× Trailer/
+gemischt-Block, 3× Gewinnspiel korrekt belassen, 1× Kante innerhalb,
+2 ohne Frames). Damit ist die Rand-Trailer-Konvention in BEIDE
+Richtungen über den Korpus angewendet: ~47 Kanten an einem Abend,
+agent-reviewt, Null manuelle Review-Minuten.
+
 Zweite Anwendung (gleicher Abend): **19 Blockenden verlängert** — die
 Gegenrichtung der 07-28-Kürzungen. Kandidaten signal-hergeleitet (21
 Spannen/329 s, fast alle ProSieben), 40 Frames von 2 Agenten gesichtet:

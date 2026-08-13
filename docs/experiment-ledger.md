@@ -177,14 +177,30 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
 
 ## 3b. Roadmap über die Spalten-Fragen hinaus (2026-08-13, mit Simon)
 
-1. **Implizite Labels aus dem Abspielverhalten.** Rücksprung nach
-   Skip (meist KNOPFDRUCK — Auto-Skip existiert nur im PiP, Befund der
-   App-Session) = Grenze zu aggressiv; Spulen mitten in „Sendung" =
-   Verpasst-Kandidat, im Haushaltsprofil aber verrauscht. Format geeint
-   (App meldet roh: ausloeser/von/nach/ts, Recorder klassifiziert gegen
-   ads.json). **Erst zählen, dann bauen:** App protokolliert ~2 Wochen
-   lokal, die Zählung entscheidet über den Endpunkt. Liegt bei Simon.
-   Referenz: /tmp/wiedergabe-signale-BACKEND.md (v2).
+1. **~~Implizite Labels aus dem Abspielverhalten~~ — BEERDIGT 2026-08-13
+   (Simons Entscheid, §4).** Das Nutzungsprofil trägt es nicht:
+   hauptsächlich Live-TV, Aufnahmen selten; bei Live-Werbung wird nicht
+   gespult, sondern PiP/weggeschaltet — reichlich Signale, aber
+   einseitig (nur Anfänge), sekunden-unscharf, systematisch verspätet.
+   Für ein Kanten-Problem mit ±20 s kein Maßstab. Gestorben VOR dem
+   Bauen, an einer Frage an Simon — genau dafür war Zählen-vor-Bauen da.
+
+   **Ersetzt durch: Kanten aus dem MATERIAL (Simons Richtung:
+   „autonomer/automatisierter Ansatz").** Die einzige Kante, die
+   beidseitig und ohne Reaktionszeit vorliegt, ist die im Signal selbst:
+   Logo-Ein/Aus, Tonpegel, Schwarzbilder. Beleglage (2026-08-13):
+   * Kantenfehler-Verteilung: 57 verschobene Kanten, Median 6,1 s —
+     **40 % ≤5 s** (Snap-Reichweite), 54 % ≤10 s; Schwanz bis 75 s =
+     Trailer/Ident-Semantik (End-Snap-Guard-Klasse, Trailer = Sendung
+     per Nutzer-Entscheid).
+   * ⚠️ Vorarbeit existiert UND ist tot zugleich: Snaps auf
+     Schwarzbilder gab es im `form`-Decoder — **unter hsmm sind sie
+     seit 2026-07-29 wirkungslos** (Memory `hsmm_ignoriert_per_show_
+     tuning`). Der Mechanismus muss als NACH-hsmm-Verfeinerung neu
+     entstehen, nicht als Wiederbelebung der form-Snaps.
+   * Nächster Schritt vor jeder Registrierung: Anker-Verfügbarkeit
+     messen — liegt an den 57 wahren Kanten überhaupt ein
+     Signal-Anker (Schwarzbild/Logo-Wechsel) in Reichweite?
 2. **Selektive Autonomie.** Kalibrierte Sicherheit routet: sichere
    Aufnahmen ohne Review-Angebot, unsichere in die Queue. Metrik:
    Abdeckung bei null Fehlern. Produktsprung aus vorhandenen Teilen.
@@ -441,6 +457,15 @@ nur um zu prüfen, ob die Kurve am Golden-Satz sich anderswo wiederfindet.
 Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
 ## 4. Friedhof — entschieden, nicht neu vorschlagen
+
+**Verhaltensbasierte Labels (Wiedergabe-Signale) — beerdigt 2026-08-13,
+vor dem Bauen.** Entwurf und Format waren fertig verhandelt (App meldet
+roh, Recorder klassifiziert; /tmp/wiedergabe-signale-BACKEND.md v2).
+Gestorben am Nutzungsprofil, nicht am Entwurf: hauptsächlich Live-TV, dort
+wird bei Werbung nicht gespult, sondern PiP/weggeschaltet — Signale ohne
+Enden, mit Reaktionszeit-Verzerrung. Wiedervorlage nur, falls sich das
+NUTZUNGSPROFIL ändert (z. B. Aufnahmen werden Hauptnutzung) — nicht mit
+einem besseren Format, das Format war nie das Problem.
 
 **MLP-64 — zweite und letzte Beerdigung (2026-08-12, O6).** Erste Serie
 (Juli, 7 Nächte) methodisch leer (fester Seed). Wiedervorlage mit

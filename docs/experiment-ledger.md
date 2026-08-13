@@ -176,6 +176,11 @@ scratchpad/label-review/label-backups.json). NICHT korrigiert: 3
 Gewinnspiel-Spannen (Konvention 1), 1 bestätigte Sendung, 2 Übergänge mit
 Kante innerhalb der Spanne.
 
+Vierte Anwendung: **3 Übergänge sekundengenau aufgelöst** (dichte
+1s-Abtastung, Agent benennt den ersten Frame der zweiten Seite;
+konservativ nie über den Beleg hinaus). Damit ist die Label-Runde vom
+13.08. RESTLOS abgeschlossen — kein aufgeschobener Fall.
+
 Dritte Anwendung: **18 Blockanfänge vorgezogen** (24 Kandidaten/464 s
 signal-hergeleitet, 51 Frames, 2 Agenten: 10× Werbung, 8× Trailer/
 gemischt-Block, 3× Gewinnspiel korrekt belassen, 1× Kante innerhalb,

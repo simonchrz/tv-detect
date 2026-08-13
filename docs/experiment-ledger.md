@@ -176,6 +176,12 @@ scratchpad/label-review/label-backups.json). NICHT korrigiert: 3
 Gewinnspiel-Spannen (Konvention 1), 1 bestätigte Sendung, 2 Übergänge mit
 Kante innerhalb der Spanne.
 
+Zweite Anwendung (gleicher Abend): **19 Blockenden verlängert** — die
+Gegenrichtung der 07-28-Kürzungen. Kandidaten signal-hergeleitet (21
+Spannen/329 s, fast alle ProSieben), 40 Frames von 2 Agenten gesichtet:
+18× Trailer, 1× Werbung, 2× Sendung (unangetastet). Backups kumulativ in
+label-backups.json.
+
 ⚠️ R1-Vermerk: die Golden-Ground-Truth dieser 7 Aufnahmen hat sich damit
 geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
 Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung

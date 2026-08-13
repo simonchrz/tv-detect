@@ -229,8 +229,13 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
    Trailer-/Ident-Zonen ohne wiederholte Spots. Für Blockfindung
    überflüssig (7 Phantom / 2 Verpasst in 223). Bleibt als Idee für
    ANDERES (z. B. Intro-Skip), nicht für die Kanten-Front.
-5. **Asymmetrische Decoder-Kosten — seit der Fehlermoden-Zerlegung die
-   VORDERSTE Modell-Frage.** `scripts/fehlermoden.py` über den Golden-
+5. **Asymmetrische Decoder-Kosten — Regler gebaut (`--hsmm-ad-bias`),
+   Serie aber ZURÜCKGESTELLT nach dem Kanten-Label-Audit (13.08. abends):
+   85 % der „Sendung geschnitten"-Sekunden sind LABEL-VERDACHT (Signal
+   p>0.7 in der Streitspanne), echte Modellfehler: 1 s im ganzen
+   Golden-Satz. Eine Bias-Serie hätte gegen Label-Rauschen optimiert.
+   Vorher: Verdachtsliste reviewen (/tmp/kanten-label-verdacht.md —
+   nur die Spannen, Minuten Aufwand), dann neu messen.** Ursprünglich:** `scripts/fehlermoden.py` über den Golden-
    Satz: der gesamte Restfehler sind Grenzverschiebungen, davon 301 s
    weggeschnittene Sendung (Einzelfälle −20,6 s / +18 s) gegen 522 s
    harmlos stehende Werbung. „Nie Sendung schneiden" als HSMM-Kosten,

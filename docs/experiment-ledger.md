@@ -177,10 +177,14 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
 
 ## 3b. Roadmap über die Spalten-Fragen hinaus (2026-08-13, mit Simon)
 
-1. **Implizite Labels aus dem Abspielverhalten.** Zurückspulen nach
-   Auto-Skip = Grenze zu aggressiv; manuelles Spulen mitten in „Sendung" =
-   verpasster Block. Löst den Label-Engpass strukturell. → Übergabe an die
-   App-Seite (Kuckuck), Recorder-Endpunkt folgt.
+1. **Implizite Labels aus dem Abspielverhalten.** Rücksprung nach
+   Skip (meist KNOPFDRUCK — Auto-Skip existiert nur im PiP, Befund der
+   App-Session) = Grenze zu aggressiv; Spulen mitten in „Sendung" =
+   Verpasst-Kandidat, im Haushaltsprofil aber verrauscht. Format geeint
+   (App meldet roh: ausloeser/von/nach/ts, Recorder klassifiziert gegen
+   ads.json). **Erst zählen, dann bauen:** App protokolliert ~2 Wochen
+   lokal, die Zählung entscheidet über den Endpunkt. Liegt bei Simon.
+   Referenz: /tmp/wiedergabe-signale-BACKEND.md (v2).
 2. **Selektive Autonomie.** Kalibrierte Sicherheit routet: sichere
    Aufnahmen ohne Review-Angebot, unsichere in die Queue. Metrik:
    Abdeckung bei null Fehlern. Produktsprung aus vorhandenen Teilen.

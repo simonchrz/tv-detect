@@ -2358,7 +2358,7 @@ def main():
                          "1 extra input dim. EXPERIMENTAL: Go-side head "
                          "loader needs new size before deploying.")
     ap.add_argument("--head-arch",
-                    choices=["logreg", "mlp32-channel",
+                    choices=["logreg", "mlp32", "mlp32-channel",
                              "mlp32-channel-whisper",
                              "mlp32-channel-whisper-temporal",
                              "mlp32-channel-whisper-temporal-mp",
@@ -4307,11 +4307,16 @@ def main():
     mlp_gate_clf = None  # train-only head snapshot for the honest head-to-head gate
     mlp_prod_chan_slugs = None
     mlp_prod_in_dim = 0
-    wants_mlp = args.head_arch in ("mlp32-channel",
+    wants_mlp = args.head_arch in ("mlp32",
+                                    "mlp32-channel",
                                     "mlp32-channel-whisper",
                                     "mlp32-channel-whisper-temporal",
                                     "mlp32-channel-whisper-temporal-mp",
                                     "mlp32-channel-whisper-temporal-mp-wm")
+    # Der nackte Kopf (Ziel-Architektur seit O2/O6/O7/O8, 2026-08-12/13):
+    # gar kein Zusatzblock. Alle wants_* bleiben False, und auch die
+    # Kanal-One-Hot faellt — sie war bisher in JEDER mlp-Arch implizit.
+    wants_kanal = args.head_arch != "mlp32"
     wants_whisper = args.head_arch in ("mlp32-channel-whisper",
                                        "mlp32-channel-whisper-temporal",
                                        "mlp32-channel-whisper-temporal-mp",
@@ -4387,6 +4392,7 @@ def main():
                 X, uuid, uuid_slug.get(uuid, ""),
                 prod_chan_idx if chan_idx is None else chan_idx,
                 n_chan if n is None else n,
+                kanal=wants_kanal,
                 whisper=wants_whisper, temporal=wants_temporal,
                 churn=wants_churn,
                 mp_col=_minuteprior_col if wants_minuteprior else None,
@@ -6446,7 +6452,7 @@ def main():
         clf = clf if clf is not None else mlp_prod_clf
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
-        n_chan_used = len(mlp_prod_chan_slugs)
+        n_chan_used = len(mlp_prod_chan_slugs) if wants_kanal else 0
         if wants_whispermask:
             write_mlp_head_v5(path, clf,
                               input_dim=mlp_prod_in_dim,
@@ -6674,8 +6680,9 @@ def main():
         # without a known channel) excluded; deploy-time fallback for an
         # unknown slug is "all-zero one-hot" handled by the Go loader.
         try:
-            chan_slugs = sorted({uuid_slug.get(r[0], "")
-                                 for r in train_recs + test_recs} - {""})
+            chan_slugs = (sorted({uuid_slug.get(r[0], "")
+                                  for r in train_recs + test_recs} - {""})
+                          if wants_kanal else [])
             cm_path = Path(args.output).with_suffix(".channel-map.json")
             cm_path.write_text(json.dumps({
                 "ts": ts,

@@ -222,9 +222,13 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
    **30× Grenze, 0× verpasst, 0× Phantom** — es gibt keine Struktur-
    Fehler, die ein Episoden-Prior heilen könnte. Wieder vorlegen nur mit
    Belegen aus VERPASST-Fällen (z. B. außerhalb des Golden-Satzes).
-4. **Spot-Datenbank als Erstklasse-Signal.** Bekannter Spot per
-   Fingerprint-Lookup = Werbung mit p≈1; ML nur noch für Neues und
-   Grenzen. Baut auf der bestehenden spot-fp-Pipeline auf.
+4. **Spot-Datenbank als Erstklasse-Signal — geprüft 2026-08-13, trägt
+   NICHT für die Kanten.** DB existiert (20 402 Fenster / 6 847
+   Familien), aber wiederkehrende Familien liegen nur an 3 % der
+   falschen Kanten in ±5 s (Median 39 s): die Fehlkanten sitzen in
+   Trailer-/Ident-Zonen ohne wiederholte Spots. Für Blockfindung
+   überflüssig (7 Phantom / 2 Verpasst in 223). Bleibt als Idee für
+   ANDERES (z. B. Intro-Skip), nicht für die Kanten-Front.
 5. **Asymmetrische Decoder-Kosten — seit der Fehlermoden-Zerlegung die
    VORDERSTE Modell-Frage.** `scripts/fehlermoden.py` über den Golden-
    Satz: der gesamte Restfehler sind Grenzverschiebungen, davon 301 s

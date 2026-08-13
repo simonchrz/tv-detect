@@ -160,6 +160,45 @@ gesehen, bevor ich die Regel schrieb. Serienbeginn ist der 13.08., und die
 Schwelle ist wortgleich die von O1, damit sie nicht an den beobachteten
 Effekt angepasst ist. Beides steht in der Registrierung.
 
+## 3z. Ziel und Außenmetriken (festgeschrieben 2026-08-13)
+
+**Das Ziel ist nicht eine IoU-Zahl, sondern: eine Aufnahme ansehen, ohne an
+Werbung zu denken und ohne vorher zu prüfen.** Daran gemessen ist die
+ehrlichste Zahl die **Exakt-Rate** aus O4 (~12 % bei IoU 0.936, Median
+~50 s/h Korrektur): der Median ist fast perfekt, aber fast jede Aufnahme hat
+noch irgendeinen kleinen Fehler — und fürs Erlebnis zählt „null Fehler oder
+nicht", nicht „wie nah dran". Dazu sind die Kosten **asymmetrisch**:
+Sendung wegschneiden wiegt vielfach schwerer als Werbereste stehen lassen;
+die IoU behandelt beides gleich.
+
+Konsequenz: neue Serien nennen, wo sinnvoll, die Exakt-Rate als Zweitmaß
+neben dem Golden-Median. Eine Änderung des GATES auf ein anderes Maß wäre
+dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
+
+## 3b. Roadmap über die Spalten-Fragen hinaus (2026-08-13, mit Simon)
+
+1. **Implizite Labels aus dem Abspielverhalten.** Zurückspulen nach
+   Auto-Skip = Grenze zu aggressiv; manuelles Spulen mitten in „Sendung" =
+   verpasster Block. Löst den Label-Engpass strukturell. → Übergabe an die
+   App-Seite (Kuckuck), Recorder-Endpunkt folgt.
+2. **Selektive Autonomie.** Kalibrierte Sicherheit routet: sichere
+   Aufnahmen ohne Review-Angebot, unsichere in die Queue. Metrik:
+   Abdeckung bei null Fehlern. Produktsprung aus vorhandenen Teilen.
+3. **Episoden-Gedächtnis (O9, in Vorbereitung).** Break-Grammatik derselben
+   SENDUNG aus ihren bestätigten Alt-Cutlists als Prior-Spalte. Der
+   Fehler-Schwanz zeigt genau dorthin (3× Galileo). Minute-Prior-Lehre
+   beachtet: Werbung hängt an der Sendung, nicht an der Uhr.
+4. **Spot-Datenbank als Erstklasse-Signal.** Bekannter Spot per
+   Fingerprint-Lookup = Werbung mit p≈1; ML nur noch für Neues und
+   Grenzen. Baut auf der bestehenden spot-fp-Pipeline auf.
+5. **Asymmetrische Decoder-Kosten.** „Nie Sendung schneiden" als
+   HSMM-Kostenparameter, gemessen an der Exakt-Rate.
+
+**Neue Fähigkeiten mit derselben Technik** (Backlog, je eigener Entwurf):
+Intro/Outro-Skip über Episoden-Matching · Kapitelmarken für Magazine ·
+inhaltsbasierter Anfang/Ende-Beschnitt · Schadens-Routing auf die
+Mediathek-Kopie.
+
 ## 3a. Warteschlange
 
 Eine Frage ist **eingereiht**, sobald ihre Registrierung existiert und

@@ -198,9 +198,21 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
      seit 2026-07-29 wirkungslos** (Memory `hsmm_ignoriert_per_show_
      tuning`). Der Mechanismus muss als NACH-hsmm-Verfeinerung neu
      entstehen, nicht als Wiederbelebung der form-Snaps.
-   * Nächster Schritt vor jeder Registrierung: Anker-Verfügbarkeit
-     messen — liegt an den 57 wahren Kanten überhaupt ein
-     Signal-Anker (Schwarzbild/Logo-Wechsel) in Reichweite?
+   * **Anker-Messung 2026-08-13 abends: NEGATIV** (`kanten_anker.py`).
+     Nur 42 % der wahren Kanten haben einen Logo-Anker in ±5 s; 35 %
+     der Auto-Kanten sitzen SCHON auf einem Anker; ein naiver Snap
+     macht 13 Kanten schlechter und nur 7 besser (Median 6,1 → 7,5 s).
+     Das Problem ist Anker-AUSWAHL (Trailer-Zonen: Logo an, Mensch
+     zählt schon Werbung), nicht Anker-Suche — **exakt der Grund, aus
+     dem der Boundary-Head im Juli beerdigt wurde („Anker-Dichte zu
+     hoch")**. Ich habe die Friedhofs-Verbindung erst NACH der Messung
+     gezogen statt vor dem Vorschlag; die Messung hat den Fehlbau
+     verhindert, der Friedhof hätte ihn billiger verhindert.
+     → Material-Snap v1 ist damit TOT. Vorderste Kanten-Frage bleibt
+     Nr. 5 (asymmetrische Kosten) — die braucht keine Anker. Daneben
+     Label-Audit der Trailer-Zonen: ein Teil der 57 „Fehler" kann
+     Label-Inkonsistenz sein (Trailer am Blockanfang als Werbung
+     gezählt, am Blockende als Sendung — vgl. End-Snap-Guard).
 2. **Selektive Autonomie.** Kalibrierte Sicherheit routet: sichere
    Aufnahmen ohne Review-Angebot, unsichere in die Queue. Metrik:
    Abdeckung bei null Fehlern. Produktsprung aus vorhandenen Teilen.

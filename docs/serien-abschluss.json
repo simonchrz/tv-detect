@@ -8,5 +8,15 @@
     "datum": "2026-08-12",
     "urteil": "REGEL NICHT ERFUELLT — Kapazitaet bringt auf dem nackten Kopf nichts (Median +0.0000, 2/5 negativ)",
     "verbucht": "experiment-ledger.md §4 Friedhof (MLP-64, zweite Beerdigung)"
+  },
+  "O7": {
+    "datum": "2026-08-13",
+    "urteil": "REGEL NICHT ERFUELLT — Kanal-Spalte schadet nicht messbar (Median -0.0005, 3/5 negativ); Beitrag aber auch nicht belegt",
+    "verbucht": "experiment-ledger.md §3a"
+  },
+  "O8": {
+    "datum": "2026-08-13",
+    "urteil": "REGEL NICHT ERFUELLT — Temporal-Spalte schadet nicht messbar (Median +0.0005, 2/5 negativ); Beitrag aber auch nicht belegt",
+    "verbucht": "experiment-ledger.md §3a"
   }
 }

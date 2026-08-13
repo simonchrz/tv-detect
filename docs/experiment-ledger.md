@@ -170,11 +170,21 @@ automatisch auch für alles, was noch wartet.
 
 Was ansteht, in dieser Reihenfolge:
 
-1. **Welche Spalte genau?** → Kanal und Temporal sind whisper-frei und
-   laufen als **O7/O8** seit 2026-08-13 (ein Lauf, drei Arme, geteilter
-   bare-Arm; Abweichung von der O2-Konsequenz in beiden Registrierungen
-   dokumentiert). Whisper selbst ist O1; Maske hängt an dessen Urteil.
-   Ursprünglicher Plan: erst wenn O1 und O2 entschieden sind. Je eine
+1. **Welche Spalte genau? → O7/O8 ENTSCHIEDEN 2026-08-13 früh, beide
+   NICHT ERFÜLLT.** Kanal: Median −0.0005 (3/5 negativ). Temporal:
+   Median +0.0005 (2/5 negativ). Keine Einzelspalte schadet messbar —
+   aber keine hat einen belegten Beitrag.
+
+   ⚠️ **Der eigentliche Befund steht zwischen den Serien:** O2 misst für
+   die SUMME der Spalten −0.025, die Einzelsonden messen ~0, ~0, ~−0.005
+   (Whisper, Serie läuft), inert (Minute-Prior). Die Teile addieren sich
+   nicht zum Ganzen — der Schaden entsteht im ZUSAMMENSPIEL (plus Maske,
+   die an O1 hängt), nicht in einer toxischen Einzelspalte. Für die
+   Architektur-Entscheidung heißt das: es gibt keinen Kandidaten für
+   „diese eine Spalte entfernen und der Rest bleibt" — die belegte
+   Alternative ist der nackte Kopf, und laut beiden Registrierungen
+   bleibt eine Null-Spalte nur, wenn Einfachheit gegen belegten Nutzen
+   abgewogen FÜR sie ausgeht. Belegten Nutzen hat derzeit keine. Je eine
    Sonde, die sich um genau eine Spalte unterscheidet. Kanal und temporal
    sind über Serien positiv gemessen, Minute-Prior über acht Nächte als
    inert (Δ ≈ −0.001) — die Reihenfolge richtet sich nach der

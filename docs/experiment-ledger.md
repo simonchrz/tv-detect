@@ -202,6 +202,27 @@ geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
 Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung
 bleibt fair.
 
+## 3v. End-Snap-Guard: DORMANT, nicht fehlkalibriert (geprüft 2026-08-14)
+
+Nach der Trailer-Konvention (§3y) stand der Verdacht, der
+`--bumper-end-nn-guard` vom 28.07. kürze jetzt aktiv in die falsche
+Richtung. **Geprüft: nein.** `snapToBumperGuarded` wird ausschließlich in
+`Form()` gerufen, und Produktion fährt seit 2026-07-29 `hsmm` — das
+wendet per Design KEINE deterministischen Snaps an. Der Guard ist damit
+dormant, genau wie die per-Show-Configs.
+
+Zwei Konsequenzen:
+* **Kein Handlungsbedarf am Decoder.** Der Guard schadet heute nichts.
+* **Der echte Rest der Juli-Entscheidung sind die LABELS**: 36 Blöcke
+  wurden damals auf die alte Lesart gekürzt (−1840 s). Das ist
+  Label-Schaden, kein Decoder-Schaden — und genau das räumen die
+  Agent-Review-Runden seit 13.08. ab (19 Enden verlängert, weitere in
+  Arbeit).
+
+⚠️ Wer den `form`-Pfad je reaktiviert (Fallback ohne NN-Konfidenzen!),
+muss den Guard vorher neu bewerten: er ist auf „Trailer = Sendung"
+kalibriert und damit gegen die geltende Konvention.
+
 ## 3w. Architekturwechsel auf den nackten Kopf — SCHARF seit 2026-08-14
 
 **Simons Entscheid, ausdrücklich GEGEN meine Empfehlung.** Die Beleglage

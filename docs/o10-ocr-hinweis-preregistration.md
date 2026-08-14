@@ -156,3 +156,54 @@ zeigte nie, dass die KANTE dort liegt, wo der Text steht.
 
 ⚠️ Kein Ausgang rechtfertigt, den Golden-Boden zu senken oder Labels
 anzufassen (L1/L2).
+
+---
+
+# Ergebnis (2026-08-14, Abstimmungssatz)
+
+22 Aufnahmen, 40 Blockenden, davon **9 mit Programmhinweis** dahinter.
+Basis-Median (Regel aus) 0.9133.
+
+```
+ fenster  nachlauf   Median    Delta  besser  schlechter   Verlust
+      60         5   0.9325  +0.0191       3           4    -0.144
+      60        10   0.9271  +0.0137       3           4    -0.153
+      90         5   0.9325  +0.0191       3           4    -0.202
+     120        15   0.9217  +0.0083       3           4    -0.262
+```
+
+**H1 NICHT ERFÜLLT.** Der Median steigt in der besten Zelle um +0.0191 und
+reißt die Schwelle von +0.005 deutlich — aber die zweite Bedingung („mehr
+bessere als schlechtere Aufnahmen") ist mit **3 gegen 4** verfehlt. Genau
+gegen diesen Fall stand sie in der Registrierung: ein Median, den drei
+große Gewinne heben, während vier Aufnahmen verlieren, ist kein Beleg.
+
+**Der Bestätigungssatz wurde NICHT angefasst.**
+
+## Diagnose — warum die vier verlieren
+
+Die Aufteilung ist verblüffend sauber:
+
+| | hsmm-Ende vs Label-Ende | Hinweise |
+|---|---|---|
+| **3 Gewinner** | **32 s / 42 s / 69 s ZU FRÜH** | direkt dahinter |
+| **4 Verlierer** | **0 s / −7 s / −8 s / 0 s — exakt richtig** | trotzdem direkt dahinter |
+
+Die Regel greift also präzise dort, wo sie soll — und verliert
+ausschließlich dort, wo das hsmm-Ende bereits auf dem Label sitzt UND
+trotzdem ein Programmhinweis folgt.
+
+⚠️ Nach der Konvention §3y („Rand-Trailer gehören zur Werbung") wären diese
+vier LABEL zu kurz, nicht die Regel falsch. Das ist eine Hypothese, keine
+Rettung: O10 wurde gegen `ads_user.json` gemessen, und dabei bleibt es. Ein
+nachträglicher Labelwechsel, der eine gescheiterte Regel bestehen lässt,
+wäre genau die Manipulation, gegen die die Vorab-Registrierung existiert.
+
+**Konsequenz, wie vorab entschieden:** Friedhof — mit einer Einschränkung.
+Vorab stand „H1 besteht nicht → das Muster erkennt Trailer, taugt aber
+nicht zum Setzen von Kanten". Die Diagnose sagt etwas Genaueres: das Muster
+setzt Kanten sehr wohl richtig, aber die Referenz ist an vier Stellen
+strittig. Sauber weiterverfolgen lässt sich das NUR so: erst die vier
+Kanten per Frame-Review klären, dann — falls die Labels tatsächlich kurz
+sind — die Korrektur anwenden und die Frage mit **frischen, unbeteiligten
+Aufnahmen** neu registrieren. Nicht auf diesen 22.

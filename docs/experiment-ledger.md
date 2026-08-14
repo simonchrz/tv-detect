@@ -278,6 +278,36 @@ ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
 Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
 194 s → 119 s.
 
+## 3ab. O10 (OCR-Programmhinweis am Blockrand) — NICHT ERFÜLLT an H1,
+aber die Diagnose ist wertvoll (2026-08-14)
+
+Registrierung: [`o10-ocr-hinweis-preregistration.md`](o10-ocr-hinweis-preregistration.md),
+committet vor der ersten Zahl (1346f75).
+
+Beste Zelle (Fenster 60 s, Nachlauf 5 s): Median-IoU **+0.0191** — weit
+über der geforderten Schwelle von +0.005 — aber **3 Aufnahmen besser gegen
+4 schlechter**. Die zweite H1-Bedingung ist verfehlt, also NICHT ERFÜLLT.
+Der Bestätigungssatz blieb unangetastet.
+
+**Die Diagnose ist der eigentliche Ertrag.** Von 40 Blockenden tragen nur 9
+einen Programmhinweis, und diese 9 teilen sich perfekt:
+
+* **3 Gewinner:** hsmm-Ende 32/42/69 s zu früh, Hinweis direkt dahinter.
+  Genau der konstruierte Fall — die Regel repariert ihn.
+* **4 Verlierer:** hsmm-Ende sitzt exakt auf dem Label (0/−7/−8/0 s) und
+  trotzdem folgt ein Programmhinweis.
+
+Nach Konvention §3y wären diese vier LABEL zu kurz. ⚠️ Das darf O10 nicht
+retten — gemessen wurde gegen `ads_user.json`, und ein nachträglicher
+Labelwechsel zugunsten der eigenen Regel ist genau die Manipulation, gegen
+die die Registrierung existiert. Wer weitermachen will: die vier Kanten per
+Frames klären, korrigieren, und die Frage auf **unbeteiligten** Aufnahmen
+neu registrieren.
+
+**Dritter gescheiterter Decoder-Weg für dieselbe Klasse** (nach §3x
+Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
+scheitert dieser nicht an der Idee, sondern an der Referenz.
+
 ## 3aa. Der Backbone kann die Einblendung nicht LESEN — und genau
 darin steckt das verallgemeinerbare Merkmal (2026-08-14)
 

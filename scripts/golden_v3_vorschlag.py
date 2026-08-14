@@ -44,6 +44,7 @@ def main():
     # Menschlich reviewt: ads_user.json ohne auto_confirmed_at, aus dem
     # Label-Backup (die Quelle, die auch review-effort.py benutzt).
     mensch = set()
+    leer = set()
     slugs = {}
     # Layout: ~/tv-labels-backup/_rec_<uuid>/ads_user.json — die dirs
     # tragen das _rec_-Praefix, der Ledger die nackte uuid.
@@ -57,6 +58,19 @@ def main():
             continue
         if j.get("auto_confirmed_at"):
             continue
+        # ⚠️ LEERE Labels sind kein Label. Eine Aufnahme ohne Bloecke gilt
+        # als bootstrap und faellt aus Train UND Test — sie kann die
+        # Golden-Eval also nie bedienen und laesst den Median still ueber
+        # weniger Mitglieder laufen. Genau daran ist dvr-rtl-1781909700 am
+        # 2026-07-28 aus dem Satz geflogen (Notiz in golden-eval-set.json:
+        # "Nicht wieder aufnehmen, solange sie keine Labels hat"), und genau
+        # dieselbe Aufnahme stand am 2026-08-14 wieder auf einer
+        # Kandidatenliste, weil hier nur auf "menschlich reviewt" geprueft
+        # wurde. Ein leeres ads_user.json ist ein VERWORFENER Block, kein
+        # Beleg fuer Werbefreiheit.
+        if not (j.get("ads") or []):
+            leer.add(d.name[len("_rec_"):])
+            continue
         uuid = d.name[len("_rec_"):]
         mensch.add(uuid)
 
@@ -69,6 +83,9 @@ def main():
     print(f"v2-Satz: {len(v2)}  |  Test-Eimer: {len(test)}  |  "
           f"menschlich reviewt: {len(mensch)}")
     print(f"Kandidaten (Test ∩ Mensch − v2 − versiegelt): {len(kandidaten)}")
+    if leer & test:
+        print(f"  ({len(leer & test)} mit LEEREN Labels ausgeschlossen — "
+              f"bootstrap, koennen die Golden-Eval nicht bedienen)")
 
     je_kanal = defaultdict(list)
     for u in kandidaten:

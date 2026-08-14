@@ -278,6 +278,24 @@ ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
 Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
 194 s → 119 s.
 
+## 3z. O9 (Ad-Bias) — NICHT ERFÜLLT an H1 (2026-08-14)
+
+Registrierung: [`o9-adbias-preregistration.md`](o9-adbias-preregistration.md),
+geschrieben und committet VOR der ersten Zahl (cd82e6e).
+
+Der beste von sieben Bias-Werten bringt auf dem Abstimmungssatz (22
+Aufnahmen, alle NICHT im Golden-Satz) **+0.0004** Median-IoU — gefordert
+waren +0.005 — bei 6 besseren gegen 11 schlechtere Aufnahmen und −0.184
+größtem Einzelverlust. Der Bestätigungssatz blieb unangetastet.
+
+⚠️ Meine registrierte Vorhersage („H1 besteht") war falsch. Zusammen mit
+der Randverlängerung (§3x, 16:12) ergibt sich dieselbe Lehre zweimal:
+**ein globaler Regler trifft jede Kante, und die richtigen sind in der
+Überzahl.** Die Trailer-Klasse ist damit gut vermessen (356 s, 24 s/Std,
+Kopf trennt sie sauber) und decoder-seitig auf zwei Wegen nicht erreichbar.
+Offene Kandidaten wären der Dauer-Prior oder eine kanten-lokale Emission —
+je mit eigener Registrierung.
+
 ## 3x. Kopf oder Decoder? DECODER — belegt. Die naheliegende
 Randverlängerung trägt aber nicht (2026-08-14)
 

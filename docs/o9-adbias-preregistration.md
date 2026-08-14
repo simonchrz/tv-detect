@@ -154,3 +154,41 @@ Emission. Auch das ist ein Ergebnis und beendet diese Spur.
 
 ⚠️ **Kein Ausgang rechtfertigt, den Golden-Boden zu senken oder Labels
 anzufassen** (L1/L2).
+
+---
+
+# Ergebnis (2026-08-14, Abstimmungssatz)
+
+```
+ABSTIMMUNG (22 Aufnahmen)
+  bias   Median    Delta  besser  schlechter  groesster Verlust
+   0.0   0.9133  +0.0000       0           0              0.000
+   0.1   0.9113  -0.0021       7           5             -0.046
+   0.2   0.9113  -0.0021       6           9             -0.048
+   0.3   0.9011  -0.0122       7           9             -0.109
+   0.5   0.9136  +0.0003       6          11             -0.146
+   0.8   0.9138  +0.0004       6          11             -0.184
+   1.2   0.8986  -0.0147       7          12             -0.199
+```
+
+**H1 NICHT ERFÜLLT.** Gefordert waren ≥ +0.005 Median-IoU bei einem Wert
+≥ 0.1. Der beste Wert bringt **+0.0004** — Rauschen — und erkauft ihn mit
+6 besseren gegen 11 schlechtere Aufnahmen und einem Einzelverlust von
+−0.184. Kein Kandidat kommt in die Nähe.
+
+**Der Bestätigungssatz wurde NICHT angefasst.** Genau dafür war die
+Trennung da; H2 wird nicht gemessen, weil H1 nichts auszuwählen übrig
+lässt.
+
+⚠️ **Meine Vorhersage war falsch.** Registriert stand „ich erwarte H1 zu
+bestehen und H2 knapp zu scheitern" — begründet mit der Emissionsrechnung
+(Trailer begünstigen je Sekunde bereits Werbung, Sendung liegt 4.7 Log
+entfernt). Der Rechenweg stimmt, die Schlussfolgerung nicht: schon Bias 0.1
+verschlechtert fünf Aufnahmen. Ein GLOBALER Regler trifft eben jede Kante,
+und die Kanten, die schon richtig sitzen, sind in der Überzahl. Dieselbe
+Lehre wie bei der Randverlängerung in §3x — dort 16:12, hier 6:11.
+
+**Konsequenz, wie vorab entschieden:** die Emission ist nicht der Ort. Wenn
+die Trailer überhaupt decoder-seitig erreichbar sind, dann über den
+DAUER-Prior oder eine kanten-lokale Emission — beides eigene Fragen mit
+eigener Registrierung, nicht als Nachschlag hier.

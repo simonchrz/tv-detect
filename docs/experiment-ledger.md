@@ -202,6 +202,43 @@ geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
 Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung
 bleibt fair.
 
+## 3w. Architekturwechsel auf den nackten Kopf — SCHARF seit 2026-08-14
+
+**Simons Entscheid, ausdrücklich GEGEN meine Empfehlung.** Die Beleglage
+und der Widerspruch, damit später niemand rekonstruieren muss:
+
+```
+Nacht        bare     prod    Δ(bare−prod)
+20260810    0.9297   0.9057      +0.0240
+20260811    0.9235   0.9067      +0.0168
+20260812    0.9362   0.9101      +0.0261   ← O2 gemessen (ERFÜLLT)
+20260813    0.9233   0.9164      +0.0069   ← Label-Runde beginnt
+20260814    0.9332   0.9372      −0.0040   ← nach der Label-Runde
+```
+
+**Der bare-Arm hat sich nicht verändert (~0.93 durchgehend); die
+PRODUKTION ist auf 0.9372 gestiegen.** Deutung: die Zusatzspalten haben
+nicht „geschadet", sie haben die Kanten-INKONSISTENZ der Labels gelernt —
+mehr Kapazität für Widersprüche heißt mehr angepasstes Rauschen. Mit
+sauberer Ground Truth wird dieselbe Kapazität zum Vorteil. **O2s Messung
+war zum Zeitpunkt korrekt, ihre Konsequenz ist damit überholt** (die
+Serie selbst bleibt gültig und im Abschluss verbucht — sie wurde nicht
+nachträglich umgedeutet).
+
+Meine Empfehlung war: nicht wechseln, der Wechsel verschlechtert die
+Produktion um ~0.004. Simon hat anders entschieden; umgesetzt per
+`TVH_HEAD_ARCH_OVERRIDE` im Nightly-Wrapper.
+
+⚠️ **Das GATE entscheidet weiterhin** (R5). Der bare Kopf ist heute Nacht
+nur KANDIDAT: Head-to-Head gegen den Champion plus Golden-Boden. Kommt er
+nicht durch, bleibt der bisherige Kopf deployt — der Wechsel der
+Trainings-Architektur ist kein Deploy.
+
+**Zurückdrehen** = `TVH_HEAD_ARCH_OVERRIDE=""` im Wrapper. Eine Zeile.
+
+**Woran das zu beurteilen ist:** golden-trend ab 15.08. gegen 0.9372, und
+die Fehlermoden-Zerlegung — nicht an einer Einzelnacht (Std 0.006).
+
 ## 3z. Ziel und Außenmetriken (festgeschrieben 2026-08-13)
 
 **Das Ziel ist nicht eine IoU-Zahl, sondern: eine Aufnahme ansehen, ohne an

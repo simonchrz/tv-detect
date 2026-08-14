@@ -38,8 +38,11 @@ export TVD_LAUF=nightly
 # gruen (Golden 0.936 gegen Champion 0.910). Scharf schalten NACH dem
 # O1-Urteil (14.08.), indem die naechste Zeile einkommentiert wird —
 # argparse gewinnt beim doppelten Flag mit dem SPAETEREN Wert:
-# TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"
-TVH_HEAD_ARCH_OVERRIDE=""
+# SCHARF seit 2026-08-14 auf Simons Entscheid. ⚠️ GEGEN die Messlage
+# desselben Morgens: der bare-Vorsprung war nach der Label-Runde weg
+# (bare 0.9332 vs prod 0.9372, Δ -0.0040; Verlauf im Ledger §3 O2).
+# Zurueckdrehen = diese Zeile leeren, eine Zeile, kein Umbau.
+TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"
 
 # launchd jobs can't reach the login keychain, so `gh` (used by the
 # off-site model-anchor at deploy time) can't read its keyring-stored

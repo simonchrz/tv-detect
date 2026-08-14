@@ -1987,7 +1987,37 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
 # auch wenn er noch unter dem Bestwert liegt. Nur so klettert der Stand nach
 # einem Absacker wieder hoch. Blockiert wird ausschliesslich, wer unter dem
 # Bestwert liegt UND den Champion nicht verbessert.
-def golden_bestwert(trend_pfad, set_hash):
+def golden_label_hash(uuids, hls_root):
+    """Fingerabdruck der LABELS der Golden-Mitglieder.
+
+    ⚠️ `set_hash` sichert nur die ZUSAMMENSETZUNG des Satzes. Wer die
+    Labels eines Mitglieds korrigiert, verschiebt den Massstab, ohne dass
+    eine einzige Kennzahl es anzeigt — und die Trendlinie liest die
+    Verschiebung als Modellfortschritt. Genau das ist am 2026-08-13
+    passiert (87 Kanten-Korrekturen, Golden 0.906 → 0.937): richtig als
+    Arbeit, als MESSUNG aber nicht mit den Zahlen davor vergleichbar.
+
+    Deshalb steht dieser Hash ab 2026-08-14 in jeder Trendzeile. Er macht
+    aus einem stillen Sprung einen sichtbaren Schnitt. Fehlende Labels
+    gehen als leere Liste ein, damit ein verschwundenes Verzeichnis nicht
+    wie eine Label-Aenderung aussieht.
+    """
+    import hashlib
+    h = hashlib.sha256()
+    for u in sorted(uuids):
+        p = Path(hls_root) / f"_rec_{u}" / "ads_user.json"
+        bl = []
+        try:
+            d = json.loads(p.read_text())
+            bl = [(round(float(a), 1), round(float(b), 1))
+                  for a, b in (d.get("ads") or [])]
+        except Exception:
+            pass
+        h.update(f"{u}:{bl}".encode())
+    return h.hexdigest()[:12]
+
+
+def golden_bestwert(trend_pfad, set_hash, label_hash="*"):
     """Der hoechste Golden-Median, den der Stack MINDESTENS ZWEIMAL erreicht
     hat — nicht der hoechste ueberhaupt.
 
@@ -2052,6 +2082,10 @@ def golden_bestwert(trend_pfad, set_hash):
             continue
         if e.get("set_hash") != set_hash:
             continue
+        # Label-Epoche: eine Korrektur an den Golden-Labels macht den
+        # Massstab zu einem anderen. "*" = kein Filter (Tests/Altpfade).
+        if label_hash != "*" and e.get("label_hash") != label_hash:
+            continue
         if (e.get("decoder") or "form") != jetzt:
             continue
         v = e.get("golden_median")
@@ -2077,7 +2111,7 @@ def golden_bestwert(trend_pfad, set_hash):
     return sortiert[1]
 
 
-def golden_stau(trend_pfad, set_hash):
+def golden_stau(trend_pfad, set_hash, label_hash="*"):
     """Wie viele der juengsten Laeufe in Folge NICHT deployt haben.
 
     Dient nur der Sichtbarkeit: ein Gate, das dauerhaft blockt, sieht in der
@@ -2095,6 +2129,10 @@ def golden_stau(trend_pfad, set_hash):
             continue
         if e.get("set_hash") != set_hash:
             continue
+        # Label-Epoche: eine Korrektur an den Golden-Labels macht den
+        # Massstab zu einem anderen. "*" = kein Filter (Tests/Altpfade).
+        if label_hash != "*" and e.get("label_hash") != label_hash:
+            continue
         # Gleiche Begruendung wie in golden_bestwert: ein Stau, der aus
         # form-Naechten stammt, sagt ueber die hsmm-Reihe nichts.
         if (e.get("decoder") or "form") != (" ".join(EVAL_DECODER) or "form"):
@@ -2109,7 +2147,7 @@ def golden_stau(trend_pfad, set_hash):
 
 
 def golden_boden(deploy, reason, *, golden_floor, train_archive,
-                 cand_pr, champ_pr, melde=print):
+                 cand_pr, champ_pr, hls_root=None, melde=print):
     if not deploy or golden_floor <= 0:
         return deploy, reason
     try:
@@ -2139,9 +2177,11 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
         g_champ = (float(np.median([champ_pr[u] for u in gemeinsam]))
                    if len(gemeinsam) == len(golden) else None)
 
+        _lab = (golden_label_hash(golden, hls_root)
+                if hls_root and golden else "*")
         best, best_ts = golden_bestwert(
             Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
-            meta.get("set_hash"))
+            meta.get("set_hash"), _lab)
         if best is None:
             # ⚠️ Diese Zeile erscheint auch in der ERSTEN Nacht nach einem
             # Decoder-Wechsel, nicht nur bei einem neuen Golden-Satz. Ohne den
@@ -2168,7 +2208,7 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
             # abzurutschen, darf aber nicht selbst still passieren.
             _stau = golden_stau(
                 Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
-                meta.get("set_hash"))
+                meta.get("set_hash"), _lab)
             if _stau >= 3:
                 melde(f"  ⚠ Golden-Boden blockt die {_stau + 1}. Nacht in Folge — "
                       f"der Champion steht seit {_stau + 1} Laeufen. Entweder ist "
@@ -5069,6 +5109,11 @@ def main():
                         json.loads(_gp.read_text()).get("uuids") or [])
         except Exception as e:
             print(f"  Golden-Satz nicht lesbar ({e}) — Spalte entfaellt")
+        # Label-Fingerabdruck einmal je Lauf: er gehoert in JEDE Trendzeile,
+        # sonst bleibt eine Label-Korrektur am Massstab unsichtbar (s.
+        # golden_label_hash).
+        _glabel = (golden_label_hash(_golden_uuids, args.hls_root)
+                   if _golden_uuids else None)
 
         def _gmed(m):
             pr = (m or {}).get("per_rec_iou") or {}
@@ -5218,6 +5263,7 @@ def main():
                                 "n_train_recs": len(train_recs),
                                 "set_version": _gmeta.get("version"),
                                 "set_hash": _gmeta.get("set_hash"),
+                                "label_hash": _glabel,
                                 "decoder": " ".join(EVAL_DECODER) or "form",
                             }) + "\n")
                     print(f"  Serie fortgeschrieben → shadow-trend.jsonl "
@@ -5372,6 +5418,7 @@ def main():
                                     "n_train_recs": len(train_recs),
                                     "set_version": _serie_meta.get("version"),
                                     "set_hash": _serie_meta.get("set_hash"),
+                                    "label_hash": _glabel,
                                     "decoder": " ".join(EVAL_DECODER) or "form",
                                 }) + "\n")
                         except Exception as e:
@@ -6579,6 +6626,11 @@ def main():
             # trend file said so. A hash makes any future change to the set
             # visible at the point of comparison instead of a year later.
             _gmeta = json.loads(_gpath.read_text())
+            # Eigene Berechnung statt des Shadow-`_glabel`: das existiert nur
+            # unter `args.shadow_eval`, dieser Schreiber laeuft unabhaengig
+            # davon. Genau diese Art geteilter Variable hat schon einmal zehn
+            # Fits ohne Zeilen produziert (UnboundLocalError `_gmeta`).
+            _glabel_prod = golden_label_hash(_golden, args.hls_root)
             with open(Path(args.train_archive) / "golden-trend.jsonl", "a") as _gf:
                 _gf.write(json.dumps({
                     "ts": ts, "n": len(_gvals),
@@ -6598,6 +6650,7 @@ def main():
                                     for k, v in prod_seed_golden.items()},
                     "set_version": _gmeta.get("version", 1),
                     "set_hash": _gmeta.get("set_hash"),
+                    "label_hash": _glabel_prod,
                     # Which block former produced this number. Entries
                     # before 2026-08-05 have no key and were all "form",
                     # while production ran "hsmm" from 07-29 — those
@@ -6621,7 +6674,8 @@ def main():
         golden_floor=args.golden_floor,
         train_archive=args.train_archive,
         cand_pr=(metrics_smooth or {}).get("per_rec_iou") or {},
-        champ_pr=(deployed_test_metrics or {}).get("per_rec_iou") or {})
+        champ_pr=(deployed_test_metrics or {}).get("per_rec_iou") or {},
+        hls_root=args.hls_root)
 
     if deploy:
         if is_mlp_write:

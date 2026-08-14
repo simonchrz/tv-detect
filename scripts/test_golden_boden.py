@@ -242,6 +242,48 @@ class BestwertIstZweitbester(unittest.TestCase):
                     "decoder": dec, "deployed": dep, "n": 38}) + "\n")
         return Path(p) / "golden-trend.jsonl"
 
+    def _trend_lab(self, p, eintraege):
+        """Wie _trend, aber mit label_hash je Zeile."""
+        with open(Path(p) / "trend-lab.jsonl", "w") as f:
+            for ts, wert, lab in eintraege:
+                f.write(json.dumps({
+                    "ts": ts, "golden_median": wert, "set_hash": HASH,
+                    "decoder": " ".join(_th.EVAL_DECODER) or "form",
+                    "deployed": True, "n": 38,
+                    "label_hash": lab}) + "\n")
+        return Path(p) / "trend-lab.jsonl"
+
+    def test_label_epoche_schneidet_den_boden(self):
+        # Der eigentliche Zweck: eine Label-Korrektur am Golden-Satz macht
+        # frueherer Mediane unvergleichbar. Ohne diesen Schnitt haette die
+        # Latte am 2026-08-13 (0.906 -> 0.937 durch 87 Kanten-Korrekturen)
+        # eine Modellverbesserung behauptet, die nie stattgefunden hat.
+        with tempfile.TemporaryDirectory() as d:
+            # Je Epoche drei Tage, damit wirklich die Zweitbester-Regel
+            # greift und nicht die max()-Rueckfallregel gemessen wird.
+            t = self._trend_lab(d, [("20260806T040000", 0.950, "alt"),
+                                    ("20260807T040000", 0.949, "alt"),
+                                    ("20260808T040000", 0.940, "alt"),
+                                    ("20260809T040000", 0.910, "neu"),
+                                    ("20260810T040000", 0.905, "neu"),
+                                    ("20260811T040000", 0.900, "neu")])
+            best, ts = _th.golden_bestwert(t, HASH, "neu")
+            self.assertAlmostEqual(best, 0.905, places=3)
+            self.assertTrue(ts.startswith("202608"))
+            # ... und die alte Epoche bleibt fuer sich messbar
+            best_alt, _ = _th.golden_bestwert(t, HASH, "alt")
+            self.assertAlmostEqual(best_alt, 0.949, places=3)
+
+    def test_stern_ignoriert_die_label_epoche(self):
+        # Altpfade und Tests rufen ohne Hash — dann darf nicht gefiltert
+        # werden, sonst verschwindet der Boden still und das Gate faellt auf.
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend_lab(d, [("20260806T040000", 0.950, "alt"),
+                                    ("20260807T040000", 0.949, "alt"),
+                                    ("20260808T040000", 0.910, "neu")])
+            best, _ = _th.golden_bestwert(t, HASH)
+            self.assertAlmostEqual(best, 0.949, places=3)
+
     def test_nimmt_den_zweitbesten(self):
         with tempfile.TemporaryDirectory() as d:
             t = self._trend(d, [("20260806T040000", 0.909, True),

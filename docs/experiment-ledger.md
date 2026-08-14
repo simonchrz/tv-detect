@@ -228,6 +228,89 @@ für eine echte Modell-Frage als alles, was diese Woche gemessen wurde.
 Angewandt Runde 2: 9 von 28 Kanten (6× Gewinnspiel und 7× bestätigte
 Sendung korrekt NICHT angewandt).
 
+## 3t. Gewinnspiel gemessen — und der Detektor lohnt NICHT (2026-08-14)
+
+Nachmessung meiner eigenen Empfehlung von gestern („bessere Modell-Frage
+als alles diese Woche Gemessene"). Sie hält nicht.
+
+**Größe der Klasse.** Über den Golden-Satz gibt es 12 Spannen „Auto sagt
+Werbung, Label sagt Sendung", zusammen **183 s = 0.34 % der Laufzeit**
+(14.9 h). Frame-Review dieser 12:
+
+| Kategorie | Spannen | Sekunden | Bewertung |
+|---|---|---|---|
+| GEWINNSPIEL | 3 | 68 s | Label richtig, Modell irrt |
+| WERBUNG | 3 | 67 s | **Label falsch, Modell hatte recht** |
+| TRAILER | 3 | 13 s | **Label falsch** (Rand-Trailer = Werbung, §3y) |
+| SENDUNG | 2 | 11 s | Label richtig, Modell irrt |
+| ohne Frames | 1 | 25 s | — |
+
+Gewinnspiel ist also **37 % der Streitmasse, nicht die Mehrheit** — meine
+Formulierung „ein erheblicher Teil" war zu stark. Die eigentliche Hälfte
+sind **falsche Labels, bei denen das Modell recht hatte** (80 s).
+
+**Trennbarkeit.** Lineare Sonde auf dem Backbone (1280 dim), 7 bekannte
+Gewinnspiel-Spannen aus 6 Aufnahmen, leave-one-RECORDING-out: **AUC-Median
+1.000**. Das klingt entschieden, ist es aber nicht — balanciert gemessen,
+effektive Stichprobe sind 7 Spannen, nicht 116 Sekunden. Der ehrliche Test
+gegen die GANZE Zeitachse der ausgelassenen Aufnahme:
+
+```
+kabel-eins  55 % erkannt, 10 s/Std Fehlalarm
+kabel-eins 100 %,         49 s/Std
+prosieben  100 %,         64 s/Std
+prosieben  100 %,         38 s/Std
+prosieben  100 %,         14 s/Std
+vox          0 % (!),      2 s/Std
+```
+
+VOX fällt komplett aus — hält man die einzige VOX-Aufnahme zurück, kennt
+das Modell die winario-Aufmachung nicht mehr. Die Sonde lernt **Marken,
+keine Klasse**.
+
+⚠️ **Verdikt: nicht bauen.** Die Klasse ist 68 s auf 15 h ≈ **4.5 s/Std** —
+kleiner als die Fehlalarmrate des Detektors selbst (2–64 s/Std). Ein
+Aufwand, der mehr Fehler erzeugt als er behebt. Bliebe der Nutzen, wenn es
+zehnmal mehr Beispiele gäbe und die Marken-Verallgemeinerung trüge; das
+ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
+
+**Angewandt:** 5 der 6 Label-Fehler (75 s; einer mit niedriger
+Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
+194 s → 119 s.
+
+## 3v. `set_hash` sichert die Zusammensetzung — NICHT die Labels
+(2026-08-14, Lücke geschlossen)
+
+⚠️ Beim Anwenden von 3t ist die eigentliche Lücke aufgefallen. Der
+Golden-Satz trägt seit v2 einen `set_hash`, und Boden, Gate, Tagesbericht
+und loop-status vergleichen nur Zeilen mit gleichem Hash **und** gleichem
+Decoder. Der Hash deckt aber ausschließlich die **Mitgliederliste** ab.
+
+**Wer die LABELS eines Mitglieds korrigiert, verschiebt den Maßstab, ohne
+dass eine einzige Kennzahl es anzeigt.** Genau das ist am 2026-08-13
+passiert: 87 Kanten-Korrekturen, Golden 0.906 → 0.937. Als Arbeit richtig,
+als MESSUNG aber ein Schnitt — und die Latte ist mitgestiegen, als hätte
+das Modell zugelegt. Der Sprung steht bis heute unmarkiert im Trend.
+
+**Fix (deployed):** `golden_label_hash()` hasht die Blöcke aller
+Mitglieder; der Wert steht ab sofort als `label_hash` in **jeder**
+Trendzeile (Produktion, Shadow, Tagesserie) und ist Teil des Filters in
+`golden_bestwert`, `golden_stau`, `tagesbericht.boden_und_champion` und
+`loop-status`. Eine Label-Änderung schneidet die Reihe damit sichtbar, statt
+sie still zu verlängern. Der Tagesbericht meldet dann „keine Latte — Labels
+geändert, Reihe beginnt neu"; das Gate fällt für eine Nacht auf, wie bei
+einem Satz- oder Decoder-Wechsel auch (dokumentiertes Verhalten).
+
+Zwei Tests in `test_golden_boden.py`: Epochen-Schnitt und `"*"`-Altpfad.
+Epoche vor der Korrektur `cef19e8b50ad`, danach `e6ddc1d84786`.
+
+⚠️ **Falle beim Einbau (fast bezahlt):** die erste Fassung hängte
+`label_hash` an eine Variable, die nur unter `args.shadow_eval` existiert —
+der Produktions-Schreiber hätte einen NameError geworfen. Dieselbe Bauart
+hat schon einmal zehn Fits ohne Zeilen produziert (`_gmeta`). Geteilte
+Zwischenvariablen über Zweiggrenzen hinweg sind in diesem Skript der
+wiederkehrende Fehler.
+
 ## 3u. Golden-Satz vergrößern: NICHT an der Review-Kapazität blockiert
 (gemessen 2026-08-14)
 

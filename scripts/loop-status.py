@@ -122,9 +122,14 @@ def main():
         if deployt:
             hash_jetzt = gt[-1].get("set_hash")
             dec_jetzt = gt[-1].get("decoder")
+            # label_hash gehoert in denselben Filter: set_hash sichert nur
+            # die Zusammensetzung, nicht die Labels. Wer die Labels eines
+            # Mitglieds korrigiert, misst danach etwas anderes.
+            lab_jetzt = gt[-1].get("label_hash")
             passend = [e for e in deployt
                        if e.get("set_hash") == hash_jetzt
-                       and e.get("decoder") == dec_jetzt]
+                       and e.get("decoder") == dec_jetzt
+                       and e.get("label_hash") == lab_jetzt]
             if passend:
                 # MUSS dieselbe Rechnung sein wie golden_bestwert() in
                 # train-head.py: hoechster Wert, der mindestens zweimal

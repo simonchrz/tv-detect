@@ -74,8 +74,17 @@ def boden_und_champion(gt):
     if not deployt:
         return None, None
     hash_jetzt, dec_jetzt = gt[-1].get("set_hash"), gt[-1].get("decoder")
+    # ⚠️ label_hash gehört in denselben Filter wie set_hash und decoder.
+    # `set_hash` sichert nur die ZUSAMMENSETZUNG; werden die LABELS eines
+    # Mitglieds korrigiert, misst der Satz danach etwas anderes, ohne dass
+    # eine Kennzahl es anzeigt. Am 2026-08-13 sprang Golden so 0.906 → 0.937
+    # (87 Kanten-Korrekturen) und die Latte stieg mit — als hätte das Modell
+    # zugelegt. Ab 2026-08-14 schneidet der Boden an jeder Label-Änderung.
+    # Alte Zeilen tragen kein Feld (None) und fallen damit korrekt heraus.
+    lab_jetzt = gt[-1].get("label_hash")
     passend = [e for e in deployt
-               if e.get("set_hash") == hash_jetzt and e.get("decoder") == dec_jetzt]
+               if e.get("set_hash") == hash_jetzt and e.get("decoder") == dec_jetzt
+               and e.get("label_hash") == lab_jetzt]
     if not passend:
         return None, None
     je_tag = {}
@@ -155,6 +164,12 @@ def baue():
             med = e.get("golden_median")
             zeile += f", Golden {med}"
             best, champ = boden_und_champion(gt)
+            if best is None and gt[-1].get("label_hash"):
+                # Sichtbar machen, statt die Latte stillschweigend wegfallen
+                # zu lassen: nach einer Label-Korrektur gibt es schlicht noch
+                # keine zweite vergleichbare Messung.
+                zeile += " (keine Latte — Labels geändert, Reihe beginnt neu)"
+                chronisch.append("Golden-Reihe nach Label-Änderung neu")
             if best and med is not None:
                 latte = round(best["golden_median"] - 0.010, 4)
                 abstand = round(med - latte, 4)

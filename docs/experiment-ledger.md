@@ -97,9 +97,12 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 
 ### O1 — Kostet die Whisper-Spalte mehr als sie bringt?
 
-*Status: registriert 2026-08-09, Serie 08-10 bis 08-14 (5 Nächte). Regel und
-Schwellen stehen in [`o1-whisper-preregistration.md`](o1-whisper-preregistration.md)
-— vor der ersten Serien-Nacht geschrieben.*
+*Status: **ENTSCHIEDEN 2026-08-14, REGEL NICHT ERFÜLLT.** Median −0.0044
+(4/5 negativ): Vorzeichen-Bedingung erfüllt, Größen-Bedingung (≤ −0.010)
+verfehlt. Nächte: −0.0206 / −0.0001 / −0.0048 / −0.0044 / +0.0048.
+Konsequenz laut Registrierung: **die Whisper-Spalte bleibt** — sie schadet
+nicht belegbar. Belegten NUTZEN hat sie damit aber ebenso wenig wie Kanal
+(O7) und Temporal (O8); die Abwägung fällt in der Architektur-Frage.*
 
 Drei unabhängige Beobachtungen zeigen in dieselbe Richtung:
 

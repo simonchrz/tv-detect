@@ -308,6 +308,37 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ac. Der Fehlermodus des OCR-Musters: DAUER-Einblendungen
+(2026-08-14, gefunden durch O10s Verlierer)
+
+Frame-Review der vier O10-Verlierer spaltet sie sauber:
+
+* **3× TRAILER** (prosieben, „Dienstag 21:25", „Mittwoch 20:15",
+  „Sonntag 20:15" + ProSieben-/Joyn-Ident) → die **Labels waren zu kurz**,
+  die Regel hatte recht. Korrigiert (+13/+9/+13 s; alle drei liegen im
+  Abstimmungssatz, NICHT im Golden-Satz — kein Epochenwechsel).
+* **2× SENDUNG** (rtlzwei-1779016500, „Von Hecke zu Hecke") → die Sendung
+  läuft, und oben rechts klebt ein **Dauer-Programmhinweis** „NEUE FOLGE
+  HEUTE 20:15 / KAMPF DER REALITY ALLSTARS" durch die ganze Sendung.
+
+⚠️ **Das ist ein echter Falschtreffer-Modus, und meine Negativkontrolle hat
+ihn nicht gefunden** (0 von 120 zufälligen Sendungs-Punkten aus 93
+Aufnahmen, §3aa). Die Kontrolle war nicht falsch, sondern
+unterdimensioniert für ein seltenes, aber SYSTEMATISCHES Muster: trifft es
+eine Aufnahme, dann gleich über die volle Laufzeit — genau deshalb trug
+rtlzwei allein den größten Einzelverlust (−0.144).
+
+**Die Unterscheidung ist mechanisch einfach und noch ungetestet:** ein
+Trailer-Hinweis ist **flüchtig** (10–30 s), eine Dauer-Einblendung steht
+Minuten bis Stunden. Eine Regel, die den Treffer nur zählt, wenn dasselbe
+Muster 120 s früher NICHT da war, würde rtlzwei verwerfen und die drei
+prosieben-Fälle behalten.
+
+⚠️ Das gehört in eine NEUE Registrierung auf **unbeteiligten** Aufnahmen.
+Es nachträglich in O10 einzubauen und dann „bestanden" zu melden, wäre die
+Manipulation, gegen die die Vorab-Registrierung existiert — zumal die
+Referenz inzwischen von mir selbst korrigiert wurde.
+
 ## 3aa. Der Backbone kann die Einblendung nicht LESEN — und genau
 darin steckt das verallgemeinerbare Merkmal (2026-08-14)
 

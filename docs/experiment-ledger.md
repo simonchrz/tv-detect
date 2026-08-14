@@ -278,6 +278,68 @@ ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
 Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
 194 s → 119 s.
 
+## 3w. Die andere Fehlerrichtung: 65 % der verpassten Werbung sind
+TRAILER — und der Korpus ist NICHT schuld (2026-08-14)
+
+Bisher immer nur „Sendung geschnitten" angeschaut. Die Gegenrichtung ist
+4,7-mal größer. Frame-Review aller 24 Spannen „Label sagt Werbung, Modell
+sagt Sendung" über den Golden-Satz (545 s):
+
+| Kategorie | Spannen | Sekunden | |
+|---|---|---|---|
+| TRAILER | 11 | **356 s** | Label richtig, Modell verpasst |
+| WERBUNG | 4 | 54 s | Label richtig, Modell verpasst |
+| SENDUNG | 7 | 86 s | Label zu großzügig |
+| unklar | 2 | 49 s | |
+
+**65 % der gesamten verpassten Werbung sind Trailer** — 24 s/Std, fünfmal
+so groß wie die Gewinnspiel-Klasse aus §3t.
+
+⚠️ **Erste These widerlegt.** Ich hatte vermutet: der Korpus lehrt noch die
+alte Konvention (§3y-Wechsel am 08-13), die 36 am 07-28 auf die NN-Kante
+gekürzten Blöcke vergiften das Training. Die 36 sind per `reviewed_at`
+nicht auffindbar (die Juli-Aktion hat den Zeitstempel nicht angefasst, die
+Scratchpad-Backups von damals sind weg), also stattdessen **40 zufällige
+Blockenden im Korpus** (ohne Golden) mit Frames geprüft — was läuft in den
+14 s nach einem Blockende?
+
+```
+SENDUNG 32 | WERBUNG 4 | TRAILER 2 | ohne Frames 2
+```
+
+**Nur 5 % haben noch einen Trailer dahinter.** Die Korpus-Labels sind an
+den Enden sauber; die 356 s sind eine echte Modellschwäche, kein
+Konventionskonflikt. Die Juli-Kürzung ist entweder längst überschrieben
+oder war nie so verbreitet wie die Notiz nahelegt.
+
+### Trennbarkeit — und warum eine neue Spalte NICHT hilft
+
+Lineare Sonde auf dem Backbone, 22 agent-belegte Trailer-Spannen aus 20
+Aufnahmen und 8 Kanälen, leave-one-RECORDING-out gegen Sendung derselben
+Aufnahme:
+
+```
+AUC Median 0.835   min 0.453   max 1.000   unter 0.7: 5/20
+```
+
+Deutlich schwächer als Gewinnspiel (1.000) — erwartbar, Trailer SIND
+Programmmaterial. Ein Viertel der Aufnahmen liegt bei Zufall.
+
+⚠️ **Der strukturelle Punkt, der für BEIDE Klassen gilt:** eine lineare
+Sonde auf demselben Backbone misst, was der Kopf ohnehin lernen KANN. Der
+Produktionskopf ist ein MLP auf genau diesen Merkmalen. Eine daraus
+abgeleitete „Trailer-Spalte" oder „Gewinnspiel-Spalte" fügt **keine
+Information hinzu** — sie rechnet um, was schon da ist. Das erklärt
+rückblickend auch O2/O6/O7/O8 (alle NICHT ERFÜLLT): Spalten aus vorhandenen
+Merkmalen sind ausgereizt.
+
+**Offen und als nächstes zu messen:** liegt es am KOPF (Merkmale tragen die
+Trailer nicht) oder am DECODER (der Kopf sieht sie, hsmm glättet eine 14-30 s
+Kante am Blockrand weg)? Das entscheidet über völlig verschiedene Fixes.
+Der Signal-Cache taugt nicht dafür — bei allen 14 Trailer-Aufnahmen mit
+Cache ist `nn_confs: null` (ohne NN evaluiert). Es braucht einen frischen
+detect-Lauf mit NN auf einer Aufnahme mit belegtem verpasstem Trailer.
+
 ## 3v. `set_hash` sichert die Zusammensetzung — NICHT die Labels
 (2026-08-14, Lücke geschlossen)
 

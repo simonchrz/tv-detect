@@ -278,6 +278,65 @@ ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
 Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
 194 s → 119 s.
 
+## 3x. Kopf oder Decoder? DECODER — belegt. Die naheliegende
+Randverlängerung trägt aber nicht (2026-08-14)
+
+17 Aufnahmen mit Trailer-Befund frisch durchgerechnet (Produktionsbefehl
+via `redetect` + `.want`-Marker, nicht rekonstruiert). Der Signal-Cache
+taugte nicht: bei allen 14 vorhandenen war `nn_confs: null`.
+
+**Die Frage ist entschieden.** Über 19 Aufnahmen und 21 Trailer-Spannen:
+
+| | Median | 10.–90. Perzentil |
+|---|---|---|
+| Sendung | **0.009** | 0.006 – 0.036 |
+| Trailer | **0.586** | 0.219 – 0.845 |
+| Werbung (Kern) | **0.921** | 0.851 – 0.946 |
+
+**21 von 21 Trailern liegen über dem 90. Perzentil der Sendung.** Bei
+Schwelle 0.15 werden alle erfasst, ohne dass eine einzige Aufnahme über
+ihrem Sendungsmittel läge. Der Kopf trennt Trailer sauber von Sendung —
+der Decoder verwirft die Information. Auf der Einzelaufnahme
+`dvr-prosieben-1778926191` liegt der 75-s-Trailer bei 0.406 zwischen
+Blockkern 0.927 und Sendung 0.008, und fällt bei 1153 s schlagartig auf
+0.012: die Kante ist im Signal frame-genau da.
+
+### Die Regel dazu — drei Fassungen, alle nicht tragfähig
+
+„Block ab dem hsmm-Ende weiterlaufen lassen, solange die Konfidenz über
+einer Schwelle bleibt." Auf der Einzelaufnahme spektakulär: 75 s Fehler →
+2–3 s. Über 31 Aufnahmen und 92 Kanten:
+
+1. **Produktions-Glättung (symmetrisch 10 s):** schleppt die hohe
+   Blockkonfidenz über die Kante — 478 s Abdrift an KORREKTEN Kanten gegen
+   363 s Gewinn. Netto negativ.
+2. **Ungeglättet + Hysterese:** Trailer haben interne Dips, der Lauf bricht
+   zu früh ab — nur 97 s Gewinn.
+3. **Gerichtete Glättung** (am Ende nur das Vorwärtsfenster, am Start nur
+   das Rückwärtsfenster): überbrückt die Dips, ohne dass der Block ins
+   Fenster fällt. Beste Zelle (Schwelle 0.20, Fenster 10 s, **nur Enden**):
+   Gesamt-Kantenfehler 1469 s → 1394 s, **−75 s (5 %)**, 16 Kanten besser
+   gegen 12 schlechter.
+
+⚠️ **Nicht deployen.** 16:12 ist fast ein Münzwurf, und 5 % Gesamtfehler
+rechtfertigen keinen neuen Sonderweg im Blockformer. Die Startseite ist in
+JEDER Zelle negativ — das Phänomen sitzt am Blockende, wie erwartet.
+
+⚠️ **Messfalle, die ich zweimal fast bezahlt hätte:** die ersten beiden
+Auswertungen zählten „Gewinn an schiefen Kanten" gegen „Abdrift an
+richtigen Kanten" — und lasen die Regel dadurch als Nullsummenspiel. Eine
+Verschiebung an einer schon guten Kante ist aber kein Verlust, wenn sie
+zum Label hin geht. Richtig ist der GESAMTFEHLER über alle Kanten. Die
+Zahlen oben sind die korrigierte Rechnung.
+
+**Was daraus folgt:** die Information liegt sauber im Kopf-Ausgang, also
+gehört sie in den Decoder — aber nicht als handgeschnitzter Lauf, sondern
+in die Emission selbst, die ein 0.2–0.85-Band derzeit wie Sendung behandelt.
+`--hsmm-ad-bias` (bereits in `hsmm.go`, mit Test) ist genau dieser
+Stellhebel und ist bisher nur exploratorisch vermessen. Das ist der nächste
+saubere Schritt — mit Registrierung vorab, weil es ein Produktionsparameter
+ist.
+
 ## 3w. Die andere Fehlerrichtung: 65 % der verpassten Werbung sind
 TRAILER — und der Korpus ist NICHT schuld (2026-08-14)
 

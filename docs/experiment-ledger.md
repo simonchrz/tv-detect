@@ -381,7 +381,24 @@ dagegen ein eigener, registrierter Schritt (R1/L1) — nicht nebenbei.
    Trailer-/Ident-Zonen ohne wiederholte Spots. Für Blockfindung
    überflüssig (7 Phantom / 2 Verpasst in 223). Bleibt als Idee für
    ANDERES (z. B. Intro-Skip), nicht für die Kanten-Front.
-5. **Asymmetrische Decoder-Kosten — Regler gebaut (`--hsmm-ad-bias`),
+5. **Asymmetrische Decoder-Kosten — GEPARKT 2026-08-14: die Frage hat
+   kein Ziel mehr.** Nach 87 korrigierten Kanten neu gemessen:
+   „Sendung geschnitten" im Golden-Satz 202 s → **95 s**, aber die
+   Zusammensetzung ist praktisch unverändert — **77 % weiter
+   Label-Verdacht (p>0.7), 18 % ambivalent, 5 s (5 %) echter
+   Modellfehler.** Fünf Sekunden über den ganzen Golden-Satz sind kein
+   Optimierungsziel; eine Bias-Serie würde weiterhin gegen Label-Rauschen
+   messen. Der Regler bleibt gebaut und getestet, die Serie bleibt
+   ungeschrieben.
+
+   ⚠️ Das ist zugleich das Maß für die Label-Arbeit: die Runden haben das
+   VOLUMEN halbiert, nicht die Zusammensetzung verschoben. Es liegt also
+   noch eine Runde bereit — aber die braucht eine ANDERE Kandidaten-
+   Herleitung: bisher über zusammenhängende p>0.55-Läufe ab 5 s, die
+   verbliebenen Fälle sind kürzer und werden über den Streitspannen-
+   Mittelwert sichtbar.
+
+   *Ursprünglich:* **Regler gebaut (`--hsmm-ad-bias`),
    Serie aber ZURÜCKGESTELLT nach dem Kanten-Label-Audit (13.08. abends):
    85 % der „Sendung geschnitten"-Sekunden sind LABEL-VERDACHT (Signal
    p>0.7 in der Streitspanne), echte Modellfehler: 1 s im ganzen

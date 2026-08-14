@@ -278,6 +278,62 @@ ist derzeit nicht belegt und die Obergrenze bleibt 0.34 % der Laufzeit.
 Agent-Sicherheit ausgelassen). Korpusweit „Sendung weggeschnitten"
 194 s → 119 s.
 
+## 3aa. Der Backbone kann die Einblendung nicht LESEN — und genau
+darin steckt das verallgemeinerbare Merkmal (2026-08-14)
+
+Nach zwei gescheiterten Decoder-Wegen (§3x, §3z) die Frage andersherum
+gestellt: **warum** gibt der Kopf Trailern nur 0.586? Die Antwort ist eine
+Überanpassungs-Lücke, und sie ist klassenspezifisch:
+
+| | train | test | Lücke |
+|---|---|---|---|
+| Sendung | 0.031 | 0.008 | +0.023 |
+| Werbung (Kern) | 0.930 | 0.922 | +0.007 |
+| **Trailer** | **0.684** | **0.433** | **+0.251** |
+
+Zehnmal so groß wie bei allem anderen. Der Kopf **merkt sich** gesehene
+Trailer und verallgemeinert nicht — er lernt „dieses Filmmaterial ist
+Werbung", nicht das Merkmal.
+
+**Warum er es nicht lernen kann:** der Backbone bekommt 224×224
+(`internal/signals/nn.go:112`), skaliert aus 1920×1080. Eine
+Programmhinweis-Leiste ist darin ~8 px hoch — physisch unlesbar. Das
+unterscheidende Merkmal eines Trailers ist aber genau dieser Text.
+
+### Gegenprobe mit macOS-Vision-OCR (`tools/ocr/ocr.swift`)
+
+Muster: Wochentag/„Heute"/„MO-FR"/„Jeden Tag" **und** eine Uhrzeit.
+
+| Menge | Treffer |
+|---|---|
+| TRAILER-Spannen (agent-belegt) | **10 von 11** |
+| SENDUNG-Spannen direkt nach Blockende | **0 von 32** |
+| Zufällige Sendungs-Punkte mitten in 93 Aufnahmen | **0 von 120** |
+
+Bei den zufälligen Sendungs-Frames findet die OCR in 34 % *irgendeinen*
+Text — sie funktioniert also, findet nur nie das Muster. Beispiele aus den
+Trailern: „Samstag 20:15", „Heute 20:40 Uhr", „FREITAG 00:00",
+„GHOSTS MO-FR 19:15", „JEDEN TAG 14:00", „Heute 7:45 / Neu!".
+
+**Kosten:** 32 ms/Frame einfädig. Kanten-lokal (±90 s um jede Blockgrenze,
+~720 Frames) sind das ~23 s je Aufnahme = **+17 %** auf die Detect-Kosten
+(Backbone allein braucht ~135 s). Volle Abdeckung bei 1 fps wären 134 s —
+das wäre zu teuer, kanten-lokal ist es nicht.
+
+⚠️ **Warum das NICHT unter §3w fällt** („abgeleitete Spalten fügen nichts
+hinzu"): OCR ist keine Umrechnung vorhandener Merkmale. Es ist Information,
+die der 224×224-Eingang **physisch verwirft**. Das ist der erste Hebel
+dieser Session, der nicht strukturell tot ist.
+
+**Nächster Schritt, mit eigener Registrierung:** die O9-Registrierung hat
+für den Fall des Scheiterns bereits die *kanten-lokale Emission* als
+nächsten Kandidaten benannt — und die hat jetzt einen Inhalt. Der billige
+Weg zuerst: OCR an den Blockgrenzen der 32 Aufnahmen mit frischen
+Signal-Dumps, Regel „verlängere den Block über einen Programmhinweis",
+gemessen mit derselben Abstimmung/Bestätigung-Trennung wie O9. Erst wenn
+das trägt, lohnt die teure Variante (eigene Spalte, Neu-Extraktion des
+Korpus).
+
 ## 3z. O9 (Ad-Bias) — NICHT ERFÜLLT an H1 (2026-08-14)
 
 Registrierung: [`o9-adbias-preregistration.md`](o9-adbias-preregistration.md),

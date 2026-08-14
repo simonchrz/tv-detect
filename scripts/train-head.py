@@ -4772,7 +4772,21 @@ def main():
             # auf dem rohen X der Aufnahme (zusammenhaengend, vor der Maske),
             # damit ein weggeworfener Frame keinen Szenenwechsel vortaeuscht.
             return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
-                              whisper=True, temporal=True, churn=wants_churn)
+                              # ⚠️ FEST True, nicht wants_churn: das haengt am
+                              # laufenden --head-arch und wuerde diese Sonde
+                              # beim Architekturwechsel still umdefinieren —
+                              # gleicher Name, andere Spaltenzahl (R1).
+                              # Bis 2026-08-14 war head-arch im Nightly immer
+                              # mp-wm, also True; fest True bewahrt die
+                              # bisherige Bedeutung der ganzen Reihe.
+                              whisper=True, temporal=True, churn=True)
+
+        def _augment_voll(X, slug, uuid):
+            """Der volle Spaltensatz (Kanal, Whisper, temporal+Unruhe,
+            Minute-Prior, Maske) — alles fest, NICHTS aus wants_*."""
+            return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
+                              whisper=True, temporal=True, churn=True,
+                              mp_col=_minuteprior_col, maske=True)
 
         def _augment_cwt_minuteprior(X, slug, uuid):
             # Produktions-Zwilling + P(Werbung | Minute der Stunde) als EINE
@@ -4787,7 +4801,8 @@ def main():
             # andere Spalte gemessen als die Produktion, sobald der laufende
             # --head-arch die Minute-Prior-Spalte nicht selbst wollte.
             return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
-                              whisper=True, temporal=True, churn=wants_churn,
+                              # ⚠️ FEST True — s. _augment_channel_whisper_temporal.
+                              whisper=True, temporal=True, churn=True,
                               mp_col=_minuteprior_col)
 
         def _augment_ct_minuteprior(X, slug, uuid):
@@ -4808,7 +4823,8 @@ def main():
             # vorhanden ja/nein" und hat ohne die Wahrscheinlichkeitsspalte
             # keinen Bezug mehr (s. Memory whisper_luecke_und_indikatorspalte).
             return mit_zusatz(X, uuid, slug, chan_idx, n_chan,
-                              temporal=True, churn=wants_churn,
+                              # ⚠️ FEST True — s. _augment_channel_whisper_temporal.
+                              temporal=True, churn=True,
                               mp_col=_minuteprior_col)
 
         def _build_train(recs, augment):
@@ -4912,7 +4928,7 @@ def main():
         # verlieren dadurch KEINE Zeile — dieser Lauf ist ein Handlauf,
         # seine Zeilen zaehlen dort ohnehin nicht.
         if args.nur_tagesserie:
-            m_v1 = m_v2 = m_v3 = m_v4 = m_v6 = m_v7 = m_v8 = None
+            m_v1 = m_v2 = m_v3 = m_v4 = m_v6 = m_v7 = m_v8 = m_v9 = None
             mlp_v2 = in_dim_v2 = None
         else:
             m_v1, mlp_v1, _ = _fit_eval(
@@ -4959,6 +4975,15 @@ def main():
             m_v8, mlp_v8, _ = _fit_eval(
                 f"MLP-32 + ct + minute-prior (OHNE whisper)",
                 _augment_ct_minuteprior, seed=nacht_seed)
+            # ⚠️ Der VOLLE Spaltensatz als eigene Sonde. Bis 2026-08-14 wurde
+            # er nur als `baseline`-Zeile gefuehrt, also als das, was
+            # --head-arch gerade IST. Mit dem Wechsel auf mlp32 waere er
+            # ersatzlos aus der Reihe gefallen — und damit die einzige
+            # Groesse, an der sich der Wechsel beurteilen laesst. Eine
+            # Messgroesse darf nicht daran haengen, was gerade Produktion ist.
+            m_v9, _, _ = _fit_eval(
+                "MLP-32 + cwt + mp + Maske (voller Spaltensatz)",
+                _augment_voll, seed=nacht_seed)
 
         # ── Rauschboden (--seed-sweep N) ─────────────────────────────
         # Dieselben Daten, dieselbe Architektur, nur ein anderer
@@ -5158,7 +5183,8 @@ def main():
                         ("mlp32-channel-whisper", m_v4),
                         ("mlp32-cwt", m_v6),
                         ("mlp32-cwt-mp", m_v7),
-                        ("mlp32-ct-mp", m_v8)]]
+                        ("mlp32-ct-mp", m_v8),
+                    ("mlp32-channel-whisper-temporal-mp-wm", m_v9)]]
                     with open(Path(args.train_archive) / "shadow-trend.jsonl",
                               "a") as _sf:
                         for _rolle, _name, _m in _zeilen:

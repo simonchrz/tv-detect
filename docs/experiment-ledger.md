@@ -229,6 +229,31 @@ Nächster Schritt, falls verfolgt: prüfen, warum die Test-Aufnahmen nicht
 im Snapshot landen (Prewarm-Reichweite? Retention?) — das ist eine
 Infrastruktur-, keine Label-Frage.
 
+## 3t. Der Umschalter hätte die Messung mitgerissen (gefunden 2026-08-14)
+
+Zwei Folgen des Architekturwechsels, beide erst beim Nachsehen sichtbar,
+beide vor der ersten Nacht behoben:
+
+1. **Der volle Spaltensatz wäre aus der Reihe gefallen.** Er wurde nie als
+   Schatten-Sonde geführt, sondern nur als `baseline`-Zeile — also als
+   das, was `--head-arch` gerade IST. Ab `mlp32` hätte niemand mehr
+   gemessen, wogegen der Wechsel sich beweisen muss. Jetzt eigene Sonde
+   (`_augment_voll`, Arch-Name unverändert in der jsonl).
+2. **Die übrigen Sonden hätten still ihre Bedeutung gewechselt.**
+   `wants_churn = wants_whispermask` hängt am laufenden `--head-arch`;
+   unter `mlp32` wäre die Unruhe-Spalte aus `mlp32-cwt`, `mlp32-cwt-mp`
+   und `mlp32-ct-mp` gefallen — **gleicher Name, andere Spaltenzahl**,
+   also genau die stille Neudefinition, gegen die R1 steht, und mitten in
+   den O1-Armen. Die drei Sonden sind jetzt fest verdrahtet (`churn=True`,
+   was der bisherigen Bedeutung entspricht: im Nightly war `--head-arch`
+   immer mp-wm).
+
+⚠️ **Regel daraus:** eine Messgröße darf nicht davon abhängen, was gerade
+Produktion ist. Der Produktionspfad (`_prod_zusatz`, Seed-Sweep,
+Tagesserien-Prod-Arm) folgt `wants_*` weiterhin — dort ist es richtig.
+
+Breiten gegengeprüft: voll 1288 Spalten, nackt 1280.
+
 ## 3v. End-Snap-Guard: DORMANT, nicht fehlkalibriert (geprüft 2026-08-14)
 
 Nach der Trailer-Konvention (§3y) stand der Verdacht, der

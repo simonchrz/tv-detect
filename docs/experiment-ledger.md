@@ -308,6 +308,38 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ad. O11 — NICHT ERFÜLLT, aber die Kennzahl war meine Wahl
+(2026-08-14)
+
+Registrierung [`o11-ocr-fluechtig-preregistration.md`](o11-ocr-fluechtig-preregistration.md),
+committet vor der Messung (4fc5971). 60 unbeteiligte Aufnahmen,
+stratifiziert über 11 Kanäle; 56 auswertbar, 101 Blockenden, 13 mit
+Hinweis, **1 dauerhaft** (die Flüchtigkeits-Bedingung greift genau einmal).
+
+```
+Regel MIT Fluechtigkeit   Median +0.0028   besser 7   schlechter 3   Verlust -0.049
+```
+
+Zwei von drei Bedingungen erfüllt (7:3, kein Verlust über 0.10), die erste
+verfehlt: **+0.0028 statt +0.005.** NICHT ERFÜLLT. Bestätigungssatz
+unangetastet.
+
+⚠️ **Der Median über alle 56 ist für einen spärlichen Eingriff die falsche
+Kennzahl** — die Regel fasst 11 Aufnahmen an, 45 bleiben unverändert, der
+Median sitzt in den Unberührten. Auf den 11 angefassten: **Median +0.0201,
+Mittel +0.0415, 7 besser / 3 schlechter, Spanne −0.049 bis +0.190.** Die
+Schwelle +0.005 stammt aus O9, wo ein globaler Regler jede Aufnahme
+anfasste; sie unbesehen zu übertragen war mein Fehler — und er ändert das
+Urteil nicht, dafür existiert die Registrierung.
+
+⚠️ **Das Muster ist das eigentliche Warnsignal:** drei Registrierungen,
+drei Fehlschläge, drei verschiedene Gründe (Sache / Referenz / Kennzahl).
+Jeder war echt und protokolliert, aber wer oft genug neu registriert,
+gewinnt irgendwann zufällig. Konsequenz: **keine vierte Abstimmungsrunde.**
+Es bleibt ein Kandidat mit plausibler Wirkung und genau eine unverbrauchte
+Instanz — der Bestätigungssatz. Ein Schuss, vorab festgelegte Bedingung,
+Ergebnis gilt.
+
 ## 3ac. Der Fehlermodus des OCR-Musters: DAUER-Einblendungen
 (2026-08-14, gefunden durch O10s Verlierer)
 

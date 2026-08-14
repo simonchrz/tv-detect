@@ -194,3 +194,61 @@ kanten-lokale Spur zu Ende und nur noch der Kopf-Weg offen.
 
 ⚠️ Kein Ausgang rechtfertigt, den Golden-Boden zu senken (L1) oder Labels
 des Bestätigungssatzes anzufassen (L2).
+
+---
+
+# Ergebnis (2026-08-14, Abstimmungssatz)
+
+56 Aufnahmen auswertbar, 101 Blockenden, **13 mit Hinweis, davon 1
+dauerhaft** (die Flüchtigkeits-Bedingung greift also genau einmal).
+Basis-Median 0.9658.
+
+```
+                             Zelle   Median    Delta  besser  schlechter  Verlust
+           Regel MIT Fluechtigkeit   0.9686  +0.0028       7           3   -0.049
+            Regel ohne (Kontrolle)   0.9686  +0.0028       8           3   -0.049
+```
+
+**H1 NICHT ERFÜLLT.** Zwei der drei Bedingungen sind erfüllt — mehr bessere
+als schlechtere Aufnahmen (7:3) und kein Einzelverlust über 0.10 (−0.049).
+Die erste ist es nicht: **+0.0028 statt der geforderten +0.005.**
+
+**Der Bestätigungssatz wurde NICHT angefasst.**
+
+## ⚠️ Der Fehler steckt in MEINER Registrierung, nicht im Ergebnis
+
+Der Median über ALLE 56 Aufnahmen ist für einen **spärlichen** Eingriff die
+falsche Kennzahl: die Regel fasst nur 11 Aufnahmen an, 45 bleiben
+unverändert — der Median sitzt also mitten in den Unberührten und kann sich
+kaum bewegen. Diagnose auf den 11 tatsächlich angefassten Aufnahmen:
+
+```
+  Median-Delta +0.0201   Mittel +0.0415
+  besser 7   unveraendert 1   schlechter 3
+  Spanne [-0.049 .. +0.190]
+```
+
+Das ist ein deutlicher Effekt — er war nur an einer Kennzahl gemessen, die
+ihn strukturell nicht sehen kann. Die Schwelle +0.005 stammt aus O9, wo ein
+GLOBALER Regler jede Aufnahme anfasste; sie unbesehen auf einen
+kanten-lokalen Eingriff zu übertragen war mein Fehler.
+
+**Das ändert das Urteil nicht.** Die Registrierung existiert genau dafür,
+dass eine schlecht gewählte Kennzahl nicht nachträglich gegen eine bessere
+getauscht wird, sobald das Ergebnis vorliegt.
+
+## Wo das jetzt steht — und die Gefahr, die ich benenne
+
+Drei Registrierungen, drei Fehlschläge, drei verschiedene Gründe: O9 an der
+Sache (globaler Regler taugt nicht), O10 an der Referenz (Labels waren
+kurz), O11 an der Kennzahl (Median blind für spärliche Eingriffe). Jeder
+Grund war echt und ist protokolliert — aber **das Muster selbst ist ein
+Warnsignal**: wer oft genug neu registriert, gewinnt irgendwann durch
+Zufall.
+
+Deshalb keine vierte Abstimmungsrunde. Was bleibt, ist ein Kandidat mit
+plausibler Wirkung (+0.020 Median auf den angefassten Aufnahmen, 7:3) und
+genau eine unverbrauchte Instanz, die ihn entscheiden kann: der
+Bestätigungssatz. Der nächste Schritt ist **ein einziger Schuss darauf**,
+mit vorab festgelegter, sparsamkeits-tauglicher Bedingung — und das
+Ergebnis gilt, in welche Richtung auch immer.

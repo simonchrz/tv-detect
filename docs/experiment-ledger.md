@@ -179,6 +179,13 @@ scratchpad/label-review/label-backups.json). NICHT korrigiert: 3
 Gewinnspiel-Spannen (Konvention 1), 1 bestätigte Sendung, 2 Übergänge mit
 Kante innerhalb der Spanne.
 
+Fünfte Anwendung (2026-08-14): **37 weitere Kanten im Rest-Korpus**
+(60 Kandidaten ab 5 s, 80 Frames, 3 Agenten). Nicht angewandt: 7×
+Gewinnspiel (= Sendung, Label korrekt — der Agent schrieb dort „Block zu
+spät", das war seine Schlussfolgerung, nicht seine Klassifikation; die
+Konvention schlägt den Kommentar), 9× bestätigte Sendung, 4 ohne Frames,
+2 unsichere. Wirkung: „Sendung geschnitten" 207 → **194 s**.
+
 Vierte Anwendung: **3 Übergänge sekundengenau aufgelöst** (dichte
 1s-Abtastung, Agent benennt den ersten Frame der zweiten Seite;
 konservativ nie über den Beleg hinaus). Damit ist die Label-Runde vom
@@ -201,6 +208,26 @@ label-backups.json.
 geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
 Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung
 bleibt fair.
+
+## 3u. Golden-Satz vergrößern: NICHT an der Review-Kapazität blockiert
+(gemessen 2026-08-14)
+
+Der Plan war, die 63 unreviewten Test-Eimer-Aufnahmen per Agent-Review zu
+Golden-Kandidaten zu machen. **Gemessen: davon haben nur 3 überhaupt einen
+Auto-Vorschlag UND Features im Snapshot.** Der Engpass ist also nicht die
+Review-Zeit (die lösen die Agenten), sondern **Datenverfügbarkeit**: der
+Trainings-Snapshot umfasst 285 von ~790 Ledger-uuids; die übrigen
+Test-Aufnahmen liegen gar nicht als auswertbares Material vor (Pi-.ts
+dedupliziert, keine Features, kein Auto-Vorschlag).
+
+⚠️ Meine Empfehlung von gestern („Agenten lösen den Golden-Engpass") war
+damit zu schnell — sie hat den Review-Engpass gelöst und den echten nicht
+gesehen. Ein größerer Golden-Satz braucht zuerst mehr auswertbares
+Material, nicht mehr Urteile.
+
+Nächster Schritt, falls verfolgt: prüfen, warum die Test-Aufnahmen nicht
+im Snapshot landen (Prewarm-Reichweite? Retention?) — das ist eine
+Infrastruktur-, keine Label-Frage.
 
 ## 3v. End-Snap-Guard: DORMANT, nicht fehlkalibriert (geprüft 2026-08-14)
 

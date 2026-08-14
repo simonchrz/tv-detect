@@ -209,6 +209,25 @@ geändert — Golden-Werte ab dem Nightly 14.08. messen gegen korrigierte
 Labels. Die gepaarten O1-Arme sehen beide dieselben Labels, die Paarung
 bleibt fair.
 
+## 3s. Gewinnspiel-Inserts: kein Label-Rauschen, sondern eine
+Konventions-Lücke im Modell (2026-08-14)
+
+Runde 2 der Kanten-Review (28 kurze Streitspannen) hat den Grund geliefert,
+warum die Label-Runden das VOLUMEN halbierten, aber die Zusammensetzung
+nicht verschoben: **6 der 28 Spannen waren Gewinnspiel-Inserts** (winario,
+GewinnArena, 01379-Nummern). Das Modell liest sie mit p>0.7 als Werbung —
+nach Konvention §3y sind sie **Sendung**, das Label ist also korrekt.
+
+⚠️ **Damit ist die Kategorie „Label-Verdacht" (77 %) systematisch
+überzeichnet.** Ein erheblicher Teil davon ist gar kein Label-Fehler,
+sondern ein **systematischer, LERNBARER Modellfehler**: eine Klasse, die
+das Modell nie beigebracht bekommen hat. Sie ist visuell hoch distinktiv
+(statische Tafel, Telefonnummer, Preis-Overlay) — ein besserer Kandidat
+für eine echte Modell-Frage als alles, was diese Woche gemessen wurde.
+
+Angewandt Runde 2: 9 von 28 Kanten (6× Gewinnspiel und 7× bestätigte
+Sendung korrekt NICHT angewandt).
+
 ## 3u. Golden-Satz vergrößern: NICHT an der Review-Kapazität blockiert
 (gemessen 2026-08-14)
 
@@ -225,9 +244,31 @@ damit zu schnell — sie hat den Review-Engpass gelöst und den echten nicht
 gesehen. Ein größerer Golden-Satz braucht zuerst mehr auswertbares
 Material, nicht mehr Urteile.
 
-Nächster Schritt, falls verfolgt: prüfen, warum die Test-Aufnahmen nicht
-im Snapshot landen (Prewarm-Reichweite? Retention?) — das ist eine
-Infrastruktur-, keine Label-Frage.
+**Geklärt 2026-08-14:** der Snapshot listet nur `_rec_*`-Verzeichnisse,
+die auf der Pi NOCH EXISTIEREN und eine Cutlist haben. Der Ledger sammelt
+uuids dauerhaft (803), die Pi-Verzeichnisse räumt die Serien-Retention
+(295 übrig). Kein Defekt.
+
+⚠️ **Korrektur einer eigenen Behauptung:** ich hatte gesagt, jede Woche
+Warten koste Golden-Kandidaten an die Retention. Das ist überzogen —
+Labels liegen als `<uuid>.npz` im Trainings-Archiv, Features in
+`tvd-features`, beides auf dem Mac und unabhängig von der Pi. **16 der 38
+Golden-Aufnahmen haben auf der Pi kein Verzeichnis mehr und werden
+trotzdem 38/38 gewertet, genau darüber.** Verloren geht nur, was NIE in
+den Korpus kam.
+
+⚠️ Das ist zugleich eine stille Abhängigkeit: für diese 16 ist das Archiv
+die einzige Kopie des MASSSTABS. Der Archiv-Rsync greift (16/16 in
+`~/tv-labels-backup/train-archive/`) — ohne ihn wäre ein Archivverlust
+nicht nur Trainingsmaterial, sondern das Messinstrument selbst.
+
+**Stand der Kandidaten (2026-08-14):** 7 pinbar (Mensch-Label, Material,
+Features). 16 weitere wären agent-reviewbar — aber das sind
+auto-bestätigte, also systematisch die LEICHTEN Fälle; sie in den Maßstab
+zu pinnen hübe den Golden-Median aus Gründen, die nichts mit Modellgüte
+zu tun haben. Empfehlung: nur menschlich gelabelte pinnen, und erst wenn
+genug für EINEN sauberen `set_hash`-Wechsel zusammenkommen (7 → Rauschen
+×0.92, das lohnt den R1-Bruch noch nicht).
 
 ## 3t. Der Umschalter hätte die Messung mitgerissen (gefunden 2026-08-14)
 

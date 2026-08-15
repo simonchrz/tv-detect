@@ -117,3 +117,60 @@ Abstimmungssatz.
 
 ⚠️ Kein Ausgang rechtfertigt, den Golden-Boden zu senken (L1) oder Labels
 anzufassen (L2).
+
+---
+
+# Ergebnis (2026-08-15)
+
+22 Aufnahmen gewertet, **6 von der Regel angefasst** (über der
+Entscheidbarkeitsschwelle von 5).
+
+```
+  [1] Median-Delta angefasst : +0.0307   ERFUELLT  (>= +0.010)
+  [2] besser 5 / schlechter 1            ERFUELLT
+  [3] groesster Einzelverlust: -0.0583   VERFEHLT  (> -0.05)
+
+    dvr-prosieben-1778926191           +0.1580
+    dvr-prosieben-1779089343           +0.0715
+    dvr-nick-1781550300                +0.0365
+    dvr-rtl-1782090300                 +0.0249
+    dvr-prosieben-1783401000           +0.0119
+    dvr-prosieben-1779188536           -0.0583
+```
+
+Median über alle 22: +0.0000. „Sendung weggeschnitten" 270 s → 302 s
+(+12 %, die registrierte Grenze von 20 % wäre gehalten worden).
+
+**O12 NICHT ERFÜLLT** — an Bedingung 3, um **0.0083**.
+
+## Kein Nachverhandeln
+
+Bedingung 1 ist dreifach übererfüllt, Bedingung 2 klar, und die verfehlte
+Grenze schützt vor „katastrophalen" Einzelverlusten — −0.058 ist keine
+Katastrophe. Genau deshalb wird sie nicht angefasst: eine Schwelle, die
+nach dem Blick auf die Zahl neu verhandelt wird, ist keine Schwelle. Ich
+habe sie gesetzt, sie ist verfehlt, das Urteil steht.
+
+Ebenso ausgeschlossen: die eine verlierende Aufnahme per Frame-Review
+prüfen. Bei O10 war das der erste Blick auf einen unbekannten Fehlermodus.
+Hier wäre es nur noch die Suche nach einem Grund, warum das eigene
+Ergebnis doch zählt.
+
+## Was übrig bleibt
+
+Vier Registrierungen, vier Fehlschläge, jeder an einer anderen Bedingung:
+O9 an der Sache, O10 an der Referenz, O11 an der Kennzahl, O12 an der
+Verlustgrenze. Die Befundlage ist über O11 und O12 hinweg konsistent
+positiv (angefasste Aufnahmen: +0.020 bei 7:3, dann +0.031 bei 5:1) — nur
+hat kein einziger Durchgang seine eigene, vorher gesetzte Latte geräumt.
+
+⚠️ Der Bestätigungssatz ist für diese Regel jetzt verbraucht. Ein fünfter
+Satz wäre genau das Muster, das O11 benannt hat.
+
+**Der einzige saubere Weg, „hilft wahrscheinlich" noch zu klären, ist
+prospektiv:** die Regel im Nightly als SCHATTEN mitlaufen lassen — gemessen,
+nicht angewandt — und über Wochen auf Aufnahmen sammeln, die es beim
+Registrieren noch gar nicht gab. Dazu gehört eine eigene Registrierung mit
+vorab gesetzter Entscheidungsregel und einer Mindestzahl angefasster
+Aufnahmen. Das ist kein neuer Anlauf auf denselben Daten, sondern der
+Verzicht darauf.

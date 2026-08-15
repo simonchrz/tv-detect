@@ -308,6 +308,39 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ae. O12 — der eine Schuss: NICHT ERFÜLLT um 0.0083 (2026-08-15)
+
+Registrierung [`o12-ocr-bestaetigung-preregistration.md`](o12-ocr-bestaetigung-preregistration.md),
+committet vor der Messung (abfb2c8). 22 nie gemessene Golden-Aufnahmen,
+6 von der Regel angefasst.
+
+```
+  [1] Median-Delta angefasst : +0.0307   ERFUELLT  (>= +0.010)
+  [2] besser 5 / schlechter 1            ERFUELLT
+  [3] groesster Einzelverlust: -0.0583   VERFEHLT  (> -0.05)
+```
+
+Bedingung 1 dreifach übererfüllt, Bedingung 2 klar — und trotzdem NICHT
+ERFÜLLT, weil eine einzelne Aufnahme 0.0083 über der Verlustgrenze liegt.
+„Sendung weggeschnitten" 270 s → 302 s (+12 %, Grenze 20 % gehalten).
+
+⚠️ **Die Schwelle wird nicht nachverhandelt** und die eine Verlierer-Aufnahme
+nicht per Frames „geprüft". Eine Grenze, die nach dem Blick auf die Zahl
+neu gesetzt wird, ist keine Grenze.
+
+**Bilanz der Reihe:** vier Registrierungen, vier Fehlschläge, jeder an
+einer anderen Bedingung — Sache (O9), Referenz (O10), Kennzahl (O11),
+Verlustgrenze (O12). Die Messlage ist konsistent positiv (angefasste
+Aufnahmen +0.020 bei 7:3, dann +0.031 bei 5:1), aber kein Durchgang hat
+seine eigene vorher gesetzte Latte geräumt. Der Bestätigungssatz ist für
+diese Regel verbraucht; ein fünfter Satz wäre das Muster, das §3ad benannt
+hat.
+
+**Offener, sauberer Weg:** die Regel im Nightly als SCHATTEN mitlaufen
+lassen (gemessen, nicht angewandt) und prospektiv auf Aufnahmen sammeln,
+die es beim Registrieren nicht gab. Das ist kein neuer Anlauf auf denselben
+Daten, sondern der Verzicht darauf.
+
 ## 3ad. O11 — NICHT ERFÜLLT, aber die Kennzahl war meine Wahl
 (2026-08-14)
 

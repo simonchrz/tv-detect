@@ -308,6 +308,43 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ah. Warum die Kante schwer ist — gemessen (2026-08-15)
+
+336 Kanten, ohne die zeitversetzte Aufnahme.
+
+**Was NICHT hilft:** Schwarzbilder gibt es praktisch nicht (2–7 %, egal wie
+gut die Kante sitzt) — die Sender schneiden hart ohne Schwarzblende. Stille
+trennt auch nicht (36 % / 25 % / 31 %).
+
+**Was trennt: der Szenenschnitt.**
+
+| Kante | n | Schnitt ±2 s | nn-Sprung | Logo-Sprung |
+|---|---|---|---|---|
+| genau (≤2 s) | 121 | **83 %** | 0.98 | 0.98 |
+| mittel (2–20 s) | 153 | 61 % | 0.95 | 0.97 |
+| daneben (>20 s) | 62 | **48 %** | 0.85 | 0.74 |
+
+**Und die eigentliche Schwierigkeit — es sind zu VIELE Schnitte.** Über
+84 h liegen 26134 Szenenschnitte, also einer alle **12 s**. Im ±15-s-Fenster
+um die wahre Kante stehen im Median **3** Kandidaten, bei knapp einem
+Drittel der Kanten mehr als 5.
+
+Damit zerfällt „ungenau" in zwei ganz verschiedene Probleme:
+
+1. **Auswahl** — es gibt einen Anker, aber mehrere. Eine Kante auf 2 s zu
+   treffen heißt, unter 3–4 gleich aussehenden Schnitten den richtigen zu
+   wählen. Ein Snap-Verfahren hilft hier nur, wenn es weiß, WELCHER.
+2. **Kein Anker** — bei **29 %** der schlecht sitzenden Kanten gibt es im
+   ±15-s-Fenster überhaupt keinen Szenenschnitt (gegen 5 % bei den genauen).
+   Der Übergang ist weich: Überblendung, Split-Screen-Auflösung, oder die
+   Sendung läuft unter einer stehenden Grafik einfach weiter. Da ist im Bild
+   nichts, worauf man springen könnte.
+
+Das erklärt rückblickend, warum die deterministischen Snaps historisch so
+uneinheitlich gemessen haben (§3x, `hsmm_refine.go`): sie adressieren
+Problem 1 und machen Problem 2 schlimmer, und beide sind im selben Korpus
+vermischt.
+
 ## 3ag. Ein Drittel der Kantenfehler-Masse war ein Zeitachsen-Versatz
 (2026-08-15)
 

@@ -407,5 +407,23 @@ echo "=== label audit (report only) ==="
   | tail -30 || echo "label audit failed (non-fatal)"
 echo "=== label audit end ==="
 
+# ── O13-Schattenlauf ─────────────────────────────────────────────────────
+# Schreibt mit, was die OCR-Regel an den Kanten GETAN HAETTE. Wendet nichts
+# an; die Cutlist bleibt unberuehrt.
+#
+# Prospektiv mit Absicht (docs/o13-ocr-schatten-preregistration.md): vier
+# Vorgaenger haben dieselbe Idee auf handverlesenen Saetzen geprueft und sind
+# an vier verschiedenen Bedingungen gescheitert, der Golden-Satz ist dafuer
+# verbraucht. Gesammelt wird deshalb nur auf Aufnahmen, deren Labels NACH
+# dem 2026-08-15 entstanden sind — die kann niemand rueckwirkend passend
+# waehlen. Das Skript gibt vor Erreichen der registrierten Mindestmengen
+# bewusst KEINEN Zwischenstand aus.
+echo "=== ocr-schatten (sammelt, wendet nicht an) ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/ocr-schatten.py" 2>&1 \
+  || echo "ocr-schatten failed (non-fatal)"
+"$VENV_PY" "$HOME/src/tv-detect/scripts/ocr-schatten.py" --auswerten 2>&1 \
+  || true
+echo "=== ocr-schatten end ==="
+
 echo "train-head exit=$rc"
 exit $rc

@@ -21,7 +21,7 @@ kann. Der Auftrag deckt deshalb ±16 s um jede Kante ab.
 die Kante an einen Programmhinweis ziehen soll. Ein Agent, der denselben
 Frame sieht, liest „Montag 20:15" und setzt die Kante genau dort — die
 Regel erzeugte ihre eigene Evidenz. Agent-Labels werden deshalb als
-`agent_reviewed` markiert, und `kanten-schatten.py` wertet O13 nur auf
+`reviewed_by` markiert, und `kanten-schatten.py` wertet O13 nur auf
 menschlichen Labels aus. O14 (Auswahl zwischen NN- und Logo-Flanke) ist
 unbetroffen: diese Signale sieht kein Agent.
 """
@@ -97,11 +97,29 @@ def frames_ziehen(uuid, zeiten, ziel):
     return raus
 
 
-def vorbereiten(anzahl):
+DUMPS = Path.home() / ".cache/tv-detect-daemon/emit-signals"
+
+
+def vorbereiten(anzahl, dump_anfordern=False):
     kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
-    print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle")
-    gewaehlt = kandidaten[:anzahl]
+    # ⚠️ Aufnahmen mit vorhandenem Signal-Dump zuerst. Der Schattenlauf
+    # (kanten-schatten.py) braucht je Aufnahme einen Dump; ohne ihn ist das
+    # Review zwar richtig, aber fuer die offenen Fragen unsichtbar.
+    #
+    # Und NICHT hier einen Redetect ausloesen: der schreibt ads.json neu,
+    # waehrend der Agent noch gegen die alten Bloecke urteilt. Das Urteil
+    # laege dann auf Kanten, die es nicht mehr gibt. Wer Dumps braucht,
+    # stoesst den Redetect VOR dem Review an und wartet ihn ab.
+    mit = [d for d in kandidaten if (DUMPS / f"{d.name[5:]}.json").is_file()]
+    ohne = [d for d in kandidaten if d not in mit]
+    print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle "
+          f"({len(mit)} davon mit Signal-Dump — die zuerst)")
+    gewaehlt = (mit + ohne)[:anzahl]
+    if dump_anfordern:
+        gewaehlt = _dumps_besorgen([d for d in gewaehlt
+                                    if not (DUMPS / f"{d.name[5:]}.json").is_file()],
+                                   gewaehlt)
     for d in gewaehlt:
         u = d.name[5:]
         auto = bloecke(d / "ads.json")
@@ -124,6 +142,46 @@ def vorbereiten(anzahl):
     return 0
 
 
+def _dumps_besorgen(fehlen, alle, wartesekunden=1800):
+    """Redetect anstossen und abwarten, BEVOR die Frames gezogen werden.
+
+    ⚠️ Die Reihenfolge ist der Punkt. Ein Redetect schreibt ads.json neu —
+    laeuft er waehrend oder nach dem Review, urteilt der Agent gegen Bloecke,
+    die es danach nicht mehr gibt, und das Urteil landet auf Kanten, die
+    verschoben sind. Deshalb erst der Dump, dann die Frames.
+
+    Der `.want`-Marker ist das, was den Signal-Dump ueberhaupt entstehen
+    laesst (tv-thumbs-daemon schreibt ihn nur auf Anforderung — sonst waeren
+    es ~2.8 MB je Detect).
+    """
+    if not fehlen:
+        return alle
+    import time
+    E = DUMPS
+    E.mkdir(parents=True, exist_ok=True)
+    for d in fehlen:
+        u = d.name[5:]
+        (E / f"{u}.want").touch()
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY}/api/recording/{u}/redetect", data=b"", method="POST")
+            urllib.request.urlopen(req, context=CTX, timeout=20).read()
+        except Exception as e:
+            print(f"  redetect {u} fehlgeschlagen: {e}")
+    print(f"  {len(fehlen)} Redetect(s) angestossen, warte auf die Dumps …")
+    ende = time.time() + wartesekunden
+    while time.time() < ende:
+        da = [d for d in fehlen if (E / f"{d.name[5:]}.json").is_file()]
+        if len(da) == len(fehlen):
+            break
+        time.sleep(20)
+    fertig = [d for d in alle if (E / f"{d.name[5:]}.json").is_file()]
+    if len(fertig) < len(alle):
+        print(f"  ⚠ {len(alle)-len(fertig)} ohne Dump — werden ausgelassen, "
+              f"sonst waere das Review fuer den Schattenlauf unsichtbar")
+    return fertig
+
+
 def anwenden(trocken):
     ges = 0
     for d in sorted(ARBEIT.glob("*/")):
@@ -143,6 +201,21 @@ def anwenden(trocken):
                 continue
             if not (0 <= i < len(neu)):
                 continue
+            # ⚠️ Randwerte verwerfen. Liegt der Uebergang ausserhalb des
+            # abgetasteten Fensters, sieht der Agent nur Werbung (oder nur
+            # Sendung) und kann bestenfalls den aeussersten Abtastpunkt
+            # nennen — das ist keine Kante, sondern die Fenstergrenze. Ein
+            # Agent hat genau das am 2026-08-15 sauber dazugeschrieben; ohne
+            # diesen Filter waere die Fenstergrenze als Label gelandet.
+            ist = auftrag["kanten"][0]["ist"] if auftrag.get("kanten") else None
+            rand = next((k2 for k2 in auftrag["kanten"]
+                         if k2["block"] == i and k2["seite"] == seite), None)
+            if rand and rand["frames"]:
+                punkte = sorted(float(x) for x in rand["frames"])
+                if abs(float(t) - punkte[0]) < 0.5 or abs(float(t) - punkte[-1]) < 0.5:
+                    print(f"    {u} Block {i} {seite}: Uebergang ausserhalb "
+                          f"des Fensters, verworfen")
+                    continue
             j = 0 if seite == "start" else 1
             if abs(float(t) - neu[i][j]) < 0.5:
                 continue
@@ -158,8 +231,13 @@ def anwenden(trocken):
             print(f"  {u}: {n} Kante(n) — {neu}")
             ges += n
             continue
+        # ⚠️ reviewed_by, NICHT irgendein selbstgewaehlter Schluessel:
+        # handleAdsEdit baut die Nutzlast neu auf und verwirft jedes Feld,
+        # das es nicht kennt. Ein Marker, den der Server wegwirft, ist kein
+        # Marker — das ist am 2026-08-15 einen halben Tag lang unbemerkt so
+        # gelaufen.
         body = json.dumps({"ads": neu,
-                           "agent_reviewed": "agent-review.py"}).encode()
+                           "reviewed_by": "agent-review.py"}).encode()
         req = urllib.request.Request(f"{GATEWAY}/api/recording/{u}/ads/edit",
                                      data=body,
                                      headers={"Content-Type": "application/json"})
@@ -178,10 +256,14 @@ def main():
     ap.add_argument("--trocken", action="store_true",
                     help="mit --anwenden: nur zeigen, nichts schreiben")
     ap.add_argument("--anzahl", type=int, default=5)
+    ap.add_argument("--dump-anfordern", action="store_true",
+                    help="fehlende Signal-Dumps per redetect anfordern und "
+                         "abwarten, BEVOR die Frames gezogen werden (sonst "
+                         "ist das Review fuer den Schattenlauf unsichtbar)")
     a = ap.parse_args()
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
-        return vorbereiten(a.anzahl)
+        return vorbereiten(a.anzahl, a.dump_anfordern)
     if a.anwenden:
         return anwenden(a.trocken)
     ap.print_help()

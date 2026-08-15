@@ -99,9 +99,9 @@ def label_quelle(pfad):
     O14 (Flankenauswahl aus NN und Logo) ist davon NICHT betroffen — diese
     Signale sieht kein Agent, sein Urteil ist dazu unabhaengig.
 
-    Erkennung: auto_confirmed_at = Maschine. agent_reviewed = von einem
-    Review-Agenten gesetzt (schreibt handleAdsEdit durch). Alles andere =
-    Mensch.
+    Erkennung: auto_confirmed_at = Maschine. reviewed_by gesetzt = von
+    einem Review-Agenten. Alles andere = Mensch (der Zustand aller
+    Altbestaende — die App schickt kein reviewed_by).
     """
     try:
         d = json.loads(Path(pfad).read_text())
@@ -109,7 +109,7 @@ def label_quelle(pfad):
         return None
     if d.get("auto_confirmed_at"):
         return "auto"
-    if d.get("agent_reviewed"):
+    if d.get("reviewed_by"):
         return "agent"
     return "mensch"
 
@@ -229,13 +229,19 @@ def sammle():
                 j = json.loads(dump.read_text())
             except Exception:
                 continue
-            if "ocr_funde" not in j:
-                continue  # Dump ohne OCR — nicht auswertbar, nicht mitzählen
+            # ⚠️ Ein Dump OHNE ocr_funde ist fuer O13 unbrauchbar, fuer O14
+            # aber vollstaendig: die Flankenauswahl braucht nur nn_confs und
+            # logo_confs. Die erste Fassung sprang hier ganz raus und haette
+            # O14 an einer Voraussetzung verhungern lassen, die es gar nicht
+            # hat. Stattdessen wird die Aufnahme aufgenommen und O13 fuer sie
+            # als "nicht angefasst" gefuehrt.
+            hat_ocr = "ocr_funde" in j
             user = bloecke(up)
             auto = bloecke(d / "ads.json")
             if not user or not auto:
                 continue
-            vorschlag, angefasst = regel_kanten(auto, j.get("ocr_funde") or [])
+            vorschlag, angefasst = (regel_kanten(auto, j.get("ocr_funde") or [])
+                                    if hat_ocr else (list(auto), set()))
             fl_vorschlag, fl_wahl = flanken_kanten(auto, j)
             zeilen = []
             for ub in user:

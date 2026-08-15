@@ -308,6 +308,54 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ag. Ein Drittel der Kantenfehler-Masse war ein Zeitachsen-Versatz
+(2026-08-15)
+
+Bei der Arbeit an Punkt 4 (Let's Dance, 623 s Fehler aus einer Aufnahme)
+fiel die Form auf: acht Blöcke, alle mit **richtiger Länge** (Label
+492–521 s, Auto 518–611 s), alle **~90–120 s zu spät**. Ein Modell irrt
+nicht so gleichförmig.
+
+**Ursache:** die Labels entstehen auf der **VOD**-Zeitachse (die App zeigt
+das HLS), die Merkmale auf der **Quell-.ts**. Bei
+`dvr-rtl-1780078500` ist das VOD **16090 s** lang, die Quelle **16202 s** —
+**112 s Versatz**. Bestätigt über die OCR-Marker: der nächste Werbe-Marker
+lag konstant +111 s nach dem Label-Start, also bei Quelle 5398 für einen
+Label-Start bei VOD 5287 — nach Umrechnung **exakt** dieselbe Stelle.
+
+**Was das kostet:**
+
+| | Kanten | Median | p90 | Fehlermasse > 20 s |
+|---|---|---|---|---|
+| mit der Aufnahme | 352 | 5.0 s | 44.2 s | **4511 s** |
+| ohne sie | 336 | 4.4 s | 35.6 s | **3089 s** |
+
+**Ein Drittel des Schwanzes war Messartefakt aus einer einzigen Aufnahme.**
+Und schlimmer als die Messung: der Eintrag liegt im **TRAIN**-Split mit
+Archiv-`.npz` — die verschobenen Labels haben den Kopf mittrainiert.
+
+### Entwarnung, aber ein Detektor
+
+Über 249 Aufnahmen mit Labels: **eine** über der Schwelle. Drei weitere bei
+exakt +6.0 s = eine HLS-Segmentlänge, also Endsegment-Rundung — die
+verschiebt keine Grenze und wird nicht quarantäniert. Die Schwelle steht
+deshalb bei 15 s (mehr als zwei Segmente), nicht bei 5.
+
+⚠️ Die Kennzahl sagt NICHT, wo die Differenz sitzt. Fehlt am Ende ein
+Segment, verschiebt das nichts; fehlt am Anfang etwas, verschiebt es alles.
+Deshalb ist die Schwelle grob und der Bericht zeigt auch, was sie
+durchlässt.
+
+**Gebaut:** `scripts/zeitachsen-check.py` schreibt die Liste (braucht das
+Gateway — der Snapshot führt `index.m3u8` nur als 0-Byte-Marker),
+`train-head.py` liest sie und lässt die Aufnahmen aus dem Korpus, laut
+protokolliert. Läuft im Nightly VOR dem Training.
+
+**Lehre:** eine Fehlerform, die zu gleichförmig für ein Modell ist, ist
+keine Modellfrage. Ich habe erst Emission, Decoder und per-Show-Konfiguration
+durchgesehen, bevor ich auf die Blocklängen geschaut habe — die Antwort
+stand von Anfang an in der Tabelle.
+
 ## 3af. Die Kanten direkt gemessen — und die Fehlermasse zerlegt
 (2026-08-15)
 

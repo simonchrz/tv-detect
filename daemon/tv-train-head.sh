@@ -73,6 +73,16 @@ fi
   exit 1
 }
 
+# Zeitachsen-Wache VOR dem Training: Aufnahmen, deren VOD- und Quell-Dauer
+# auseinanderlaufen, haben Labels auf der einen und Merkmale auf der anderen
+# Achse. Der Trainer liest die hier geschriebene Liste und laesst sie aus.
+# Muss vor train-head laufen — danach waere die Liste eine Nacht zu spaet.
+echo "=== zeitachsen-check ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/zeitachsen-check.py" 2>&1 \
+  || echo "zeitachsen-check failed (non-fatal)"
+echo "=== zeitachsen-check end ==="
+
+
 # Auto re-detect after binary upgrade: when the tv-detect binary's
 # mtime changes (= new build deployed), all existing .txt cutlists
 # are stale relative to whatever the new binary would emit. Run a

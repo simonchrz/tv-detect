@@ -1987,6 +1987,36 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
 # auch wenn er noch unter dem Bestwert liegt. Nur so klettert der Stand nach
 # einem Absacker wieder hoch. Blockiert wird ausschliesslich, wer unter dem
 # Bestwert liegt UND den Champion nicht verbessert.
+def zeitachsen_quarantaene(train_archive):
+    """uuids, deren Label- und Merkmals-Zeitachse auseinanderlaufen.
+
+    ⚠️ Die Labels entstehen auf der VOD-Zeitachse (die App zeigt das HLS),
+    die Merkmale auf der Quell-.ts. Klaffen die Dauern, sind Label und
+    Signal um genau diesen Betrag gegeneinander verschoben — und zwar
+    still: nichts sieht kaputt aus, die Bloecke haben die richtige LAENGE
+    und sitzen nur an der falschen Stelle.
+
+    Gefunden 2026-08-15 an `dvr-rtl-1780078500` (Let's Dance): VOD 16090 s
+    gegen Quelle 16202 s. Die 112 s sahen wie ein Modellfehler aus und
+    trugen allein ein DRITTEL der gesamten Kantenfehler-Masse (4511 s →
+    3089 s ohne die Aufnahme). Schlimmer: der Eintrag liegt im TRAIN-Split,
+    die verschobenen Labels haben den Kopf also mittrainiert.
+
+    Die Liste schreibt `scripts/zeitachsen-check.py` (braucht das Gateway,
+    weil der Snapshot index.m3u8 nur als 0-Byte-Marker fuehrt). Hier wird
+    sie nur GELESEN — fehlt die Datei, wird nichts uebersprungen, damit ein
+    Netzproblem nie stillschweigend den halben Korpus aussortiert.
+    """
+    if not train_archive:
+        return {}
+    p = Path(train_archive) / "zeitachsen-versatz.json"
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return {}
+    return {k: float(v) for k, v in (d.get("versetzt") or {}).items()}
+
+
 def golden_label_hash(uuids, hls_root):
     """Fingerabdruck der LABELS der Golden-Mitglieder.
 
@@ -2780,10 +2810,21 @@ def main():
     corpus_no_ts = 0       # recovered from feature cache because the .ts was dedup'd
     resurrect_seen = []    # (uuid, n) — auto blocks kept alongside a user list
     resurrect_vetoed = []  # (uuid, n) — of those, dropped by confirmed_show
+    versetzte = []
+    _zeit_quarantaene = zeitachsen_quarantaene(args.train_archive)
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
         uuid = rec_dir.name[5:]
         user = rec_dir / "ads_user.json"
         auto = rec_dir / "ads.json"
+
+        # ⚠️ Zeitachsen-Wache: Labels von der VOD-Achse, Merkmale von der
+        # Quelle — klaffen die Dauern, trainiert der Kopf auf verschobene
+        # Grenzen. Lieber die Aufnahme ganz auslassen als sie falsch zu
+        # lernen; es sind Einzelfaelle (2 von 107 geprueft), und ein falsch
+        # gelernter Rand kostet mehr als ein fehlender.
+        if uuid in _zeit_quarantaene:
+            versetzte.append((uuid, _zeit_quarantaene[uuid]))
+            continue
 
         # Read both. ads_user.json may be the legacy list-of-pairs
         # format or the dict {"ads":[…], "deleted":[…]} written since
@@ -2976,6 +3017,15 @@ def main():
                          confirmed_show, confirmed_ad_skips)
             cached.append((rec_info, cache_path))
             corpus_no_ts += 1
+
+    # ⚠️ Laut melden, nicht still ueberspringen. Eine ausgelassene Aufnahme
+    # ist eine Korpus-Aenderung; wer sie im Log nicht sieht, sucht den
+    # Unterschied spaeter an der falschen Stelle.
+    if versetzte:
+        print(f"  ⚠ {len(versetzte)} Aufnahme(n) wegen Zeitachsen-Versatz "
+              f"ausgelassen (Label-Achse != Merkmals-Achse):")
+        for u, v in versetzte:
+            print(f"      {u}  Versatz {v:+.0f}s")
 
     if corpus_no_ts:
         print(f"corpus: recovered {corpus_no_ts} recording(s) from the feature "

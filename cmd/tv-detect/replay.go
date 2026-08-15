@@ -42,10 +42,17 @@ type signalsDump struct {
 	SceneCuts        []signals.SceneCut       `json:"scene_cuts"`
 	Letterbox        []signals.LetterboxEvent `json:"letterbox"`
 	IFrames          []float64                `json:"iframes"`
+	// Bildschirm-Text an den Blockgrenzen. Nur Treffer, nicht jeder
+	// Abtastpunkt — leer bedeutet "nichts gefunden ODER nicht gelaufen",
+	// deshalb steht die Reichweite in OCRFenster daneben.
+	OCRFunde   []signals.OCRFund `json:"ocr_funde,omitempty"`
+	OCRFenster float64           `json:"ocr_fenster_s,omitempty"`
 }
 
-func writeSignalsJSON(path string, res *pipeline.Result, silences []signals.SilenceEvent) error {
+func writeSignalsJSON(path string, res *pipeline.Result, silences []signals.SilenceEvent,
+	ocr []signals.OCRFund, ocrFenster float64) error {
 	d := signalsDump{
+		OCRFunde: ocr, OCRFenster: ocrFenster,
 		FPS: res.FPS, FrameCount: res.FrameCount,
 		LogoConfs: res.LogoConfs, NNConfs: res.NNConfs,
 		BumperConfs: res.BumperConfs, BumperStartConfs: res.BumperStartConfs,
@@ -189,4 +196,58 @@ func writeReplaySummary(fps float64, frameCount int, bl []blocks.Block, agree fl
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(out)
+}
+
+// anreicherOCR ergaenzt einen bestehenden Signal-Dump um die OCR-Funde,
+// ohne neu zu decodieren.
+//
+// Warum als eigener Weg und nicht im Replay nebenbei: der Korpus hat ueber
+// hundert Dumps aus der Zeit vor diesem Signal. Sie neu zu decodieren waere
+// stundenlang; die Bloecke bilden sich dagegen in Millisekunden aus dem
+// Dump, und OCR braucht nur die Quelle plus die Kanten. Das macht die
+// Nachruestung zu einem Minutenjob und die Verwendungs-Frage (Ledger 3af)
+// ueberhaupt erst messbar.
+//
+// Schreibt ueber tmp + Rename, weil derselbe Dump gleichzeitig von einem
+// Sweep gelesen werden kann.
+func anreicherOCR(signalsPath, quelle, decoder string,
+	buildOpts func(fps float64) blocks.Opts,
+	helfer string, fensterS, schrittS float64) {
+
+	b, err := os.ReadFile(signalsPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern:", err)
+		return
+	}
+	var d signalsDump
+	if err := json.Unmarshal(b, &d); err != nil {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern: parse:", err)
+		return
+	}
+	if quelle == "" {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern: keine Quelldatei als Argument")
+		return
+	}
+	bl := formBlocks(decoder, buildOpts(d.FPS),
+		d.LogoConfs, d.NNConfs, d.BumperConfs, d.BumperStartConfs, nil,
+		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox,
+		d.IFrames, d.FrameCount)
+	res := &pipeline.Result{FPS: d.FPS, FrameCount: d.FrameCount}
+	funde := leseBildschirmText(quelle, bl, res, helfer, fensterS, schrittS)
+	d.OCRFunde, d.OCRFenster = funde, fensterS
+
+	neu, err := json.Marshal(d)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern:", err)
+		return
+	}
+	tmp := signalsPath + ".tmp"
+	if err := os.WriteFile(tmp, neu, 0644); err != nil {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern:", err)
+		return
+	}
+	if err := os.Rename(tmp, signalsPath); err != nil {
+		fmt.Fprintln(os.Stderr, "ocr-anreichern:", err)
+		_ = os.Remove(tmp)
+	}
 }

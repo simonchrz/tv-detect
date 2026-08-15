@@ -86,6 +86,11 @@ func main() {
 		autoTrainEdge    = flag.Int("auto-train-edge", 40, "Sobel edge threshold during auto-training")
 		autoTrainPersist = flag.Float64("auto-train-persist", 0.85, "persistence threshold during auto-training (0.85 = pixel must be edge in 85% of sampled frames)")
 
+		ocrMarker   = flag.Bool("ocr-marker", false, "Bildschirm-Text an den Blockgrenzen lesen (macOS/Vision, Helfer build/tv-ocr). Erkennt Programmhinweise (Wochentag + Uhrzeit) und Werbe-Kennzeichnungen — Information, die der 224x224-Backbone physisch verwirft. Deckt gemessen 26 % der Kantenfehler-Masse ab (Ledger 3af). Kostet kanten-lokal ~+17 % Laufzeit. Das Signal wird derzeit NUR erhoben und in --emit-signals-json geschrieben, es veraendert die Bloecke noch nicht.")
+		ocrHelfer   = flag.String("ocr-helper", "", "Pfad zum tv-ocr-Binary. Leer = neben der tv-detect-Binaerdatei suchen.")
+		ocrFensterS = flag.Float64("ocr-window", 90, "Halbfenster in Sekunden um jede Blockgrenze, das abgetastet wird.")
+		ocrSchrittS = flag.Float64("ocr-step", 2, "Abstand zwischen zwei Abtastpunkten in Sekunden.")
+
 		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
 		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
 		replayNNCSV     = flag.String("replay-nn-csv", "", "with --replay-signals: replace the embedded nn_confs with fresh per-frame confidences from this CSV (idx,time_s,nn_confidence — the same format --emit-nn-csv writes). Lets an external/candidate classifier be block-formed against the cached decode-signals without re-running ffmpeg.")
@@ -142,6 +147,12 @@ func main() {
 	}
 
 	if *replaySignals != "" {
+		// Erst anreichern, dann replayen: so sieht der Lauf selbst schon die
+		// frisch gelesenen Marker im Dump.
+		if *ocrMarker {
+			anreicherOCR(*replaySignals, flag.Arg(0), *decoderName, buildOpts,
+				*ocrHelfer, *ocrFensterS, *ocrSchrittS)
+		}
 		runReplay(*replaySignals, *replayNNCSV, *speakerCSV, *output, *decoderName, buildOpts)
 		return
 	}
@@ -400,23 +411,39 @@ func main() {
 		}
 	}
 
-	// Optional raw-signals dump — everything Form() below consumes, before
-	// formation runs, so a later --replay-signals run can reproduce this
-	// exact call with a different NNWeight/NNGate/*-snap or a swapped-in
-	// nn_confs from another classifier, without re-decoding.
-	if *emitSignalsJSON != "" {
-		if err := writeSignalsJSON(*emitSignalsJSON, res, sil.events); err != nil {
-			fmt.Fprintln(os.Stderr, "emit-signals-json:", err)
-			os.Exit(1)
-		}
-	}
-
 	// Block formation + final output. Without logo confidences the
 	// classifier has no primary signal and returns an empty list.
 	blockList := formBlocks(*decoderName, buildOpts(res.FPS),
 		res.LogoConfs, res.NNConfs, res.BumperConfs, res.BumperStartConfs, speakerConfFrames,
 		res.BoundaryConfs, res.Blackframes, sil.events,
 		res.SceneCuts, res.Letterbox, res.IFrames, res.FrameCount)
+
+	// Bildschirm-Text um die gefundenen Blockgrenzen. Bewusst NACH der
+	// Formung: die Abtastung ist kanten-lokal, und wo die Kanten liegen,
+	// weiss erst der Decoder. Flaechendeckend waere es so teuer wie der
+	// Backbone selbst (134 s gegen 23 s je Aufnahme).
+	//
+	// Das Signal wird derzeit nur ERHOBEN. Es veraendert blockList nicht —
+	// die Verwendung ist eine eigene, vorab registrierte Frage, und vier
+	// nachgelagerte Regeln sind daran schon gescheitert (Ledger 3x/3z/3ab/3ae).
+	// Erst im Dump zu landen macht sie ueberhaupt per Replay messbar.
+	var ocrFunde []signals.OCRFund
+	if *ocrMarker {
+		ocrFunde = leseBildschirmText(flag.Arg(0), blockList, res,
+			*ocrHelfer, *ocrFensterS, *ocrSchrittS)
+	}
+
+	// Optional raw-signals dump — everything Form() consumes, plus die
+	// OCR-Funde, so a later --replay-signals run can reproduce this exact
+	// call with a different NNWeight/NNGate/*-snap or a swapped-in
+	// nn_confs from another classifier, without re-decoding.
+	if *emitSignalsJSON != "" {
+		if err := writeSignalsJSON(*emitSignalsJSON, res, sil.events,
+			ocrFunde, *ocrFensterS); err != nil {
+			fmt.Fprintln(os.Stderr, "emit-signals-json:", err)
+			os.Exit(1)
+		}
+	}
 
 	// Second opinion from the other decoder — informational only, never
 	// changes blockList. See secondOpinion() for why this is safe to run

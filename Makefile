@@ -6,7 +6,7 @@ BUILD_DIR := build
 LDFLAGS := -s -w  # strip debug + symbol tables — smaller binary
 GOFLAGS := -trimpath
 
-.PHONY: all build build-all darwin-arm64 linux-arm64 linux-amd64 test clean install ffmpeg-master rebuild
+.PHONY: all build build-all darwin-arm64 linux-arm64 linux-amd64 test clean install ffmpeg-master rebuild ocr
 
 all: build
 
@@ -20,11 +20,23 @@ ffmpeg-master:
 # Full detect rebuild: bump ffmpeg to master, then rebuild the binaries.
 rebuild: ffmpeg-master build
 
-build:
+build: ocr
 	@for b in $(BINARIES); do \
 		echo "go build $$b (native)"; \
 		go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/$$b ./cmd/$$b || exit 1; \
 	done
+
+# Bildschirm-Text-Helfer. Nur macOS: das Vision-Framework ist der Grund,
+# warum das ueberhaupt bezahlbar ist (32 ms/Frame, kein Modell-Download,
+# kein Netz). Auf Linux entfaellt der Helfer stillschweigend — tv-detect
+# laeuft dann ohne das OCR-Signal weiter, siehe internal/signals/ocr.go.
+ocr:
+	@if [ "$$(uname)" = "Darwin" ] && command -v swiftc >/dev/null 2>&1; then \
+		echo "swiftc tv-ocr"; \
+		swiftc -O -o $(BUILD_DIR)/tv-ocr tools/ocr/ocr.swift || exit 1; \
+	else \
+		echo "tv-ocr uebersprungen (kein macOS/swiftc)"; \
+	fi
 
 # Cross-compile every target tv-detect actually deploys to.
 build-all: darwin-arm64 linux-arm64 linux-amd64

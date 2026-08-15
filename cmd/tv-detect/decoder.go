@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/simonchrz/tv-detect/internal/blocks"
+	"github.com/simonchrz/tv-detect/internal/pipeline"
 	"github.com/simonchrz/tv-detect/internal/signals"
 )
 
@@ -228,4 +230,53 @@ func secondOpinion(decoder string, opts blocks.Opts, produced []blocks.Block,
 			blocks.HSMMOpts{MinBlockS: opts.MinBlockS, MaxBlockS: opts.MaxBlockS})
 	}
 	return blocks.OverlapIoU(produced, alt), len(alt), true
+}
+
+// leseBildschirmText tastet die Umgebung der gefundenen Blockgrenzen ab und
+// liefert, was dort an Programmhinweisen und Werbe-Kennzeichnungen stand.
+//
+// Fehlertoleranz mit Absicht: fehlt der Helfer (Linux, oder `make ocr` lief
+// nicht), gibt es eine Warnung und der Lauf geht ohne das Signal weiter. Ein
+// Zusatzsignal darf keinen Cutlist-Lauf kosten — dieselbe Regel wie beim
+// decoder-fallback oben.
+func leseBildschirmText(quelle string, bl []blocks.Block, res *pipeline.Result,
+	helfer string, fensterS, schrittS float64) []signals.OCRFund {
+
+	if quelle == "" || len(bl) == 0 {
+		return nil
+	}
+	if helfer == "" {
+		// Neben der eigenen Binaerdatei suchen — dieselbe Konvention, mit
+		// der tv-detect auch head.bin neben dem Backbone findet.
+		if exe, err := os.Executable(); err == nil {
+			helfer = filepath.Join(filepath.Dir(exe), "tv-ocr")
+		}
+	}
+	kanten := make([]float64, 0, len(bl)*2)
+	for _, b := range bl {
+		kanten = append(kanten, b.StartS, b.EndS)
+	}
+	var dauerS float64
+	if res.FPS > 0 {
+		dauerS = float64(res.FrameCount) / res.FPS
+	}
+	funde, err := signals.OCRUmKanten(quelle, kanten, dauerS, signals.OCROpts{
+		Helfer: helfer, FensterS: fensterS, SchrittS: schrittS})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ocr uebersprungen:", err)
+		return nil
+	}
+	var nh, nw int
+	for _, f := range funde {
+		if f.Hinweis {
+			nh++
+		}
+		if f.Werbemarker {
+			nw++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "ocr: %d Abtastpunkte mit Text an %d Kanten "+
+		"(%d Programmhinweis, %d Werbe-Kennzeichnung)\n",
+		len(funde), len(kanten), nh, nw)
+	return funde
 }

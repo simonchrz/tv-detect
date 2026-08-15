@@ -126,10 +126,15 @@ def main():
             # die Zusammensetzung, nicht die Labels. Wer die Labels eines
             # Mitglieds korrigiert, misst danach etwas anderes.
             lab_jetzt = gt[-1].get("label_hash")
+            # Die eigene Zeile zaehlt nicht: der Trend wird VOR dem Gate
+            # geschrieben, sonst ist der Boden bei einer frischen Epoche der
+            # heutige Wert selbst ("zweitbester von 1 Tagen").
+            ts_jetzt = gt[-1].get("ts")
             passend = [e for e in deployt
                        if e.get("set_hash") == hash_jetzt
                        and e.get("decoder") == dec_jetzt
-                       and e.get("label_hash") == lab_jetzt]
+                       and e.get("label_hash") == lab_jetzt
+                       and e.get("ts") != ts_jetzt]
             if passend:
                 # MUSS dieselbe Rechnung sein wie golden_bestwert() in
                 # train-head.py: hoechster Wert, der mindestens zweimal

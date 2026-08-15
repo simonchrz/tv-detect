@@ -82,9 +82,13 @@ def boden_und_champion(gt):
     # zugelegt. Ab 2026-08-14 schneidet der Boden an jeder Label-Änderung.
     # Alte Zeilen tragen kein Feld (None) und fallen damit korrekt heraus.
     lab_jetzt = gt[-1].get("label_hash")
+    # ⚠️ Die eigene Zeile zaehlt nicht — sonst ist die Latte bei einer
+    # frischen Epoche der heutige Wert minus Toleranz, und jeder Lauf meldet
+    # +0.0100 gegen sich selbst (beobachtet 2026-08-15).
+    ts_jetzt = gt[-1].get("ts")
     passend = [e for e in deployt
                if e.get("set_hash") == hash_jetzt and e.get("decoder") == dec_jetzt
-               and e.get("label_hash") == lab_jetzt]
+               and e.get("label_hash") == lab_jetzt and e.get("ts") != ts_jetzt]
     if not passend:
         return None, None
     je_tag = {}

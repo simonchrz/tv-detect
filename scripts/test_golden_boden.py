@@ -253,6 +253,23 @@ class BestwertIstZweitbester(unittest.TestCase):
                     "label_hash": lab}) + "\n")
         return Path(p) / "trend-lab.jsonl"
 
+    def test_eigene_zeile_ist_keine_latte(self):
+        # ⚠️ Der Trend wird VOR dem Gate geschrieben. Ohne ohne_ts vergleicht
+        # sich der Lauf mit sich selbst — bei einer frischen Epoche ist die
+        # eigene Zeile die einzige, und die Latte waere "heutiger Wert minus
+        # Toleranz". Genau das ist am 2026-08-15 passiert (Bericht meldete
+        # "Latte 0.9255, +0.0100" gegen den eigenen Wert 0.9355).
+        with tempfile.TemporaryDirectory() as d:
+            t = self._trend_lab(d, [("20260815T033009", 0.9355, "neu")])
+            self.assertEqual(
+                _th.golden_bestwert(t, HASH, "neu", ohne_ts="20260815T033009"),
+                (None, None))
+            # ... aber eine ECHTE Vornacht traegt weiterhin
+            t2 = self._trend_lab(d, [("20260814T033009", 0.9200, "neu"),
+                                     ("20260815T033009", 0.9355, "neu")])
+            best, _ = _th.golden_bestwert(t2, HASH, "neu", ohne_ts="20260815T033009")
+            self.assertAlmostEqual(best, 0.9200, places=3)
+
     def test_label_epoche_schneidet_den_boden(self):
         # Der eigentliche Zweck: eine Label-Korrektur am Golden-Satz macht
         # frueherer Mediane unvergleichbar. Ohne diesen Schnitt haette die

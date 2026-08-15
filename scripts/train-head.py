@@ -2017,7 +2017,7 @@ def golden_label_hash(uuids, hls_root):
     return h.hexdigest()[:12]
 
 
-def golden_bestwert(trend_pfad, set_hash, label_hash="*"):
+def golden_bestwert(trend_pfad, set_hash, label_hash="*", ohne_ts=None):
     """Der hoechste Golden-Median, den der Stack MINDESTENS ZWEIMAL erreicht
     hat — nicht der hoechste ueberhaupt.
 
@@ -2086,6 +2086,15 @@ def golden_bestwert(trend_pfad, set_hash, label_hash="*"):
         # Massstab zu einem anderen. "*" = kein Filter (Tests/Altpfade).
         if label_hash != "*" and e.get("label_hash") != label_hash:
             continue
+        # ⚠️ Die eigene Zeile zaehlt NICHT. Der Trend wird VOR dem Gate
+        # geschrieben, die Latte saehe sonst den heutigen Lauf und
+        # verglichen ihn mit sich selbst. Bei einer frischen Epoche (neuer
+        # Satz, neuer Decoder, korrigierte Labels) ist das die einzige
+        # Zeile — der Boden meldete dann "heutiger Wert minus Toleranz"
+        # und jeder Lauf kaeme mit +0.010 durch. Gefunden 2026-08-15, als
+        # der erste label_hash-Schnitt genau das produzierte.
+        if ohne_ts and str(e.get("ts")) == str(ohne_ts):
+            continue
         if (e.get("decoder") or "form") != jetzt:
             continue
         v = e.get("golden_median")
@@ -2147,7 +2156,7 @@ def golden_stau(trend_pfad, set_hash, label_hash="*"):
 
 
 def golden_boden(deploy, reason, *, golden_floor, train_archive,
-                 cand_pr, champ_pr, hls_root=None, melde=print):
+                 cand_pr, champ_pr, hls_root=None, ts=None, melde=print):
     if not deploy or golden_floor <= 0:
         return deploy, reason
     try:
@@ -2181,7 +2190,7 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
                 if hls_root and golden else "*")
         best, best_ts = golden_bestwert(
             Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
-            meta.get("set_hash"), _lab)
+            meta.get("set_hash"), _lab, ohne_ts=ts)
         if best is None:
             # ⚠️ Diese Zeile erscheint auch in der ERSTEN Nacht nach einem
             # Decoder-Wechsel, nicht nur bei einem neuen Golden-Satz. Ohne den
@@ -2208,7 +2217,8 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
             # abzurutschen, darf aber nicht selbst still passieren.
             _stau = golden_stau(
                 Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
-                meta.get("set_hash"), _lab)
+                meta.get("set_hash"), _lab)   # Stau zaehlt die eigene Zeile MIT:
+            # sie ist ja gerade eine geblockte Nacht mehr.
             if _stau >= 3:
                 melde(f"  ⚠ Golden-Boden blockt die {_stau + 1}. Nacht in Folge — "
                       f"der Champion steht seit {_stau + 1} Laeufen. Entweder ist "
@@ -6675,7 +6685,7 @@ def main():
         train_archive=args.train_archive,
         cand_pr=(metrics_smooth or {}).get("per_rec_iou") or {},
         champ_pr=(deployed_test_metrics or {}).get("per_rec_iou") or {},
-        hls_root=args.hls_root)
+        hls_root=args.hls_root, ts=ts)
 
     if deploy:
         if is_mlp_write:

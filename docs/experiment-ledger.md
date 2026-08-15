@@ -308,6 +308,59 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3ai. Das Logo ist doch ein gutes Signal — meine Absage war zu
+breit (2026-08-15, Einwand des Users)
+
+⚠️ **Korrektur.** In §3af steht „das Logo rettet keine dieser Kanten, blend
+ist damit erledigt". Gemessen war das ausschließlich auf den **76
+Fehlerkanten** — eine nach Konstruktion verzerrte Auswahl: dort versagen
+per Definition beide Signale. Über den ganzen Korpus sieht es anders aus.
+
+**Trennschärfe über 105 Aufnahmen:**
+
+| | im Werbeblock | in der Sendung | klar getrennt | Überlappung |
+|---|---|---|---|---|
+| Logo | 0.104 | 0.915 | 85 % | 1 % |
+| NN | 0.935 | 0.039 | 100 % | 0 % |
+
+Das Logo trennt also sauber — der User hatte recht. Und für die KANTE sind
+beide gleich gut: Logo-Flanke Median 3.2 s, NN-Flanke 3.3 s. Entscheidend
+ist aber, dass sie **komplementär** sind: das Logo liegt bei 37 % der
+Kanten näher, das NN bei 43 %, gleich bei 19 %.
+
+**Trotzdem bringt `hsmm-blend` nichts** (105 Aufnahmen, Kantenfehler):
+
+```
+        hsmm    Median 4.2s  p75 13.0s  p90 34.6s  <=2s 37%  Summe 4073s
+  hsmm-blend    Median 4.0s  p75 15.0s  p90 36.1s  <=2s 39%  Summe 4955s
+```
+
+Marginal besserer Median, schlechterer Schwanz, 20 % mehr Gesamtfehler. Der
+Grund steckt in der Mechanik: blend **mittelt** die Emissionen
+(`ad = 1-((1-w)*logo + w*(1-nn))`). Zwei Signale, die jeweils in
+VERSCHIEDENEN Fällen recht haben, verlieren beim Mitteln beide. Gebraucht
+wird eine **Auswahl**, keine Mischung.
+
+**Wieviel in der Auswahl steckt** (Fenster ±30 s um die DECODER-Kante, also
+einsetzbar — nicht um die wahre Kante, das wäre Nachbetrachtung):
+
+| | Median | p75 | ≤2 s | Summe |
+|---|---|---|---|---|
+| Decoder (Ist) | 4.4 s | 14.8 s | 36 % | 4448 s |
+| Heuristik „größere Flanke" | 3.5 s | 13.5 s | 38 % | 4281 s |
+| Orakel (perfekte Auswahl) | 2.5 s | 9.9 s | 45 % | 3773 s |
+
+⚠️ Der erste Anlauf legte das Fenster um die WAHRE Kante und ergab Orakel
+1.5 s / 58 % — das ist Unsinn, weil ein Verfahren im Betrieb nicht weiß, wo
+die Wahrheit liegt. Die Tabelle oben ist die ehrliche Fassung.
+
+**Einordnung:** eine naive Heuristik holt ~0.9 s Median, die Obergrenze
+perfekter Auswahl liegt bei ~2 s Median und 45 % statt 36 % auf 2 s. Real,
+aber kein Durchbruch — und es adressiert die harten Fälle NICHT (§3ah: 29 %
+der schlechten Kanten haben gar keinen Anker, und bei Trailern/Split-Screen
+irren beide Signale gemeinsam). Eine Auswahl zwischen zwei Signalen hilft
+nicht, wo beide falsch liegen.
+
 ## 3ah. Warum die Kante schwer ist — gemessen (2026-08-15)
 
 336 Kanten, ohne die zeitversetzte Aufnahme.

@@ -308,6 +308,88 @@ neu registrieren.
 Randverlängerung 16:12 und §3z Ad-Bias 6:11). Anders als die beiden
 scheitert dieser nicht an der Idee, sondern an der Referenz.
 
+## 3af. Die Kanten direkt gemessen — und die Fehlermasse zerlegt
+(2026-08-15)
+
+⚠️ **Methodischer Kern: Block-IoU war die falsche Kennzahl.** Sie misst
+überwiegend Block-MASSE. Das Ziel sind Kanten. Direkt gemessen über 104
+Aufnahmen mit frischen Signalen, 344 Kanten:
+
+| | Median | p75 | p90 | ≤2 s | ≤5 s | ≤10 s |
+|---|---|---|---|---|---|---|
+| Starts | 4.3 s | 16.0 s | 39.8 s | 35 % | 54 % | 66 % |
+| Enden | 5.0 s | 21.2 s | 54.2 s | 35 % | 51 % | 62 % |
+
+**Blöcke FINDEN ist gelöst** — von 173 Label-Blöcken wird genau einer ganz
+verpasst (15 Auto-Blöcke haben keinen Partner). Das gesamte Problem ist die
+Kantenlage. IoU 0.937 verdeckt, dass nur ein Drittel der Kanten auf 2 s
+sitzt.
+
+### Die Fehlermasse: 76 Kanten > 20 s tragen 4454 s
+
+| Gruppe | Kanten | Sekunden | Frame-Befund |
+|---|---|---|---|
+| Kopf sicher WERBUNG (nn>0.85), Wahrheit Sendung | 9 | 973 s | 4× Let's-Dance-Live-Inhalt, 2× Trailer |
+| Kopf sicher SENDUNG (nn<0.15), Label sagt Werbung | 15 | 896 s | **10× Label zu großzügig**, 4× Split-Screen-Werbung, 1× Trailer |
+| Mittelband 0.15–0.85 | 52 | 2585 s | (nicht einzeln geprüft) |
+
+Bei den 15 „sicher Sendung"-Fällen liegt **ausnahmslos** das Label weiter
+außen — kein einziges Mal umgekehrt.
+
+### Drei Befunde, die vorher nicht sichtbar waren
+
+**1. Der Juli-Fix für Let's Dance ist tot.** `dvr-rtl-1780078500` trägt
+allein 623 s der ersten Gruppe. Die per-Show-Konfiguration setzt
+`nn_gate 0` / `nn_weight 1` (Fix vom 07-28 gegen das Logo-Ausblenden).
+⚠️ **Im Code nachgewiesen wirkungslos:** Produktion fährt plain `hsmm`, und
+dort ist `emit := nnConf` (`cmd/tv-detect/decoder.go:119`) — `NNWeight`
+liest **nur** `hsmm-blend`/`hsmm-full`, `nn_gate` gar nichts. Seit dem
+Decoder-Wechsel am 07-29 ist der Fix inert, ohne dass es auffiel. Bestätigt
+Memory `hsmm_ignoriert_per_show_tuning` am Code statt aus der Erinnerung.
+
+**2. Die Logo-Spur ist kein Hebel — gemessen, nicht vermutet.** Plain
+`hsmm` ignoriert das Logo vollständig; `hsmm-blend` würde es einmischen.
+In den Fehlerbereichen sagt es aber dasselbe wie das NN: bei „sicher
+Werbung" Median 0.196 (Logo sagt auch Werbung — Let's Dance blendet sein
+Logo während der Show aus), bei „sicher Sendung" 0.907 (sagt auch Sendung —
+Trailer und Split-Screen tragen das Senderlogo). Im Mittelband widerspricht
+es zu 48 %, also Münzwurf. **blend rettet keine dieser Kanten.** Die Idee
+ist damit billig erledigt.
+
+**3. Split-Screen-Werbung ist eine eigene Fehlerklasse.** Bei Let's Dance
+laufen Spots im geteilten Bild, während die Show in einer Ecke weiterläuft.
+NN liest Sendung (nn 0.03–0.18), Logo liest Sendung — und es IST Werbung,
+mit der Kennzeichnung „Werbung" plus Countdown im Bild. Beide vorhandenen
+Signale versagen gemeinsam, per Konstruktion.
+
+### Wieviel davon steht im Bild geschrieben
+
+OCR über alle 76 Lücken (2 Frames je Lücke, also eine UNTERGRENZE):
+
+```
+  Programmhinweis (Wochentag+Uhrzeit)    13 Luecken   796s  (18 %)
+  Werbe-Kennzeichnung ("Werbung")         5 Luecken   370s  ( 8 %)
+  mindestens eines von beiden            18 Luecken  1167s  (26 %)
+  ohne jeden lesbaren Marker             58 Luecken  3287s
+```
+
+**26 % der Kantenfehler-Masse liegt dort, wo der Bildschirm buchstäblich
+hinschreibt, was läuft** — und zwar in Information, die weder NN noch Logo
+trägt (§3aa: 224×224 verwirft sie). Beispiele: die Split-Screen-Spots
+zeigen „WERBUNG" bei nn=0.03; eine 179-s-Lücke zeigt „Montag 20:15" bei
+nn=0.88.
+
+⚠️ Kein Freifahrtschein: 74 % tragen keinen lesbaren Marker, und OCR ist
+kein Ersatz für das Modell. Aber es ist der einzige gemessene Kandidat, der
+Information HINZUFÜGT statt vorhandene umzurechnen — und er ist jetzt in
+Sekunden auf der richtigen Kennzahl beziffert statt in
+IoU-Nachkommastellen.
+
+⚠️ **Nicht vergessen: 10 der 15 geprüften „sicher Sendung"-Lücken waren
+LABEL-Fehler** (zu großzügig). Ein Teil der gemessenen 4454 s ist also gar
+kein Modellfehler. Die Korrektur steht aus und gehört gemacht, BEVOR die
+nächste Frage auf diesen Zahlen registriert wird.
+
 ## 3ae. O12 — der eine Schuss: NICHT ERFÜLLT um 0.0083 (2026-08-15)
 
 Registrierung [`o12-ocr-bestaetigung-preregistration.md`](o12-ocr-bestaetigung-preregistration.md),

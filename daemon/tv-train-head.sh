@@ -428,12 +428,12 @@ echo "=== label audit end ==="
 # dem 2026-08-15 entstanden sind — die kann niemand rueckwirkend passend
 # waehlen. Das Skript gibt vor Erreichen der registrierten Mindestmengen
 # bewusst KEINEN Zwischenstand aus.
-echo "=== ocr-schatten (sammelt, wendet nicht an) ==="
-"$VENV_PY" "$HOME/src/tv-detect/scripts/ocr-schatten.py" 2>&1 \
-  || echo "ocr-schatten failed (non-fatal)"
-"$VENV_PY" "$HOME/src/tv-detect/scripts/ocr-schatten.py" --auswerten 2>&1 \
+echo "=== kanten-schatten (sammelt, wendet nicht an) ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/kanten-schatten.py" 2>&1 \
+  || echo "kanten-schatten failed (non-fatal)"
+"$VENV_PY" "$HOME/src/tv-detect/scripts/kanten-schatten.py" --auswerten 2>&1 \
   || true
-echo "=== ocr-schatten end ==="
+echo "=== kanten-schatten end ==="
 
 echo "train-head exit=$rc"
 exit $rc

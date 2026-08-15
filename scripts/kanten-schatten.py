@@ -87,14 +87,31 @@ def reviewed_at(pfad):
         return 0.0
 
 
-def ist_mensch(pfad):
-    """Wie hasProtectedLabels in tv-recorder: auto_confirmed_at trennt
-    Maschine von Mensch, die blosse Existenz der Datei nicht."""
+def label_quelle(pfad):
+    """"mensch" | "agent" | "auto" — WER das Label gesetzt hat.
+
+    ⚠️ Die Unterscheidung ist nicht kosmetisch, sie entscheidet ueber die
+    Gueltigkeit von O13. Die OCR-Regel setzt die Kante an einen
+    Programmhinweis; ein Agent, der denselben Frame sieht, liest „Montag
+    20:15" und setzt die Kante genau dort. Gegen Agent-Labels geprueft
+    wuerde die Regel ihre eigene Evidenz erzeugen und trivial bestehen.
+
+    O14 (Flankenauswahl aus NN und Logo) ist davon NICHT betroffen — diese
+    Signale sieht kein Agent, sein Urteil ist dazu unabhaengig.
+
+    Erkennung: auto_confirmed_at = Maschine. agent_reviewed = von einem
+    Review-Agenten gesetzt (schreibt handleAdsEdit durch). Alles andere =
+    Mensch.
+    """
     try:
         d = json.loads(Path(pfad).read_text())
     except Exception:
-        return False
-    return not d.get("auto_confirmed_at")
+        return None
+    if d.get("auto_confirmed_at"):
+        return "auto"
+    if d.get("agent_reviewed"):
+        return "agent"
+    return "mensch"
 
 
 def regel_kanten(auto, funde):
@@ -199,7 +216,8 @@ def sammle():
             if u in gesehen:
                 continue
             up = d / "ads_user.json"
-            if not up.is_file() or not ist_mensch(up):
+            quelle = label_quelle(up) if up.is_file() else None
+            if quelle in (None, "auto"):
                 continue
             # ⚠️ DER Filter: nur Labels, die nach der Aktivierung entstanden.
             if reviewed_at(up) < AKTIVIERUNG:
@@ -241,6 +259,7 @@ def sammle():
                 continue
             f.write(json.dumps({
                 "uuid": u, "reviewed_at": reviewed_at(up),
+                "label_quelle": quelle,
                 "n_ocr_funde": len(j.get("ocr_funde") or []),
                 "kanten": zeilen}) + "\n")
             neu += 1
@@ -253,15 +272,23 @@ def auswerten():
         print("Noch keine Schatten-Zeilen.")
         return 0
     eintraege = [json.loads(z) for z in LEDGER.read_text().splitlines() if z.strip()]
-    alle = [(e["uuid"], k) for e in eintraege for k in e["kanten"]]
-    print(f"{len(eintraege)} Aufnahmen im Ledger, {len(alle)} Kanten\n")
-    _auswerten_o13(alle)
+    mit_q = [(e["uuid"], k, e.get("label_quelle", "mensch"))
+             for e in eintraege for k in e["kanten"]]
+    alle = [(u, k) for u, k, _ in mit_q]
+    import collections
+    print(f"{len(eintraege)} Aufnahmen im Ledger, {len(alle)} Kanten "
+          f"(Label-Herkunft: {dict(collections.Counter(q for _,_,q in mit_q))})\n")
+    _auswerten_o13(mit_q)
     print()
     _auswerten_o14(alle)
     return 0
 
 
-def _auswerten_o13(alle):
+def _auswerten_o13(alle_mit_quelle):
+    # ⚠️ NUR Menschen-Labels. Gegen Agent-Labels waere die Frage zirkulaer
+    # (s. label_quelle): der Agent liest denselben Bildschirm-Text, an den
+    # die Regel die Kante zieht.
+    alle = [(u, k) for u, k, q in alle_mit_quelle if q == "mensch"]
     ang = [(u, k) for u, k in alle if k["ocr_angefasst"]]
     n_auf = len({u for u, _ in ang})
     print(f"O13 (OCR): {len(ang)} angefasste Kanten aus {n_auf} Aufnahmen")

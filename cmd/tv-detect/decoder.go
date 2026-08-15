@@ -116,6 +116,25 @@ func formBlocks(decoder string, opts blocks.Opts,
 		//   ad = 1 - ((1-w)*logo + w*(1-nn))  with the channel's nn_weight.
 		// Pure NN stays the default emission — it is what every published
 		// HSMM number was measured with.
+		//
+		// ⚠️ Damit sind unter plain "hsmm" die per-Show/per-Kanal gesetzten
+		// nn_weight und nn_gate WIRKUNGSLOS: die Emission ist reines NN, das
+		// Logo geht gar nicht ein. Das ist kein Versehen, aber es hat schon
+		// einen Fix still getötet — die Let's-Dance-Konfiguration vom
+		// 2026-07-28 (nn_gate 0 / nn_weight 1 gegen das Logo-Ausblenden) tut
+		// seit dem Decoder-Wechsel am 07-29 nichts, und niemandem fiel es auf,
+		// bis eine Kantenmessung 623 s Fehler in genau dieser Sendung fand
+		// (Ledger §3af). Deshalb warnt der Lauf jetzt laut, statt es
+		// schweigend zu ignorieren.
+		if decoder == decoderHSMM {
+			if opts.NNGate > 0 || (opts.NNWeight > 0 && opts.NNWeight != 1) {
+				fmt.Fprintf(os.Stderr,
+					"warn: --nn-gate=%.2f/--nn-weight=%.2f haben unter --decoder hsmm "+
+						"KEINE Wirkung (Emission ist reines NN, Logo geht nicht ein). "+
+						"Wirksam sind hier nur --min/--max-block-sec und die --hsmm-* Flags.\n",
+					opts.NNGate, opts.NNWeight)
+			}
+		}
 		emit := nnConf
 		if (decoder == decoderHSMMBlend || decoder == decoderHSMMFull) &&
 			len(logoConf) == len(nnConf) && opts.NNWeight > 0 {

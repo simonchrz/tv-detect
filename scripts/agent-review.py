@@ -141,7 +141,18 @@ def kante_aus_folge(punkte, seite):
         vermutlich ausserhalb).
     """
     folge = [(t, KONVENTION.get(k)) for t, k in punkte]
-    folge.sort()
+    # ⚠️ NUR nach der Zeit sortieren. Ein blosses folge.sort() vergleicht bei
+    # gleicher Zeit die Kategorien — und "unklar" wird zu None, was sich mit
+    # einem Text nicht vergleichen laesst. Gleiche Zeitpunkte treten auf,
+    # sobald eine Nachfass-Runde Punkte der ersten ueberlappt; der Lauf brach
+    # dann mitten im Stapel ab.
+    folge.sort(key=lambda x: x[0])
+    # Doppelte Zeitpunkte zusammenfassen: die spaetere Beurteilung gewinnt,
+    # sie stammt aus der feineren Runde.
+    einmalig = {}
+    for t, k in folge:
+        einmalig[t] = k
+    folge = sorted(einmalig.items())
     if len(folge) < 3:
         return None, "zu wenige Bilder"
     erwartet_vor = "sendung" if seite == "start" else "werbung"

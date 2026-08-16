@@ -432,6 +432,12 @@ def anwenden(trocken):
         up, ap = d / "urteil.json", d / "auftrag.json"
         if not (up.is_file() and ap.is_file()):
             continue
+        # ⚠️ Schon angewandt = nicht noch einmal schreiben. Jeder erneute
+        # POST setzt reviewed_at neu und laesst eine alte Beurteilung wie
+        # eine frische aussehen — im Schattenlauf haengt daran, welche
+        # Labels ueberhaupt gezaehlt werden.
+        if (d / "angewandt").is_file():
+            continue
         auftrag = json.loads(ap.read_text())
         try:
             bilder = json.loads(up.read_text()).get("bilder") or []

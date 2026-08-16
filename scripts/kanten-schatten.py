@@ -81,10 +81,24 @@ def bloecke(pfad):
 
 
 def reviewed_at(pfad):
+    """Wann wurde das Label ZULETZT angefasst?
+
+    ⚠️ NICHT `reviewed_at`. Der Server setzt das Feld nur, wenn es FEHLT —
+    stand es schon von einer Auto-Bestaetigung her drin, bleibt der alte
+    Zeitstempel stehen, auch wenn heute jemand jede Kante verschoben hat.
+    Sieben frisch reviewte Aufnahmen trugen dadurch Werte von vor Wochen und
+    fielen still durch den Aktivierungs-Filter; der Schattenlauf blieb leer,
+    ohne dass irgendetwas nach Fehler aussah.
+
+    `auto_at_review_at` setzt handleAdsEdit dagegen bei JEDER Bearbeitung
+    neu — das ist der Zeitpunkt, den wir meinen. `reviewed_at` bleibt als
+    Rueckfall fuer Altbestaende ohne das Feld.
+    """
     try:
-        return float(json.loads(Path(pfad).read_text()).get("reviewed_at") or 0)
+        d = json.loads(Path(pfad).read_text())
     except Exception:
         return 0.0
+    return float(d.get("auto_at_review_at") or d.get("reviewed_at") or 0)
 
 
 def label_quelle(pfad):

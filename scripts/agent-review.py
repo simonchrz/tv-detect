@@ -79,11 +79,21 @@ CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE
 
-# ±16 s in 4-s-Schritten = 9 Bilder je Kante. Enger als die typische
-# Kantenabweichung (Median 4.4 s, p75 14.8 s) wäre nutzlos, weiter kostet
-# Bilder ohne Ertrag: jenseits von 16 s liegt nur noch jede zehnte Kante.
-FENSTER_S = 16
-SCHRITT_S = 4
+# ±40 s in 5-s-Schritten = 17 Bilder je Kante.
+#
+# ⚠️ Erst standen hier ±16 s, gerechtfertigt mit „p75 der Kantenabweichung
+# ist 14.8 s". Der Denkfehler: eine Aufnahme braucht ALLE ihre Kanten, und
+# bei vier Kanten liegt die Wahrscheinlichkeit, dass jede einzelne unter
+# 16 s bleibt, weit unter der Hälfte. Gemessen an den ersten Stapeln war
+# „kein Wechsel im Fenster" mit Abstand der häufigste Ablehnungsgrund — eine
+# RTL-Aufnahme scheiterte an allen vier Kanten gleichzeitig.
+#
+# Ein weiteres Fenster kostet knapp doppelt so viele Bilder, spart dafür bei
+# den meisten Aufnahmen die komplette Nachfass-Runde (ffmpeg-Lauf, zweiter
+# Agent, zweite Ableitung). Das ist der bessere Tausch, und p90 der
+# Kantenabweichung liegt bei 35.6 s — ±40 s deckt sie ab.
+FENSTER_S = 40
+SCHRITT_S = 5
 
 # Zweiter Durchgang fuer Kanten, die im engen Fenster nicht entscheidbar
 # waren. ⚠️ Der Bedarf ist nicht theoretisch: bei kabel-eins setzt das
@@ -256,6 +266,14 @@ def vorbereiten(anzahl, dump_anfordern=False):
     for d in gewaehlt:
         u = d.name[5:]
         auto = bloecke(d / "ads.json")
+        # ⚠️ Zwischen Auswahl und Benutzung koennen Minuten liegen — das
+        # Warten auf die Signal-Dumps dauert, und der Snapshot ist ein Abzug,
+        # den jederzeit jemand neu ziehen kann. Genau dabei ist eine Aufnahme
+        # verschwunden und der Lauf mit einem TypeError abgebrochen, mitten im
+        # Stapel. Ein fehlender Kandidat ist kein Fehler, nur einer weniger.
+        if not auto:
+            print(f"  {u}: ads.json inzwischen weg — uebersprungen")
+            continue
         ziel = ARBEIT / u
         kanten = []
         for i, (s, e) in enumerate(auto):

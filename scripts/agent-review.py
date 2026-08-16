@@ -274,6 +274,89 @@ def frames_ziehen(uuid, zeiten, ziel):
 DUMPS = Path.home() / ".cache/tv-detect-daemon/emit-signals"
 
 
+# Grob-Durchgang: die ganze Aufnahme im festen Takt abtasten.
+#
+# ⚠️ Der Grund ist ein Auswahlfehler, den die bisherige Bauart nicht
+# beheben kann. Wer die Bilder UM DIE MODELLKANTE HERUM zieht, kann nur
+# Kanten beurteilen, die nahe genug an der Modellkante liegen — alles
+# andere faellt als „kein Wechsel im Fenster" durch. Genau daran sind am
+# 2026-08-16 RTL, VOX und zweimal ProSieben gescheitert, waehrend die gut
+# sitzenden Aufnahmen durchkamen. Der Messsatz hatte daraufhin Median 0.0 s
+# Kantenfehler, der Korpus 4.4 s (Ledger 3ak): er bildete eine andere
+# Population ab als das, was gemessen werden sollte.
+#
+# 45 s Takt ueber eine Stunde sind 80 Bilder — vergleichbar mit dem, was
+# ein kantenbezogener Auftrag heute schon kostet, aber ohne die Annahme,
+# dass das Modell ungefaehr richtig liegt.
+GROB_TAKT_S = 45
+
+
+def vorbereiten_grob(anzahl):
+    """Ganze Aufnahmen im festen Takt abtasten — modellunabhaengig."""
+    kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
+    kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
+    print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle")
+    for d in _reihum(kandidaten)[:anzahl]:
+        u = d.name[5:]
+        dauer = _laufzeit(d)
+        if not dauer:
+            print(f"  {u}: Laufzeit unbekannt — uebersprungen")
+            continue
+        ziel = ARBEIT / u
+        zeiten = [float(t) for t in range(GROB_TAKT_S, int(dauer), GROB_TAKT_S)]
+        frames = frames_ziehen(u, zeiten, ziel / "grob")
+        auftrag = {"uuid": u, "art": "grob", "dauer_s": round(dauer, 1),
+                   "bloecke": [[round(a, 1), round(b, 1)]
+                               for a, b in (bloecke(d / "ads.json") or [])],
+                   "kanten": [{"block": -1, "seite": "grob", "ist": 0.0,
+                               "verzeichnis": "grob", "frames": frames}]}
+        ziel.mkdir(parents=True, exist_ok=True)
+        (ziel / "auftrag.json").write_text(json.dumps(auftrag, indent=1))
+        print(f"  {u:36} {dauer/60:.0f} min, {len(frames)} Bilder im "
+              f"{GROB_TAKT_S}-s-Takt -> {ziel}")
+    return 0
+
+
+def _laufzeit(d):
+    """Aus der Cutlist-Kopfzeile: '... 405048 FRAMES AT 2500'."""
+    for t in sorted(d.glob("*.txt")):
+        try:
+            kopf = t.read_text(errors="replace").split("\n", 1)[0]
+        except Exception:
+            continue
+        if "FRAMES AT" not in kopf:
+            continue
+        teile = kopf.split()
+        try:
+            i = teile.index("FRAMES")
+            return float(teile[i - 1]) / (float(teile[i + 2]) / 100.0)
+        except (ValueError, IndexError, ZeroDivisionError):
+            continue
+    return None
+
+
+def bloecke_aus_grob(punkte):
+    """Aus der groben Folge die Werbebloecke ableiten — ohne das Modell.
+
+    ⚠️ Bewusst GROB: die Grenzen sind auf den Takt genau, mehr nicht. Sie
+    sind der Ausgangspunkt fuer eine feine Runde, kein Label. Ein Block
+    braucht mindestens zwei aufeinanderfolgende Werbe-Punkte, sonst wuerde
+    ein einzelner Trailer mitten in der Sendung zu einem Block.
+    """
+    folge = sorted((t, KONVENTION.get(k)) for t, k in punkte)
+    raus, start = [], None
+    for i, (t, k) in enumerate(folge):
+        if k == "werbung" and start is None:
+            start = t
+        elif k == "sendung" and start is not None:
+            if sum(1 for tt, kk in folge if start <= tt < t and kk == "werbung") >= 2:
+                raus.append((start, t))
+            start = None
+    if start is not None and folge:
+        raus.append((start, folge[-1][0]))
+    return raus
+
+
 def vorbereiten(anzahl, dump_anfordern=False):
     kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
@@ -568,6 +651,9 @@ def anwenden(trocken):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--vorbereiten", action="store_true")
+    ap.add_argument("--grob", action="store_true",
+                    help="ganze Aufnahmen im festen Takt abtasten, statt um "
+                         "die Modellkante herum — findet auch grob falsche Kanten")
     ap.add_argument("--anwenden", action="store_true")
     ap.add_argument("--nachfassen", action="store_true",
                     help="unentschiedene Kanten mit weiterem Fenster neu vorbereiten")
@@ -581,6 +667,8 @@ def main():
     a = ap.parse_args()
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
+        if a.grob:
+            return vorbereiten_grob(a.anzahl)
         return vorbereiten(a.anzahl, a.dump_anfordern)
     if a.nachfassen:
         return nachfassen()

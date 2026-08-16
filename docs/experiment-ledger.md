@@ -446,6 +446,56 @@ keine Modellfrage. Ich habe erst Emission, Decoder und per-Show-Konfiguration
 durchgesehen, bevor ich auf die Blocklängen geschaut habe — die Antwort
 stand von Anfang an in der Tabelle.
 
+## 3al. Der grobe Durchgang: das Modell startet Werbeblöcke
+SYSTEMATISCH zu früh (2026-08-16, erste zwei Aufnahmen)
+
+Als Reparatur des Auswahlfehlers aus §3ak: die ganze Aufnahme im 45-s-Takt
+abtasten (80–95 Bilder je Stunde) und die Blöcke daraus ableiten, **ohne**
+die Annahme, dass das Modell ungefähr richtig liegt.
+
+```
+kabel-eins-1786546385 (64 min)
+   Modell 1552-2101   grob 1620-2115   Start +68s   Ende +14s
+   Modell 2763-3310   grob 2835-3330   Start +72s   Ende +20s
+
+prosieben-1786035922 (72 min)
+   Modell 2487-2963   grob 2520-2970   Start +33s   Ende  +7s
+   Modell 3490-3988   grob 3510-4005   Start +20s   Ende +17s
+   Modell 4147-4310   grob 4185-4275   Start +38s   Ende -35s
+```
+
+**Fünf von fünf Blockstarts liegen zu früh, um 20 bis 72 Sekunden.** Die
+Enden sind deutlich näher dran. Die Richtung ist über beide Aufnahmen und
+alle Blöcke gleich.
+
+⚠️ **Warum das die kantenbezogene Bauart nicht finden konnte:** sie sucht
+±40 s um die Modellkante. Ein Startfehler von 68 s liegt außerhalb und fällt
+als „kein Wechsel im Fenster" durch — genau so sind RTL, VOX und zweimal
+ProSieben aus dem Messsatz verschwunden, während die gut sitzenden
+Aufnahmen durchkamen. Der Auswahleffekt aus §3ak ist damit nicht mehr eine
+Vermutung aus der Ausgangslage, sondern belegt.
+
+### Und es ist die Gewinnspiel-Klasse, größer als gedacht
+
+Das Modell startet zu früh, weil es die **Mitmachtafel vor dem Block** als
+Werbebeginn liest — nach Konvention ist sie Sendung (§3y, vom User am
+2026-08-16 an drei Bildern bestätigt). Genau dieses Muster zeigte sich schon
+bei jeder kabel-eins-Aufnahme im Agenten-Review.
+
+⚠️ **Damit ist mein Urteil vom 2026-08-14 zu korrigieren.** In §3t hatte ich
+die Gewinnspiel-Klasse mit „68 s über den Golden-Satz, 4.5 s/Std — kleiner
+als die Fehlalarmrate eines Detektors, nicht bauen" abgelegt. Diese Zahl
+stammt aus dem Golden-Satz und misst nur, was dort an Streitmasse zwischen
+Auto und Label liegt. Der grobe Durchgang zeigt **eine Minute je Blockstart**
+— und beim Ad-Skip wird das von der Sendung abgeschnitten, was irreversibel
+ist. Die Klasse ist damit wieder offen und deutlich größer als gemessen.
+
+**Vorbehalt:** zwei Aufnahmen, fünf Blöcke, Rasterweite 45 s. Die Richtung
+ist über alle fünf gleich und die Beträge liegen über dem Raster; die
+einzelnen Werte sind es nicht auf die Sekunde. Bevor daraus eine Frage mit
+Registrierung wird, gehört der grobe Durchgang über deutlich mehr
+Aufnahmen — und er ist jetzt das Werkzeug dafür.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

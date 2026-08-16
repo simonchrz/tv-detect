@@ -22,28 +22,29 @@ gelöst, die Kantenlage ist es nicht — eine Vollsichtung würde also das
 Zehnfache an Frames für das Problem ausgeben, das der Detektor bereits
 kann. Der Auftrag deckt deshalb ±16 s um jede Kante ab.
 
-⚠️⚠️ **STAND 2026-08-16: NICHT PRODUKTIONSREIF.** Die erste menschliche
-Stichprobe über drei Urteile ergab **drei Fehler**:
+⚠️ **Bauart, und warum genau diese.** Die erste Fassung fragte den Agenten
+„bei welcher Sekunde ist der Übergang" und nannte im Auftrag die erwarteten
+Kategorien samt Markennamen. Menschliche Stichprobe: **3 von 3 Urteilen
+falsch** — er antwortete, wo die Grenze außerhalb des Fensters lag,
+bestätigte eine Kante einen Abtastpunkt zu spät, und lehnte vier von vier
+Blockstarts mit einer erfundenen Begründung ab, die wörtlich aus meinem
+eigenen Auftrag stammte.
 
-  * Ein Blockende wurde auf „Sendung läuft wieder" gesetzt, obwohl über das
-    ganze Fenster Trailer lief — der Agent belegte es sogar mit einem
-    Vorspann, den es dort nicht gibt.
-  * Eine Kante wurde unverändert bestätigt, obwohl der Übergang einen
-    Abtastpunkt früher lag.
-  * Vier von vier kabel-eins-Blockstarts wurden als „GewinnArena-Insert,
-    01379-Nummer, 4×25.000 €" abgelehnt — tatsächlich ist dort ein
-    Werbeübergang.
+Deshalb jetzt drei Trennungen:
 
-Der dritte Fall ist der lehrreichste: **der Auftrag nannte die Marken
-selbst** („winario, GewinnArena, 01379"), und der Agent hat sie auf
-mehrdeutige Bilder gemustert — konsistent über vier Aufnahmen, was wie ein
-systematischer Befund aussieht statt wie eine Halluzination. Ein Auftrag,
-der die erwarteten Antworten aufzählt, erzeugt sie.
+  1. Der Agent klassifiziert **einzelne Bilder** in neutralen Kategorien
+     (`sendungsinhalt`, `produktwerbung`, `programmvorschau`,
+     `mitmachtafel`, `unklar`). Keine Markennamen im Auftrag — ein Auftrag,
+     der die erwarteten Antworten aufzählt, erzeugt sie.
+  2. Die **Konvention** (was davon zählt als Werbung) steht in `KONVENTION`,
+     an einer Stelle, sichtbar und änderbar ohne Agenten-Neuinstruktion.
+  3. Die **Kante** leitet `kante_aus_folge` ab und kann NEIN sagen: kein
+     Wechsel im Fenster, mehrere Wechsel, falsche Richtung, `unklar` am
+     Übergang oder Wechsel am Fensterrand → keine Kante. Genau das konnte
+     die erfragte Antwort nicht.
 
-Die bis dahin geschriebenen Labels sind zurückgenommen. Bevor das hier
-wieder läuft, braucht es (a) einen Auftrag ohne Antwortvorgaben und (b) eine
-Konstruktion, die „ich sehe die Grenze nicht" maschinell prüfbar macht,
-statt dem Selbsturteil des Agenten zu vertrauen.
+Die Bauart „Spannen klassifizieren" hat dieselbe Stichprobe mit **4 von 4**
+bestanden; der Unterschied ist die Frage, nicht der Agent.
 
 ⚠️ **Was diese Labels NICHT beantworten können:** O13 prüft, ob eine Regel
 die Kante an einen Programmhinweis ziehen soll. Ein Agent, der denselben
@@ -84,6 +85,67 @@ SCHRITT_S = 4
 # reviewbar (4 von 4 Aufnahmen im ersten Stapel betroffen).
 WEIT_FENSTER_S = 72
 WEIT_SCHRITT_S = 6
+
+
+# Die Konvention wird HIER angewandt, nicht vom Agenten.
+#
+# ⚠️ Warum: am 2026-08-16 nannte der Auftrag die Konvention samt Markennamen
+# ("winario, GewinnArena, 01379") — der Agent meldete daraufhin genau das,
+# mit erfundenen Details, konsistent ueber vier Aufnahmen. Ein Auftrag, der
+# die erwarteten Antworten aufzaehlt, erzeugt sie.
+#
+# Der Agent sagt jetzt nur noch NEUTRAL, was im Bild ist. Die Zuordnung zu
+# Werbung/Sendung steht an einer Stelle, ist sichtbar und aenderbar, ohne
+# dass ein Agent neu instruiert werden muss.
+KONVENTION = {
+    "sendungsinhalt":  "sendung",
+    "mitmachtafel":    "sendung",   # kostenpflichtige Gewinnspiel-Einblendung
+    "produktwerbung":  "werbung",
+    "programmvorschau": "werbung",  # Trailer und Sendertrenner am Blockrand
+    "unklar":          None,
+}
+
+
+def kante_aus_folge(punkte, seite):
+    """Aus Einzelbild-Urteilen die Kante ableiten — oder None.
+
+    ⚠️ Der Agent wird NICHT nach der Kante gefragt. Genau diese Frage
+    ("bei welcher Sekunde ist der Uebergang") hat am 2026-08-16 drei von
+    drei Fehlurteilen erzeugt: sie hat immer eine Antwort, auch wenn die
+    Grenze gar nicht im Bild ist. Hier muss die Folge die Grenze zeigen,
+    sonst gibt es keine.
+
+    Bedingungen, alle maschinell pruefbar:
+      * kein "unklar" am Uebergang,
+      * mindestens ein Bild jeder Seite,
+      * genau EIN Wechsel (kein Hin und Her),
+      * der Wechsel liegt nicht am Fensterrand (sonst ist die echte Grenze
+        vermutlich ausserhalb).
+    """
+    folge = [(t, KONVENTION.get(k)) for t, k in punkte]
+    folge.sort()
+    if len(folge) < 3:
+        return None, "zu wenige Bilder"
+    erwartet_vor = "sendung" if seite == "start" else "werbung"
+    erwartet_nach = "werbung" if seite == "start" else "sendung"
+    wechsel = []
+    for i in range(len(folge) - 1):
+        a, b = folge[i][1], folge[i + 1][1]
+        if a is None or b is None:
+            continue
+        if a != b:
+            wechsel.append(i)
+    if not wechsel:
+        return None, "kein Wechsel im Fenster"
+    if len(wechsel) > 1:
+        return None, f"{len(wechsel)} Wechsel (Hin und Her)"
+    i = wechsel[0]
+    if folge[i][1] != erwartet_vor or folge[i + 1][1] != erwartet_nach:
+        return None, "Wechsel in der falschen Richtung"
+    if i == 0 or i + 1 == len(folge) - 1:
+        return None, "Wechsel am Fensterrand — echte Grenze vermutlich ausserhalb"
+    # Kante = erstes Bild der neuen Seite.
+    return float(folge[i + 1][0]), None
 
 
 def bloecke(pfad):
@@ -298,106 +360,72 @@ def nachfassen():
 
 
 def anwenden(trocken):
+    """Urteile lesen, Kanten ABLEITEN, schreiben.
+
+    Erwartetes Urteil-Format (eine Zeile je BILD, nicht je Kante):
+
+        {"bilder": [{"verzeichnis": "0_start", "zeit": 1564,
+                     "kategorie": "produktwerbung"}, ...]}
+
+    Kategorien: sendungsinhalt | produktwerbung | programmvorschau |
+    mitmachtafel | unklar. Die Zuordnung zu Werbung/Sendung passiert in
+    KONVENTION, die Kante in kante_aus_folge — beides hier, nicht im Agenten.
+    """
     ges = 0
     for d in sorted(ARBEIT.glob("*/")):
-        up = d / "urteil.json"
-        ap = d / "auftrag.json"
-        if not up.is_file() or not ap.is_file():
+        up, ap = d / "urteil.json", d / "auftrag.json"
+        if not (up.is_file() and ap.is_file()):
             continue
         auftrag = json.loads(ap.read_text())
-        urteil = json.loads(up.read_text())
-        # Beim zweiten Durchgang stehen die frueher entschiedenen Kanten in
-        # urteil-eng.json; ohne sie waere die Aufnahme wieder unvollstaendig.
-        eng = d / "urteil-eng.json"
-        if eng.is_file():
-            alt_urteil = json.loads(eng.read_text())
-            urteil["kanten"] = (alt_urteil.get("kanten", [])
-                                + urteil.get("kanten", []))
-            auftrag["kanten"] = (json.loads((d / "auftrag-eng.json").read_text())["kanten"]
-                                 if (d / "auftrag-eng.json").is_file()
-                                 else auftrag["kanten"])
-        u = auftrag["uuid"]
-        neu = [list(b) for b in auftrag["bloecke"]]
-        n = 0
-        verworfen = set()
-        for k in urteil.get("kanten", []):
-            i, seite = k.get("block"), k.get("seite")
-            t = k.get("zeit")
-            if i is None or seite not in ("start", "ende") or t is None:
-                continue
-            if not (0 <= i < len(neu)):
-                continue
-            # ⚠️ Randwerte verwerfen. Liegt der Uebergang ausserhalb des
-            # abgetasteten Fensters, sieht der Agent nur Werbung (oder nur
-            # Sendung) und kann bestenfalls den aeussersten Abtastpunkt
-            # nennen — das ist keine Kante, sondern die Fenstergrenze. Ein
-            # Agent hat genau das am 2026-08-15 sauber dazugeschrieben; ohne
-            # diesen Filter waere die Fenstergrenze als Label gelandet.
-            ist = auftrag["kanten"][0]["ist"] if auftrag.get("kanten") else None
-            rand = next((k2 for k2 in auftrag["kanten"]
-                         if k2["block"] == i and k2["seite"] == seite), None)
-            if rand and rand["frames"]:
-                punkte = sorted(float(x) for x in rand["frames"])
-                if abs(float(t) - punkte[0]) < 0.5 or abs(float(t) - punkte[-1]) < 0.5:
-                    print(f"    {u} Block {i} {seite}: Uebergang ausserhalb "
-                          f"des Fensters, verworfen")
-                    verworfen.add((i, seite))
-                    continue
-            j = 0 if seite == "start" else 1
-            if abs(float(t) - neu[i][j]) < 0.5:
-                continue
-            neu[i][j] = round(float(t), 2)
-            n += 1
-        # ⚠️⚠️ UNENTSCHIEDENE KANTE = GAR KEIN LABEL fuer diese Aufnahme.
-        #
-        # Der gefaehrlichste Fall der ganzen Kette, gefunden 2026-08-16 an
-        # dvr-kabel-eins-1783954500: der Agent erkannte beide Blockstarts
-        # korrekt als Gewinnspiel (= Sendung nach Konvention), konnte den
-        # ECHTEN Start aber nicht sehen — er liegt ausserhalb des Fensters —
-        # und liess die Kante weg. Wuerde die Aufnahme trotzdem geschrieben,
-        # stuende der MODELLWERT als menschliche Wahrheit in ads_user.json,
-        # und die Aufnahme gaelte als reviewt. Das Modell haette seinen
-        # eigenen Fehler als Referenz bestaetigt bekommen — schlimmer als
-        # gar kein Label, weil es unsichtbar ist.
-        #
-        # Also: jede Kante des Auftrags braucht ein Urteil. Fehlt eines,
-        # wird die Aufnahme uebersprungen und gehoert in einen Durchgang mit
-        # weiterem Fenster.
-        erwartet = {(k["block"], k["seite"]) for k in auftrag["kanten"]}
-        beurteilt = {(k.get("block"), k.get("seite"))
-                     for k in urteil.get("kanten", [])} & erwartet
-        beurteilt -= verworfen
-        if beurteilt != erwartet:
-            fehlt = sorted(erwartet - beurteilt)
-            print(f"  {u}: UEBERSPRUNGEN — {len(fehlt)} Kante(n) unentschieden "
-                  f"({', '.join(f'{b}/{se}' for b, se in fehlt)}). "
-                  f"Ein Modellwert als Label waere schlimmer als keines.")
+        try:
+            bilder = json.loads(up.read_text()).get("bilder") or []
+        except Exception as e:
+            print(f"  {auftrag['uuid']}: urteil.json unlesbar ({e})")
             continue
-        # Nur plausible Bloecke schreiben. Ein Agent, der Start und Ende
-        # vertauscht, darf keine kaputte Cutlist erzeugen.
-        neu = [b for b in neu if b[1] - b[0] >= 30]
-        if not neu:
+        u = auftrag["uuid"]
+        je_verz = {}
+        for b in bilder:
+            try:
+                je_verz.setdefault(b["verzeichnis"], []).append(
+                    (float(b["zeit"]), str(b["kategorie"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        neu_bl = [list(x) for x in auftrag["bloecke"]]
+        n, offen = 0, []
+        for k in auftrag["kanten"]:
+            i, seite = k["block"], k["seite"]
+            kante, grund = kante_aus_folge(je_verz.get(k["verzeichnis"], []), seite)
+            if kante is None:
+                offen.append((i, seite, grund))
+                continue
+            j = 0 if seite == "start" else 1
+            if abs(kante - neu_bl[i][j]) >= 0.5:
+                neu_bl[i][j] = round(kante, 2)
+                n += 1
+        # ⚠️ Eine unbestimmte Kante macht die ganze Aufnahme unbrauchbar.
+        # Wuerde sie geschrieben, stuende der MODELLWERT als menschliche
+        # Wahrheit im Label und die Aufnahme gaelte als reviewt — das Modell
+        # haette seinen eigenen Fehler als Referenz bestaetigt bekommen.
+        if offen:
+            for i, seite, grund in offen:
+                print(f"    {u} Block{i} {seite}: unbestimmt ({grund})")
+            print(f"  {u}: UEBERSPRUNGEN — {len(offen)} Kante(n) unbestimmt")
+            continue
+        neu_bl = [b for b in neu_bl if b[1] - b[0] >= 30]
+        if not neu_bl:
             print(f"  {u}: keine plausiblen Bloecke uebrig")
             continue
-        if not n:
-            print(f"  {u}: alle Kanten bestaetigt, keine Aenderung — "
-                  f"wird trotzdem als Label geschrieben")
         if trocken:
-            print(f"  {u}: {n} Kante(n) — {neu}")
+            print(f"  {u}: {n} Kante(n) — {neu_bl}")
             ges += n
             continue
-        # ⚠️ reviewed_by, NICHT irgendein selbstgewaehlter Schluessel:
-        # handleAdsEdit baut die Nutzlast neu auf und verwirft jedes Feld,
-        # das es nicht kennt. Ein Marker, den der Server wegwirft, ist kein
-        # Marker — das ist am 2026-08-15 einen halben Tag lang unbemerkt so
-        # gelaufen.
-        body = json.dumps({"ads": neu,
+        body = json.dumps({"ads": neu_bl,
                            "reviewed_by": "agent-review.py"}).encode()
         req = urllib.request.Request(f"{GATEWAY}/api/recording/{u}/ads/edit",
                                      data=body,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, context=CTX, timeout=20) as r:
-            print(f"  {u}: {n} Kante(n), HTTP {r.status}")
+            print(f"  {u}: {n} Kante(n) geaendert, HTTP {r.status}")
             ges += n
         (d / "angewandt").write_text("1")
     print(f"Gesamt {ges} Kanten{' (Probelauf)' if trocken else ''}.")

@@ -446,6 +446,41 @@ keine Modellfrage. Ich habe erst Emission, Decoder und per-Show-Konfiguration
 durchgesehen, bevor ich auf die Blocklängen geschaut habe — die Antwort
 stand von Anfang an in der Tabelle.
 
+## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
+(2026-08-16)
+
+76 Kanten aus 20 Aufnahmen, prospektiv gesammelt, alle Labels von
+Review-Agenten.
+
+```
+  [1] Median 0.0s -> 0.5s        VERFEHLT
+  [2] <=2s 67% -> 63%            VERFEHLT
+  [3] Gesamtfehler 482s -> 496s  VERFEHLT
+  gewaehlt: nn 23, logo 53
+```
+
+Alle drei Bedingungen verfehlt. Vorhersage war „nicht erfüllt, knapp" —
+richtig im Ausgang, falsch im „knapp".
+
+⚠️ **Der Befund über das Ergebnis hinaus:** die Ausgangslage ist Median
+**0.0 s** und **67 %** der Kanten auf 2 Sekunden. Korpusweit sind es 4.4 s
+und 36 % (§3af). Der Schattensatz ist also viel besser als der Korpus — weil
+eine Aufnahme nur ins Ledger kommt, wenn JEDE ihrer Kanten aus den Bildern
+bestimmbar war. Genau daran scheiterten die schlecht sitzenden Aufnahmen
+(RTL: 168 Sendungsbilder gegen 22 Werbebilder selbst im ±72-s-Fenster; VOX;
+zweimal ProSieben).
+
+**Die Ablehnung, die falsche Labels verhindert, filtert zugleich die
+interessanten Fälle heraus.** O14 hat die Flankenauswahl damit an genau den
+Kanten geprüft, an denen nichts zu gewinnen ist. Das Urteil steht (so war es
+registriert), aber es belegt nur: auf schon korrekten Kanten schadet die
+Regel.
+
+**Konsequenz für künftige Messungen an Kanten:** ein Satz, der um die
+Modellkante herum gebaut wird, kann per Konstruktion keine grob falschen
+Kanten enthalten. Wer die will, muss die Kante erst grob über die ganze
+Aufnahme suchen und dann verfeinern.
+
 ## 3aj. Agenten-Review: WELCHE Frage man stellt, entscheidet alles
 (2026-08-16, zwei menschliche Stichproben)
 

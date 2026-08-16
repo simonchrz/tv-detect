@@ -94,3 +94,57 @@ Signalen selbst mehr Information zu geben (§3aa).
 ⚠️ Kein Ausgang rechtfertigt, den Golden-Boden zu senken (L1) oder Labels
 anzufassen (L2). Und die Kanten, an denen die Regel verliert, werden nicht
 per Frame-Review als Label-Fehler umgedeutet.
+
+---
+
+# Ergebnis (2026-08-16)
+
+76 Kanten aus 20 Aufnahmen, alle Labels von Review-Agenten gesetzt.
+
+```
+  [1] Median 0.0s -> 0.5s (-0.5s)       VERFEHLT (>= 0.5s besser)
+  [2] <=2s 67% -> 63% (-4 Punkte)       VERFEHLT (>= 3 besser)
+  [3] Gesamtfehler 482s -> 496s (+3 %)  VERFEHLT (<= 0 %)
+  gewaehlt: nn 23, logo 53
+```
+
+**O14 NICHT ERFÜLLT**, in allen drei Bedingungen. Die Vorhersage lautete
+„nicht erfüllt, knapp" — nicht erfüllt stimmt, knapp nicht: die Regel
+verschlechtert jede der drei Größen.
+
+## ⚠️ Was dieses Ergebnis NICHT sagt — Auswahleffekt meines eigenen Aufbaus
+
+Die Ausgangslage ist **Median 0.0 s und 67 % der Kanten auf 2 Sekunden**.
+Korpusweit sind es **4.4 s und 36 %** (§3af). Der Schattensatz ist also
+dramatisch besser als der Korpus, und das hat einen Grund, den ich selbst
+gebaut habe:
+
+Ins Ledger kommt eine Aufnahme nur, wenn **jede** ihrer Kanten aus den
+Bildern bestimmbar war. Genau daran sind die schlecht sitzenden Aufnahmen
+gescheitert — RTL (168 Sendungsbilder gegen 22 Werbebilder selbst im
+±72-s-Fenster), VOX, zweimal ProSieben. Die Ablehnung filtert also
+systematisch die Fälle heraus, in denen das Modell weit danebenliegt, und
+lässt die durch, bei denen es ohnehin stimmt.
+
+**Damit prüft O14 die Flankenauswahl an genau den Kanten, an denen es
+nichts zu gewinnen gibt.** Dass eine Regel dort schadet, ist wenig
+überraschend: sie verschiebt eine bereits richtige Kante.
+
+Das Urteil steht trotzdem — es war so registriert, und eine Kennzahl nach
+dem Blick auf die Zahl auszutauschen ist genau das, wogegen die
+Registrierung existiert. Aber die Aussage ist schwächer als „Flankenauswahl
+hilft nicht": belegt ist nur, dass sie auf schon korrekten Kanten schadet.
+
+## Was daraus folgt
+
+Die offene Frage ist unverändert, aber sie braucht einen anderen Aufbau:
+ein Satz, der die WEIT danebenliegenden Kanten enthält. Genau die kann das
+Agenten-Review derzeit nicht labeln — bei RTL war im ganzen ±72-s-Fenster
+kein Übergang zu sehen. Wer sie will, braucht ein Verfahren, das die Kante
+erst grob findet (ganze Aufnahme grob abtasten) und dann verfeinert, statt
+um die Modellkante herum zu suchen.
+
+⚠️ Das ist kein Nachschlag zu O14 und keine dritte Runde derselben Idee,
+sondern die Feststellung, dass mein Messsatz eine andere Population abbildet
+als der Korpus. Wer die Flankenauswahl wirklich beurteilen will, muss das
+zuerst reparieren.

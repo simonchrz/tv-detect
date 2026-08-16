@@ -61,11 +61,34 @@ def letzter_lauf():
     ts, block = teile[-2], teile[-1]
     m = re.search(r"^(DEPLOYED|REJECTED)\b", block, flags=re.M)
     boden = re.search(r"^\s*(Golden-Boden:.*|⚠ Golden-Boden blockt.*)$", block, flags=re.M)
+    # ⚠️ "kein Ergebnis im Log" heisst NICHT "abgebrochen". Am 2026-08-16
+    # meldete der Bericht um 07:30 einen abgebrochenen Lauf, waehrend
+    # train-head seit 03:40 durchgehend Merkmale extrahierte (53 neue
+    # Aufnahmen, Mac zu 95 % ausgelastet). Ein Bericht, der bei jedem langen
+    # Lauf Alarm schlaegt, wird nach zwei Tagen weggeklickt — und dann faellt
+    # der ECHTE Abbruch auch nicht mehr auf.
+    laeuft = _laeuft_noch()
+    if m:
+        ausgang = m.group(1)
+    elif laeuft:
+        ausgang = "läuft noch"
+    else:
+        ausgang = "unklar (Lauf abgebrochen?)"
     return {
         "ts": ts,
-        "ausgang": m.group(1) if m else "unklar (Lauf abgebrochen?)",
+        "ausgang": ausgang,
+        "laeuft": laeuft,
         "boden": boden.group(1).strip() if boden else "",
     }
+
+
+def _laeuft_noch():
+    """Laeuft gerade ein train-head? Der Bericht laeuft auf demselben Mac."""
+    try:
+        return subprocess.run(["pgrep", "-f", "train-head.py"],
+                              capture_output=True, timeout=10).returncode == 0
+    except Exception:
+        return False
 
 
 def boden_und_champion(gt):
@@ -193,6 +216,10 @@ def baue():
         kopf.append(zeile)
         if lauf["ausgang"] == "unklar (Lauf abgebrochen?)":
             warnungen.append("Lauf abgebrochen")
+        elif lauf.get("laeuft"):
+            # Kein Warnfall: ein laufender Nightly ist der Normalzustand,
+            # nur eben noch ohne Ergebnis.
+            chronisch.append("Nightly läuft noch")
 
     # ── Serien ──────────────────────────────────────────────────────
     for e in s:
@@ -250,7 +277,20 @@ def main():
         teile = []
         for z in kopf:
             if z.startswith("Nightly"):
-                t = f"Nightly {'DEPLOYED' if 'DEPLOYED' in z else 'REJECTED'}"
+                # ⚠️ Nicht "alles was nicht DEPLOYED ist, ist REJECTED".
+                # Genau das meldete die Kurzfassung am 2026-08-16 als
+                # "REJECTED 0.935", waehrend der Lauf noch lief und die
+                # Langfassung korrekt "läuft noch" sagte. Die Kurzfassung
+                # geht als Push aufs Telefon — sie darf nicht das Gegenteil
+                # der Langfassung behaupten.
+                if "läuft noch" in z:
+                    t = "Nightly läuft"
+                elif "DEPLOYED" in z:
+                    t = "Nightly DEPLOYED"
+                elif "REJECTED" in z:
+                    t = "Nightly REJECTED"
+                else:
+                    t = "Nightly unklar"
                 g = re.search(r"Golden ([\d.]+)", z)
                 if g:
                     t += f" {float(g.group(1)):.3f}"

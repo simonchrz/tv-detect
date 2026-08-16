@@ -183,7 +183,16 @@ def bloecke(pfad):
 
 
 def braucht_review(d):
-    """Hat die Aufnahme Auto-Blöcke, aber kein menschliches/Agenten-Label?"""
+    """Hat die Aufnahme Auto-Blöcke, aber kein menschliches/Agenten-Label?
+
+    ⚠️ Prüft zusätzlich das Arbeitsverzeichnis. Der Snapshot ist ein Abzug
+    und kann Minuten alt sein — eine Aufnahme, die gerade angewandt wurde,
+    steht darin noch ohne Label und würde neu vorbereitet, wobei ihr
+    `auftrag.json` überschrieben wird (und damit der einzige Weg, den
+    Vorher-Stand zurückzuholen). Genau so passiert 2026-08-16.
+    """
+    if (ARBEIT / d.name[5:] / "angewandt").is_file():
+        return False
     up = d / "ads_user.json"
     if up.is_file():
         try:
@@ -233,8 +242,13 @@ def vorbereiten(anzahl, dump_anfordern=False):
     ohne = [d for d in kandidaten if d not in mit]
     print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle "
           f"({len(mit)} davon mit Signal-Dump — die zuerst)")
-    gewaehlt = _reihum(mit) + _reihum(ohne)
-    gewaehlt = gewaehlt[:anzahl]
+    # ⚠️ Reihum ueber BEIDE Listen zusammen, nicht erst innerhalb der einen.
+    # Die Liste mit Dumps ist selbst kanal-schief (frueher wurden vor allem
+    # kabel-eins-Aufnahmen redetected), und ein Reihum innerhalb einer
+    # schiefen Liste bleibt schief: der zweite Stapel lieferte wieder 5 von 7
+    # aus einem Sender. Der Dump-Vorsprung ist ein Tempo-Vorteil, kein Grund,
+    # den Korpus durch einen Kanal zu ersetzen.
+    gewaehlt = _reihum(mit + ohne)[:anzahl]
     if dump_anfordern:
         gewaehlt = _dumps_besorgen([d for d in gewaehlt
                                     if not (DUMPS / f"{d.name[5:]}.json").is_file()],

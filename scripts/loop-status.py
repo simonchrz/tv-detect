@@ -15,6 +15,7 @@ so zwei zufällig gleiche Zahlen als Reproduzierbarkeit durchgegangen.
 import argparse
 import json
 import re
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -56,7 +57,12 @@ def letzter_lauf(log_pfad):
     ts, block = teile[-2], teile[-1]
     m = re.search(r"^(DEPLOYED|REJECTED)\b.*$", block, flags=re.M)
     if not m:
-        return {"ts": ts, "ausgang": "unklar (Lauf abgebrochen?)",
+        # ⚠️ "kein Ergebnis im Log" heisst NICHT "abgebrochen" — derselbe
+        # Fehlalarm wie im Tagesbericht (behoben 2026-08-16): ein langer
+        # Lauf steht um 08:07 noch mitten in Extraktion oder Shadow-Eval.
+        ausgang = ("läuft noch" if _laeuft_noch()
+                   else "unklar (Lauf abgebrochen?)")
+        return {"ts": ts, "ausgang": ausgang,
                 "grund": block.strip().splitlines()[-1:] or [""]}
     grund = []
     for ln in block[m.end():].splitlines():
@@ -69,6 +75,15 @@ def letzter_lauf(log_pfad):
     return {"ts": ts, "ausgang": m.group(1),
             "grund": " ".join(grund).replace("reason: ", ""),
             "boden": boden.group(1).strip() if boden else None}
+
+
+def _laeuft_noch():
+    """Läuft gerade ein train-head? Der Sensor läuft auf demselben Mac."""
+    try:
+        return subprocess.run(["pgrep", "-f", "train-head.py"],
+                              capture_output=True, timeout=10).returncode == 0
+    except Exception:
+        return False
 
 
 def main():

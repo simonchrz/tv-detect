@@ -48,6 +48,15 @@ CTX.verify_mode = ssl.CERT_NONE
 FENSTER_S = 16
 SCHRITT_S = 4
 
+# Zweiter Durchgang fuer Kanten, die im engen Fenster nicht entscheidbar
+# waren. ⚠️ Der Bedarf ist nicht theoretisch: bei kabel-eins setzt das
+# Modell den Blockstart regelmaessig auf ein GewinnArena-Insert, das nach
+# Konvention SENDUNG ist — der echte Werbebeginn liegt danach und damit
+# jenseits von 16 s. Ohne diesen Durchgang ist der Kanal gar nicht
+# reviewbar (4 von 4 Aufnahmen im ersten Stapel betroffen).
+WEIT_FENSTER_S = 72
+WEIT_SCHRITT_S = 6
+
 
 def bloecke(pfad):
     """ads.json ist eine nackte Liste, ads_user.json ein Objekt mit "ads"."""
@@ -207,6 +216,59 @@ def _dumps_besorgen(fehlen, alle, wartesekunden=1800):
     return fertig
 
 
+def nachfassen():
+    """Unentschiedene Kanten mit weiterem Fenster neu vorbereiten.
+
+    Nur die betroffenen Kanten, nicht die ganze Aufnahme: die bereits
+    entschiedenen bleiben stehen und werden beim Anwenden mit den neuen
+    zusammengefuehrt.
+    """
+    n_auf = 0
+    for d in sorted(ARBEIT.glob("*/")):
+        ap, up = d / "auftrag.json", d / "urteil.json"
+        if not (ap.is_file() and up.is_file()):
+            continue
+        auftrag = json.loads(ap.read_text())
+        urteil = json.loads(up.read_text())
+        beurteilt = set()
+        for k in urteil.get("kanten", []):
+            eintrag = next((x for x in auftrag["kanten"]
+                            if x["block"] == k.get("block")
+                            and x["seite"] == k.get("seite")), None)
+            if not eintrag or not eintrag["frames"]:
+                continue
+            punkte = sorted(float(x) for x in eintrag["frames"])
+            t = float(k.get("zeit", -1))
+            # Randwert = Fenstergrenze, gilt NICHT als entschieden.
+            if abs(t - punkte[0]) < 0.5 or abs(t - punkte[-1]) < 0.5:
+                continue
+            beurteilt.add((k["block"], k["seite"]))
+        offen = [k for k in auftrag["kanten"]
+                 if (k["block"], k["seite"]) not in beurteilt]
+        if not offen or auftrag.get("weit"):
+            continue
+        u = auftrag["uuid"]
+        for k in offen:
+            t = k["ist"]
+            zeiten = [t + x for x in range(-WEIT_FENSTER_S, WEIT_FENSTER_S + 1,
+                                           WEIT_SCHRITT_S)]
+            zeiten = [z for z in zeiten if z >= 0]
+            verz = f"{k['block']}_{k['seite']}_weit"
+            k["frames"] = frames_ziehen(u, zeiten, d / verz)
+            k["verzeichnis"] = verz
+        auftrag["weit"] = True
+        auftrag["kanten"] = [k for k in auftrag["kanten"]
+                             if (k["block"], k["seite"]) not in beurteilt]
+        ap.write_text(json.dumps(auftrag, indent=1))
+        (d / "urteil-eng.json").write_text(json.dumps(urteil, indent=1))
+        up.unlink()
+        n_auf += 1
+        print(f"  {u}: {len(offen)} Kante(n) mit ±{WEIT_FENSTER_S}s neu "
+              f"vorbereitet ({sum(len(k['frames']) for k in offen)} Frames)")
+    print(f"{n_auf} Aufnahme(n) fuer den zweiten Durchgang bereit.")
+    return 0
+
+
 def anwenden(trocken):
     ges = 0
     for d in sorted(ARBEIT.glob("*/")):
@@ -216,9 +278,20 @@ def anwenden(trocken):
             continue
         auftrag = json.loads(ap.read_text())
         urteil = json.loads(up.read_text())
+        # Beim zweiten Durchgang stehen die frueher entschiedenen Kanten in
+        # urteil-eng.json; ohne sie waere die Aufnahme wieder unvollstaendig.
+        eng = d / "urteil-eng.json"
+        if eng.is_file():
+            alt_urteil = json.loads(eng.read_text())
+            urteil["kanten"] = (alt_urteil.get("kanten", [])
+                                + urteil.get("kanten", []))
+            auftrag["kanten"] = (json.loads((d / "auftrag-eng.json").read_text())["kanten"]
+                                 if (d / "auftrag-eng.json").is_file()
+                                 else auftrag["kanten"])
         u = auftrag["uuid"]
         neu = [list(b) for b in auftrag["bloecke"]]
         n = 0
+        verworfen = set()
         for k in urteil.get("kanten", []):
             i, seite = k.get("block"), k.get("seite")
             t = k.get("zeit")
@@ -240,18 +313,47 @@ def anwenden(trocken):
                 if abs(float(t) - punkte[0]) < 0.5 or abs(float(t) - punkte[-1]) < 0.5:
                     print(f"    {u} Block {i} {seite}: Uebergang ausserhalb "
                           f"des Fensters, verworfen")
+                    verworfen.add((i, seite))
                     continue
             j = 0 if seite == "start" else 1
             if abs(float(t) - neu[i][j]) < 0.5:
                 continue
             neu[i][j] = round(float(t), 2)
             n += 1
-        # ⚠️ Nur plausible Bloecke schreiben. Ein Agent, der Start und Ende
+        # ⚠️⚠️ UNENTSCHIEDENE KANTE = GAR KEIN LABEL fuer diese Aufnahme.
+        #
+        # Der gefaehrlichste Fall der ganzen Kette, gefunden 2026-08-16 an
+        # dvr-kabel-eins-1783954500: der Agent erkannte beide Blockstarts
+        # korrekt als Gewinnspiel (= Sendung nach Konvention), konnte den
+        # ECHTEN Start aber nicht sehen — er liegt ausserhalb des Fensters —
+        # und liess die Kante weg. Wuerde die Aufnahme trotzdem geschrieben,
+        # stuende der MODELLWERT als menschliche Wahrheit in ads_user.json,
+        # und die Aufnahme gaelte als reviewt. Das Modell haette seinen
+        # eigenen Fehler als Referenz bestaetigt bekommen — schlimmer als
+        # gar kein Label, weil es unsichtbar ist.
+        #
+        # Also: jede Kante des Auftrags braucht ein Urteil. Fehlt eines,
+        # wird die Aufnahme uebersprungen und gehoert in einen Durchgang mit
+        # weiterem Fenster.
+        erwartet = {(k["block"], k["seite"]) for k in auftrag["kanten"]}
+        beurteilt = {(k.get("block"), k.get("seite"))
+                     for k in urteil.get("kanten", [])} & erwartet
+        beurteilt -= verworfen
+        if beurteilt != erwartet:
+            fehlt = sorted(erwartet - beurteilt)
+            print(f"  {u}: UEBERSPRUNGEN — {len(fehlt)} Kante(n) unentschieden "
+                  f"({', '.join(f'{b}/{se}' for b, se in fehlt)}). "
+                  f"Ein Modellwert als Label waere schlimmer als keines.")
+            continue
+        # Nur plausible Bloecke schreiben. Ein Agent, der Start und Ende
         # vertauscht, darf keine kaputte Cutlist erzeugen.
         neu = [b for b in neu if b[1] - b[0] >= 30]
-        if not neu or not n:
-            print(f"  {u}: nichts zu tun ({n} Aenderungen)")
+        if not neu:
+            print(f"  {u}: keine plausiblen Bloecke uebrig")
             continue
+        if not n:
+            print(f"  {u}: alle Kanten bestaetigt, keine Aenderung — "
+                  f"wird trotzdem als Label geschrieben")
         if trocken:
             print(f"  {u}: {n} Kante(n) — {neu}")
             ges += n
@@ -278,6 +380,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--vorbereiten", action="store_true")
     ap.add_argument("--anwenden", action="store_true")
+    ap.add_argument("--nachfassen", action="store_true",
+                    help="unentschiedene Kanten mit weiterem Fenster neu vorbereiten")
     ap.add_argument("--trocken", action="store_true",
                     help="mit --anwenden: nur zeigen, nichts schreiben")
     ap.add_argument("--anzahl", type=int, default=5)
@@ -289,6 +393,8 @@ def main():
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
         return vorbereiten(a.anzahl, a.dump_anfordern)
+    if a.nachfassen:
+        return nachfassen()
     if a.anwenden:
         return anwenden(a.trocken)
     ap.print_help()

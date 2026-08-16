@@ -201,7 +201,16 @@ def braucht_review(d):
     `auftrag.json` überschrieben wird (und damit der einzige Weg, den
     Vorher-Stand zurückzuholen). Genau so passiert 2026-08-16.
     """
-    if (ARBEIT / d.name[5:] / "angewandt").is_file():
+    # ⚠️ Ein offener Auftrag ist laufende Arbeit — nicht anfassen.
+    #
+    # `angewandt` allein reicht nicht: dazwischen liegt die Zeit, in der ein
+    # Agent klassifiziert oder ein Nachfassen vorbereitet ist. Wird die
+    # Aufnahme dann neu vorbereitet, zeigt auftrag.json auf frische
+    # Verzeichnisse, waehrend der laufende Agent noch die alten beurteilt —
+    # sein Urteil passt hinterher auf nichts. Zweimal passiert am 2026-08-16,
+    # beim zweiten Mal mitten in zwei laufenden Nachfass-Runden.
+    arbeit = ARBEIT / d.name[5:]
+    if (arbeit / "angewandt").is_file() or (arbeit / "auftrag.json").is_file():
         return False
     up = d / "ads_user.json"
     if up.is_file():

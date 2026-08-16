@@ -11,6 +11,14 @@ Zwei Schritte, dazwischen sichten die Agenten die Bilder:
   3. `--anwenden` → liest die Urteile und setzt die Kanten über
      `POST /api/recording/<uuid>/ads/edit`.
 
+⚠️ **Zurücknehmen kennzeichnen.** Ein Rollback setzt die Blöcke aus
+`auftrag.json` zurück, aber er kann die ABWESENHEIT eines Labels nicht
+wiederherstellen — die API kennt nur „setze diese Blöcke", und der Server
+setzt dabei `reviewed_at`. Ohne `reviewed_by: "zurueckgenommen"` steht
+danach ein MODELLWERT mit frischem Zeitstempel in der Datei und ist von
+einem menschlichen Urteil nicht zu unterscheiden. Am 2026-08-16 ist genau
+so einer in den Schattenlauf gerutscht.
+
 ⚠️ **Kein eigenes Backup.** Der Docstring behauptete das eine Zeit lang und
 es stimmte nie. Der Stand VOR dem Review steht in `auftrag.json` unter
 "bloecke" — daraus lässt sich zurücknehmen, solange das Arbeitsverzeichnis

@@ -110,6 +110,14 @@ def label_quelle(pfad):
     if d.get("auto_confirmed_at"):
         return "auto"
     if d.get("reviewed_by"):
+        # ⚠️ Auch "zurueckgenommen" faellt hierunter, und das ist Absicht:
+        # ein Rollback kann die ABWESENHEIT eines Labels nicht
+        # wiederherstellen (die API kennt nur "setze diese Bloecke"), also
+        # steht danach der MODELLWERT mit frischem reviewed_at in der Datei.
+        # Ohne Kennzeichnung ist er von einem menschlichen Urteil nicht zu
+        # unterscheiden — am 2026-08-16 ist genau so einer in den
+        # Schattenlauf gerutscht und waere als Referenz gezaehlt worden, an
+        # der das Modell sich selbst bestaetigt.
         return "agent"
     return "mensch"
 

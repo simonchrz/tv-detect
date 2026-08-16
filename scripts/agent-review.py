@@ -136,6 +136,17 @@ def kante_aus_folge(punkte, seite):
         if a != b:
             wechsel.append(i)
     if not wechsel:
+        # ⚠️ „kein Wechsel" und „unklar sitzt genau auf dem Wechsel" brauchen
+        # ENTGEGENGESETZTE Abhilfen: das erste ein weiteres Fenster, das
+        # zweite eine feinere Abtastung derselben Stelle. Ohne die
+        # Unterscheidung schickt das Nachfassen den zweiten Fall ins weite
+        # Fenster und findet dort wieder nichts. Genau so passiert am
+        # 2026-08-16 bei comedy-central und disney.
+        ohne_unklar = [(t, k) for t, k in folge if k is not None]
+        for i in range(len(ohne_unklar) - 1):
+            if ohne_unklar[i][1] == erwartet_vor and \
+                    ohne_unklar[i + 1][1] == erwartet_nach:
+                return None, "unklar am Uebergang"
         return None, "kein Wechsel im Fenster"
     if len(wechsel) > 1:
         return None, f"{len(wechsel)} Wechsel (Hin und Her)"
@@ -307,11 +318,21 @@ def _dumps_besorgen(fehlen, alle, wartesekunden=1800):
 
 
 def nachfassen():
-    """Unentschiedene Kanten mit weiterem Fenster neu vorbereiten.
+    """Unbestimmte Kanten neu vorbereiten — mit dem passenden Mittel.
 
-    Nur die betroffenen Kanten, nicht die ganze Aufnahme: die bereits
-    entschiedenen bleiben stehen und werden beim Anwenden mit den neuen
-    zusammengefuehrt.
+    ⚠️ Die Ablehnung sagt, WAS fehlt, und danach richtet sich die Abhilfe.
+    Ohne diese Unterscheidung kostet jede Ablehnung eine ganze Aufnahme,
+    obwohl im haeufigsten Fall nur vier Sekunden strittig sind:
+
+      * „kein Wechsel im Fenster" / „am Fensterrand" → die Grenze liegt
+        AUSSERHALB. Hilft nur ein weiteres Fenster (±72 s in 6-s-Schritten).
+        Beobachtet bei kabel-eins, wo vor jedem Block eine Mitmachtafel
+        steht und der echte Werbebeginn weit hinter der Modellkante liegt.
+      * alles andere (ein `unklar` genau am Uebergang, Hin und Her) → die
+        Grenze IST im Fenster, nur zu grob abgetastet. Hilft feiner
+        abtasten (Sekundentakt) zwischen den beiden strittigen Punkten.
+        Beobachtet bei comedy-central und disney: dort war jeweils genau
+        ein Bild unklar, und daran ist die ganze Aufnahme gescheitert.
     """
     n_auf = 0
     for d in sorted(ARBEIT.glob("*/")):
@@ -319,43 +340,56 @@ def nachfassen():
         if not (ap.is_file() and up.is_file()):
             continue
         auftrag = json.loads(ap.read_text())
-        urteil = json.loads(up.read_text())
-        beurteilt = set()
-        for k in urteil.get("kanten", []):
-            eintrag = next((x for x in auftrag["kanten"]
-                            if x["block"] == k.get("block")
-                            and x["seite"] == k.get("seite")), None)
-            if not eintrag or not eintrag["frames"]:
-                continue
-            punkte = sorted(float(x) for x in eintrag["frames"])
-            t = float(k.get("zeit", -1))
-            # Randwert = Fenstergrenze, gilt NICHT als entschieden.
-            if abs(t - punkte[0]) < 0.5 or abs(t - punkte[-1]) < 0.5:
-                continue
-            beurteilt.add((k["block"], k["seite"]))
-        offen = [k for k in auftrag["kanten"]
-                 if (k["block"], k["seite"]) not in beurteilt]
-        if not offen or auftrag.get("weit"):
+        try:
+            bilder = json.loads(up.read_text()).get("bilder") or []
+        except Exception:
             continue
+        je_verz = {}
+        for b in bilder:
+            try:
+                je_verz.setdefault(b["verzeichnis"], []).append(
+                    (float(b["zeit"]), str(b["kategorie"])))
+            except (KeyError, TypeError, ValueError):
+                continue
         u = auftrag["uuid"]
-        for k in offen:
-            t = k["ist"]
-            zeiten = [t + x for x in range(-WEIT_FENSTER_S, WEIT_FENSTER_S + 1,
-                                           WEIT_SCHRITT_S)]
-            zeiten = [z for z in zeiten if z >= 0]
-            verz = f"{k['block']}_{k['seite']}_weit"
-            k["frames"] = frames_ziehen(u, zeiten, d / verz)
+        offen = []
+        for k in auftrag["kanten"]:
+            kante, grund = kante_aus_folge(je_verz.get(k["verzeichnis"], []),
+                                           k["seite"])
+            if kante is None:
+                offen.append((k, grund))
+        if not offen:
+            continue
+        runde = int(auftrag.get("runde", 0)) + 1
+        if runde > 2:
+            print(f"  {u}: bereits zweimal nachgefasst, bleibt offen")
+            continue
+        for k, grund in offen:
+            weit = ("kein Wechsel" in grund) or ("Fensterrand" in grund)
+            if weit:
+                zeiten = [k["ist"] + x for x in
+                          range(-WEIT_FENSTER_S, WEIT_FENSTER_S + 1, WEIT_SCHRITT_S)]
+            else:
+                # Feiner zwischen den bisherigen Punkten — Sekundentakt ueber
+                # die Spanne, in der der Wechsel liegen muss.
+                punkte = sorted(t for t, _ in je_verz.get(k["verzeichnis"], []))
+                if len(punkte) < 2:
+                    continue
+                zeiten = [float(x) for x in range(int(punkte[0]), int(punkte[-1]) + 1)]
+            verz = f"{k['block']}_{k['seite']}_r{runde}"
+            k["frames"] = frames_ziehen(u, [z for z in zeiten if z >= 0], d / verz)
             k["verzeichnis"] = verz
-        auftrag["weit"] = True
-        auftrag["kanten"] = [k for k in auftrag["kanten"]
-                             if (k["block"], k["seite"]) not in beurteilt]
+            print(f"  {u} Block{k['block']} {k['seite']}: "
+                  f"{'weiter' if weit else 'feiner'} ({len(k['frames'])} Frames) "
+                  f"— war: {grund}")
+        auftrag["runde"] = runde
+        auftrag["kanten"] = [k for k, _ in offen] + [
+            k for k in auftrag["kanten"]
+            if all(k is not o for o, _ in offen)]
         ap.write_text(json.dumps(auftrag, indent=1))
-        (d / "urteil-eng.json").write_text(json.dumps(urteil, indent=1))
-        up.unlink()
+        up.rename(d / f"urteil-r{runde-1}.json")
         n_auf += 1
-        print(f"  {u}: {len(offen)} Kante(n) mit ±{WEIT_FENSTER_S}s neu "
-              f"vorbereitet ({sum(len(k['frames']) for k in offen)} Frames)")
-    print(f"{n_auf} Aufnahme(n) fuer den zweiten Durchgang bereit.")
+    print(f"{n_auf} Aufnahme(n) fuer die naechste Runde bereit.")
     return 0
 
 
@@ -382,6 +416,13 @@ def anwenden(trocken):
         except Exception as e:
             print(f"  {auftrag['uuid']}: urteil.json unlesbar ({e})")
             continue
+        # Urteile frueherer Runden mitnehmen: die dort entschiedenen Kanten
+        # sollen nicht noch einmal beurteilt werden muessen.
+        for frueher in sorted(d.glob("urteil-r*.json")):
+            try:
+                bilder += json.loads(frueher.read_text()).get("bilder") or []
+            except Exception:
+                pass
         u = auftrag["uuid"]
         je_verz = {}
         for b in bilder:

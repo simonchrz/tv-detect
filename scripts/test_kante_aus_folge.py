@@ -88,9 +88,21 @@ class KanteAusFolge(unittest.TestCase):
         self.assertIn("Richtung", grund)
 
     def test_unklar_am_uebergang_blockiert(self):
-        # Ein "unklar" genau an der Grenze macht sie unbestimmt — der Wechsel
-        # S→W wird dadurch nicht gezaehlt.
+        # Ein "unklar" genau an der Grenze macht sie unbestimmt.
         folge = [(100, S), (104, U), (108, W), (112, W)]
+        kante, grund = _ar.kante_aus_folge(folge, "start")
+        self.assertIsNone(kante)
+        # ⚠️ Der GRUND muss "unklar am Uebergang" sein und nicht "kein
+        # Wechsel": davon haengt ab, ob nachgefasst wird mit weiterem
+        # Fenster (Grenze liegt draussen) oder mit feinerer Abtastung
+        # (Grenze liegt hier, nur zu grob getroffen). Am 2026-08-16 lief
+        # dieser Fall in die falsche Abhilfe.
+        self.assertIn("unklar", grund)
+
+    def test_unklar_ausserhalb_des_uebergangs_meldet_kein_wechsel(self):
+        # Alles Werbung, ein unbrauchbares Bild dazwischen: die Grenze liegt
+        # wirklich ausserhalb, hier hilft nur ein weiteres Fenster.
+        folge = [(100, W), (104, U), (108, W), (112, W)]
         kante, grund = _ar.kante_aus_folge(folge, "start")
         self.assertIsNone(kante)
         self.assertIn("kein Wechsel", grund)

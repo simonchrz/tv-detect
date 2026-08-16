@@ -391,6 +391,15 @@ def _dumps_besorgen(fehlen, alle, wartesekunden=1800):
     if len(fertig) < len(alle):
         print(f"  ⚠ {len(alle)-len(fertig)} ohne Dump — werden ausgelassen, "
               f"sonst waere das Review fuer den Schattenlauf unsichtbar")
+    # ⚠️ Snapshot NEU ziehen. Ein `redetect` LEERT die Cutlist ("truncated":1)
+    # und erst der fertige Detect schreibt sie zurueck. Wer den Snapshot
+    # dazwischen zieht, sieht keine ads.json — und ueberspringt genau die
+    # Aufnahmen, fuer die er gerade den Redetect angestossen hat. Fuenf von
+    # sechs fielen so aus einem Stapel, ohne dass es nach Fehler aussah.
+    holer = Path.home() / "bin/tv-train-snapshot-fetch.py"
+    if holer.is_file():
+        subprocess.run([sys.executable, str(holer), "--gateway-url", GATEWAY,
+                        "--out", str(SNAPSHOT)], capture_output=True, timeout=900)
     return fertig
 
 

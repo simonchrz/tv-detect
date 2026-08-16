@@ -115,7 +115,8 @@ def vorbereiten(anzahl, dump_anfordern=False):
     ohne = [d for d in kandidaten if d not in mit]
     print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle "
           f"({len(mit)} davon mit Signal-Dump — die zuerst)")
-    gewaehlt = (mit + ohne)[:anzahl]
+    gewaehlt = _reihum(mit) + _reihum(ohne)
+    gewaehlt = gewaehlt[:anzahl]
     if dump_anfordern:
         gewaehlt = _dumps_besorgen([d for d in gewaehlt
                                     if not (DUMPS / f"{d.name[5:]}.json").is_file()],
@@ -140,6 +141,30 @@ def vorbereiten(anzahl, dump_anfordern=False):
         print(f"  {u:36} {len(auto)} Bloecke, {len(kanten)} Kanten, {n} Frames "
               f"-> {ziel}")
     return 0
+
+
+def _reihum(dirs):
+    """Kanaele abwechselnd, nicht alphabetisch.
+
+    ⚠️ Die erste Fassung nahm schlicht die ersten N der sortierten Liste —
+    und lieferte 7 von 8 Aufnahmen desselben Senders (kabel-eins). Ein
+    Stapel, der einen Kanal abbildet, misst diesen Kanal, nicht den Korpus;
+    fuer O14 waere das Ergebnis wertlos gewesen, ohne dass die Zahl es
+    verraten haette.
+    """
+    je = {}
+    for d in dirs:
+        u = d.name[5:]
+        je.setdefault(u[4:u.rfind("-")], []).append(d)
+    raus, i = [], 0
+    while any(je.values()):
+        for k in sorted(je):
+            if i < len(je[k]):
+                raus.append(je[k][i])
+        i += 1
+        if i > max((len(v) for v in je.values()), default=0):
+            break
+    return raus
 
 
 def _dumps_besorgen(fehlen, alle, wartesekunden=1800):

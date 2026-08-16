@@ -446,6 +446,49 @@ keine Modellfrage. Ich habe erst Emission, Decoder und per-Show-Konfiguration
 durchgesehen, bevor ich auf die Blocklängen geschaut habe — die Antwort
 stand von Anfang an in der Tabelle.
 
+## 3aj. Agenten-Review: WELCHE Frage man stellt, entscheidet alles
+(2026-08-16, zwei menschliche Stichproben)
+
+Zwei Bauarten, dieselben Agenten, gegensätzliche Ergebnisse — geprüft vom
+User an insgesamt sieben Einzelbildern.
+
+**Bauart A — Spannen klassifizieren (14./15.08.): 4 von 4 richtig.**
+Kandidaten aus einer SIGNAL-Uneinigkeit ableiten (Auto-Block gegen Label),
+Frames aus der Spanne zeigen, fragen „was ist hier zu sehen", und nur
+eindeutige Kategorien anwenden. 92 verschobene Kanten in 65 Aufnahmen;
+Stichprobe A/B/C/D (sat-1-gold +190 s, ProSieben +104 s, VOX, kabel eins)
+vom User bestätigt.
+
+**Bauart B — Kante bestimmen (16.08.): 3 von 3 falsch.** Frames um die
+Blockkante zeigen und fragen „bei welcher Sekunde ist der Übergang".
+
+  * Blockende auf „Sendung läuft wieder" gesetzt, obwohl über das ganze
+    Fenster Trailer lief — belegt mit einem Vorspann, den es dort nicht gibt.
+  * Kante unverändert bestätigt, obwohl der Übergang einen Abtastpunkt
+    früher lag.
+  * 4 von 4 kabel-eins-Blockstarts als „GewinnArena, 01379-Nummer,
+    4×25.000 €" abgelehnt — dort ist ein Werbeübergang.
+
+⚠️ **Zwei Konstruktionsfehler, beide meine:**
+
+1. **Der Auftrag nannte die erwarteten Antworten** samt Markennamen. Der
+   Agent hat sie auf mehrdeutige Bilder gemustert — konsistent über vier
+   Aufnahmen, was wie ein systematischer Befund aussieht statt wie eine
+   Halluzination. Ich habe ihn dem User genau so berichtet.
+2. **Die Frage erzwingt eine Antwort.** „Bei welcher Sekunde" hat immer eine
+   Antwort; „ich sehe die Grenze nicht" muss der Agent von sich aus sagen,
+   und er tut es nicht zuverlässig.
+
+**Die Lehre ist übertragbar:** ein Agent ist gut darin zu sagen, WAS auf
+einem Bild ist, und schlecht darin, eine Grenze zwischen Bildern zu
+bestimmen. Das erste ist eine Klassifikation mit sichtbarem Beleg, das
+zweite ein Urteil über Abwesenheit („ab hier nicht mehr"). Wer das zweite
+braucht, muss es aus dem ersten ABLEITEN — pro Bild klassifizieren lassen
+und die Grenze selbst aus der Folge bestimmen, statt sie zu erfragen.
+
+Die vier Labels aus Bauart B sind zurückgenommen; die 92 aus Bauart A
+bleiben.
+
 ## 3af. Die Kanten direkt gemessen — und die Fehlermasse zerlegt
 (2026-08-15)
 

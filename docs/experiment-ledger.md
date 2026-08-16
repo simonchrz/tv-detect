@@ -459,25 +459,36 @@ eindeutige Kategorien anwenden. 92 verschobene Kanten in 65 Aufnahmen;
 Stichprobe A/B/C/D (sat-1-gold +190 s, ProSieben +104 s, VOX, kabel eins)
 vom User bestätigt.
 
-**Bauart B — Kante bestimmen (16.08.): 3 von 3 falsch.** Frames um die
+**Bauart B — Kante bestimmen (16.08.): 2 von 3 falsch.** Frames um die
 Blockkante zeigen und fragen „bei welcher Sekunde ist der Übergang".
 
   * Blockende auf „Sendung läuft wieder" gesetzt, obwohl über das ganze
     Fenster Trailer lief — belegt mit einem Vorspann, den es dort nicht gibt.
   * Kante unverändert bestätigt, obwohl der Übergang einen Abtastpunkt
     früher lag.
-  * 4 von 4 kabel-eins-Blockstarts als „GewinnArena, 01379-Nummer,
-    4×25.000 €" abgelehnt — dort ist ein Werbeübergang.
 
-⚠️ **Zwei Konstruktionsfehler, beide meine:**
+⚠️⚠️ **KORREKTUR meiner eigenen Auswertung.** Der dritte Fall stand hier
+zunächst als schwerster: 4 von 4 kabel-eins-Blockstarts wurden mit
+„GewinnArena, 01379-Nummer, 4×25.000 €" abgelehnt, und ich las die Antwort
+des Users („das ist alles Werbungsübergang") als Widerspruch — also als
+konsistente Halluzination, ausgelöst davon, dass mein Auftrag die
+Markennamen selbst aufzählte. **Das war falsch.** Der User beschrieb, was zu
+sehen ist, nicht wo der Block beginnt. Auf Nachfrage mit drei Bildern hat er
+die Kante auf **1594** gelegt — also hinter die Tafel, genau wie der Agent
+gesagt hatte. Der Agent lag richtig, die Konvention `mitmachtafel = Sendung`
+ist bestätigt, und die „Halluzination" gab es nie.
 
-1. **Der Auftrag nannte die erwarteten Antworten** samt Markennamen. Der
-   Agent hat sie auf mehrdeutige Bilder gemustert — konsistent über vier
-   Aufnahmen, was wie ein systematischer Befund aussieht statt wie eine
-   Halluzination. Ich habe ihn dem User genau so berichtet.
-2. **Die Frage erzwingt eine Antwort.** „Bei welcher Sekunde" hat immer eine
-   Antwort; „ich sehe die Grenze nicht" muss der Agent von sich aus sagen,
-   und er tut es nicht zuverlässig.
+Die Lehre daraus ist eine über MICH, nicht über den Agenten: eine
+Beschreibung („was ist im Bild") ist keine Entscheidung („wo gehört die
+Grenze hin"). Ich habe die eine als die andere gelesen und daraufhin einen
+Befund gemeldet, ein Werkzeug für kaputt erklärt und Labels
+zurückgenommen. Wer eine Stichprobe auswertet, muss vorher sagen, welche
+Frage sie beantwortet.
+
+⚠️ **Der eine Konstruktionsfehler, der bleibt:** die Frage erzwingt eine
+Antwort. „Bei welcher Sekunde" hat immer eine; „ich sehe die Grenze nicht"
+muss der Agent von sich aus sagen, und er tut es nicht zuverlässig. Genau
+das erledigt jetzt `kante_aus_folge` maschinell.
 
 **Die Lehre ist übertragbar:** ein Agent ist gut darin zu sagen, WAS auf
 einem Bild ist, und schlecht darin, eine Grenze zwischen Bildern zu

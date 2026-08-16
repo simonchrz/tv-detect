@@ -118,10 +118,27 @@ WEIT_SCHRITT_S = 6
 KONVENTION = {
     "sendungsinhalt":  "sendung",
     "mitmachtafel":    "sendung",   # kostenpflichtige Gewinnspiel-Einblendung
+    "folgesendung":    "sendung",   # s. u.
     "produktwerbung":  "werbung",
     "programmvorschau": "werbung",  # Trailer und Sendertrenner am Blockrand
     "unklar":          None,
 }
+
+# ⚠️ `folgesendung` fehlte zunaechst, und ein Agent hat die Luecke von sich
+# aus gemeldet: bei einer VOX-Aufnahme lief nach dem Film die naechste
+# Sendung (Medical Detectives), die weder Werbung noch Inhalt DIESER
+# Aufnahme ist. Mangels passender Kategorie fuehrte er sie als
+# `programmvorschau` — und die zaehlt hier als Werbung, haette den letzten
+# Werbeblock also ueber die Folgesendung hinweg verlaengert.
+#
+# Fuer die Kante ist die Antwort eindeutig: der Block endet, wo wieder
+# Programm laeuft, egal welches. Deshalb "sendung".
+#
+# Dass daraus kein falsches Label wurde, lag nicht an mir: die Ableitung
+# hat die Aufnahme aus anderen Gruenden abgelehnt. Ein Kategoriensatz, der
+# einen haeufigen Fall nicht kennt, zwingt den Agenten zu einer falschen
+# Einordnung — und er kann nur melden, was er nicht hat, wenn man ihn
+# laesst.
 
 
 def kante_aus_folge(punkte, seite):

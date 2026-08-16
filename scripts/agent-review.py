@@ -8,14 +8,42 @@ Zwei Schritte, dazwischen sichten die Agenten die Bilder:
      Auftrag nach `~/.cache/tvd-agent-review/<uuid>/`.
   2. (Agent liest `auftrag.json`, sichtet die Frames, schreibt
      `urteil.json`)
-  3. `--anwenden` → liest die Urteile, setzt die Kanten über
-     `POST /api/recording/<uuid>/ads/edit` und legt vorher ein Backup an.
+  3. `--anwenden` → liest die Urteile und setzt die Kanten über
+     `POST /api/recording/<uuid>/ads/edit`.
+
+⚠️ **Kein eigenes Backup.** Der Docstring behauptete das eine Zeit lang und
+es stimmte nie. Der Stand VOR dem Review steht in `auftrag.json` unter
+"bloecke" — daraus lässt sich zurücknehmen, solange das Arbeitsverzeichnis
+existiert. Wer sich auf mehr verlässt, verlässt sich auf nichts.
 
 **Warum nur die KANTEN und keine Vollsichtung:** gemessen wird von 173
 Label-Blöcken genau EINER ganz verpasst (Ledger §3af). Blöcke finden ist
 gelöst, die Kantenlage ist es nicht — eine Vollsichtung würde also das
 Zehnfache an Frames für das Problem ausgeben, das der Detektor bereits
 kann. Der Auftrag deckt deshalb ±16 s um jede Kante ab.
+
+⚠️⚠️ **STAND 2026-08-16: NICHT PRODUKTIONSREIF.** Die erste menschliche
+Stichprobe über drei Urteile ergab **drei Fehler**:
+
+  * Ein Blockende wurde auf „Sendung läuft wieder" gesetzt, obwohl über das
+    ganze Fenster Trailer lief — der Agent belegte es sogar mit einem
+    Vorspann, den es dort nicht gibt.
+  * Eine Kante wurde unverändert bestätigt, obwohl der Übergang einen
+    Abtastpunkt früher lag.
+  * Vier von vier kabel-eins-Blockstarts wurden als „GewinnArena-Insert,
+    01379-Nummer, 4×25.000 €" abgelehnt — tatsächlich ist dort ein
+    Werbeübergang.
+
+Der dritte Fall ist der lehrreichste: **der Auftrag nannte die Marken
+selbst** („winario, GewinnArena, 01379"), und der Agent hat sie auf
+mehrdeutige Bilder gemustert — konsistent über vier Aufnahmen, was wie ein
+systematischer Befund aussieht statt wie eine Halluzination. Ein Auftrag,
+der die erwarteten Antworten aufzählt, erzeugt sie.
+
+Die bis dahin geschriebenen Labels sind zurückgenommen. Bevor das hier
+wieder läuft, braucht es (a) einen Auftrag ohne Antwortvorgaben und (b) eine
+Konstruktion, die „ich sehe die Grenze nicht" maschinell prüfbar macht,
+statt dem Selbsturteil des Agenten zu vertrauen.
 
 ⚠️ **Was diese Labels NICHT beantworten können:** O13 prüft, ob eine Regel
 die Kante an einen Programmhinweis ziehen soll. Ein Agent, der denselben

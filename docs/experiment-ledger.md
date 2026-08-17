@@ -615,10 +615,26 @@ kein Zufall, sondern die Auszahlung der Bauart aus §3aj: der Agent urteilt
 über **Bilder**, die Konvention steht getrennt davon. Hätte der Agent direkt
 Kanten gemeldet, wäre jede Rücknahme ein kompletter Neulauf.
 
-**Offen und unabhängig davon:** bei `nick-1781550300` sagt das Bildmaterial
-Sendung bis 580 und Trailer ab 585, das Label 563 — kein Insert, kein
-Trailer davor. Entweder ist das Label 22 s zu früh oder der Agent hat die
-ersten Bilder falsch gelesen. Zur Stichprobe gegeben, noch nicht entschieden.
+### Und ein echter Fehler IM Maßstab (Stichprobe Simon, 2026-08-17)
+
+Bei `nick-1781550300` sagte das Bildmaterial Sendung bis 580 und Trailer ab
+585, das Label 563 — kein Insert, kein Trailer davor. **Simons Urteil auf
+die Bilder: 585.** Der Agent lag richtig, das Label ist **22 s zu früh**.
+
+`nick-1781550300` ist Golden-Mitglied. Der Maßstab trägt also mindestens
+einen echten Label-Fehler, und das Label hatte nie einen `reviewed_at` —
+also aus der ältesten Schicht.
+
+⚠️ **Nicht einzeln zurückgeschrieben.** Jede Änderung an einem Golden-Label
+schneidet über `label_hash` (§3ai) die Epoche und setzt die Latte neu auf.
+Für 22 Sekunden an einem Block von 38 Aufnahmen einen ganzen Verlauf zu
+opfern, ist der schlechtere Tausch. Richtig ist, alle 38 einmal mit
+grob+fein durchzumessen und **einen** Schnitt zu machen — sonst zahlt jeder
+Einzelfund den vollen Preis.
+
+Das ist damit die nächste Arbeit: Golden-Label-Audit über den ganzen Satz.
+Die Sperre in `anwenden()` bleibt dabei drin; geschrieben wird erst, wenn
+alle Funde vorliegen und Simon sie gesehen hat.
 
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)

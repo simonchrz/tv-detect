@@ -810,6 +810,34 @@ zugleich einer, der NICHT durch Modellverbesserung zu holen ist, sondern
 durch Labels, die die geltende Regel ausdrücken. Was daraus wird, gehört vor
 den nächsten Schritt registriert, nicht in einem Zug gebaut.
 
+### Wie verlässlich die Agenten sind — kostenlos mitgemessen
+
+Die Nachfass-Runden haben dieselben Bilder mehrfach beurteilen lassen. Das
+ergibt eine Selbstkonsistenz-Messung, ohne dass sie jemand bestellt hätte:
+
+```
+697 mehrfach beurteilte Bilder
+  identische Kategorie                 94.3 %
+  gleiche Werbung/Sendung-Zuordnung    96.0 %
+  haeufigste Uneinigkeit: programmvorschau vs sendungsinhalt (13x)
+                          produktwerbung  vs programmvorschau (12x)
+```
+
+Vier Prozent der Bilder kippen also in der Zuordnung, die zählt — und die
+häufigste Uneinigkeit ist ausgerechnet **Trailer gegen Sendung**, genau die
+Grenze, an der §3ao hängt. (Die zweithäufigste, Werbung gegen Trailer, ist
+folgenlos: beide zählen als Werbung.)
+
+⚠️ Das ist **Selbst**konsistenz, nicht Richtigkeit — derselbe Agententyp auf
+denselben Bildern. Die Richtigkeit misst nur Simons Stichprobe, und die steht
+bei 4 von 4 (nick 585 im ersten Durchgang, dann 1705, 585, 176).
+
+Praktisch heißt das: eine EINZELNE Kante aus einem Agenten-Urteil trägt
+etwa 96 % Verlässlichkeit pro Bild, und eine Kante hängt an zwei
+benachbarten Bildern. Für Aggregate über Dutzende Kanten ist das genug; für
+eine Einzelentscheidung mit Folgen (ein Golden-Label ändern) war die
+menschliche Stichprobe deshalb kein Formalismus.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

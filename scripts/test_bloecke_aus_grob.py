@@ -77,6 +77,21 @@ class BloeckeAusGrob(unittest.TestCase):
         got = _ar.bloecke_aus_grob(folge(S, S, W, W))
         self.assertEqual(got, [(135, 180)])
 
+    def test_einzelner_werbepunkt_am_ENDE_ist_kein_block(self):
+        # ⚠️ Derselbe Grund wie oben, aber am Schluss der Aufnahme — und
+        # genau dort fehlte die Bedingung. Ein einzelner Werbepunkt auf dem
+        # letzten Rasterplatz wurde zu einem Block der Laenge 0. Im
+        # Golden-Audit erschien das bei zwei vox-Aufnahmen identisch
+        # (3645..3645) und wurde als Label-Fehler von +811 s bzw. +765 s
+        # gemeldet. Dass zwei verschiedene Aufnahmen exakt denselben
+        # Endpunkt lieferten, war der Hinweis.
+        got = _ar.bloecke_aus_grob(folge(S, S, S, W))
+        self.assertEqual(got, [])
+
+    def test_zwei_werbepunkte_am_ende_sind_ein_block(self):
+        got = _ar.bloecke_aus_grob(folge(S, S, W, W))
+        self.assertEqual(got, [(135, 180)])
+
     def test_leere_folge(self):
         self.assertEqual(_ar.bloecke_aus_grob([]), [])
 

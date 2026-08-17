@@ -55,7 +55,7 @@ def main():
     golden = _ar.golden_uuids()
     if golden is None:
         return 1
-    funde, geprueft, offen = [], 0, []
+    funde, geprueft, offen, ohne_partner = [], 0, [], []
     for u in sorted(golden):
         d = _ar.ARBEIT / u
         lab = _ar.bloecke(_ar.SNAPSHOT / f"_rec_{u}" / "ads_user.json")
@@ -103,6 +103,14 @@ def main():
             if not lab:
                 continue
             l = min(lab, key=lambda x: abs(x[0] - g[0]))
+            # ⚠️ Ein gefundener Block ohne plausiblen Partner im Label ist
+            # etwas ANDERES als eine verschobene Kante — er gehoert nicht als
+            # riesige Abweichung gemeldet, sondern als eigener Fall. Ohne
+            # diese Trennung erschien ein Artefakt-Block am Aufnahmeende als
+            # Label-Fehler von +811 s.
+            if min(abs(l[0] - g[0]), abs(l[1] - g[1])) > 180:
+                ohne_partner.append((u, quelle, g))
+                continue
             for j, seite in ((0, "start"), (1, "ende")):
                 if (i, seite) not in sicher:
                     continue
@@ -114,6 +122,11 @@ def main():
     for u, q, seite, lw, gw, ab in sorted(funde, key=lambda x: -abs(x[5])):
         print(f"  {u:36} {q:4} {seite:5} Label {lw:7.1f} -> Bilder {gw:7.1f}"
               f"  {ab:+7.1f}s")
+    if ohne_partner:
+        print(f"\n{len(ohne_partner)} gefundene(r) Block/Bloecke OHNE Partner im "
+              f"Label (verpasster Block — oder ein Artefakt der Ableitung):")
+        for u, q, g in ohne_partner:
+            print(f"  {u:36} {q:4} {g[0]:7.1f}-{g[1]:7.1f}")
     if offen:
         print(f"\n{len(offen)} offen:")
         for u, warum in offen:

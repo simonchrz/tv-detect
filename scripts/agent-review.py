@@ -380,7 +380,15 @@ def bloecke_aus_grob(punkte):
             if sum(1 for tt, kk in folge if start <= tt < t and kk == "werbung") >= 2:
                 raus.append((start, t))
             start = None
-    if start is not None and folge:
+    # ⚠️ Der Schlussblock braucht dieselbe Mindestlaenge wie jeder andere.
+    # Ohne diese Bedingung wurde aus einem EINZELNEN Werbepunkt am letzten
+    # Rasterplatz ein Block der Laenge 0 — bei beiden vox-Aufnahmen im
+    # Golden-Audit identisch (3645..3645), und der Vergleich meldete das als
+    # Label-Fehler von +811 s bzw. +765 s. Zwei spektakulaere Funde, die
+    # keine waren; dass sie bei zwei Aufnahmen exakt gleich aussahen, war
+    # das Verraeterische.
+    if start is not None and folge and \
+            sum(1 for tt, kk in folge if tt >= start and kk == "werbung") >= 2:
         raus.append((start, folge[-1][0]))
     return raus
 

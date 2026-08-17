@@ -1486,6 +1486,39 @@ def process_recording(uuid, do_hls, do_thumbs):
             # "unknown"/absent field_order counts as progressive so metadata
             # gaps don't stampede every remux into a transcode.
             interlaced = field_order not in ("", "unknown", "progressive")
+            # ⚠️ …aber „absent" ist NICHT dasselbe wie „progressiv", und der
+            # Unterschied trifft genau den Fall, vor dem der Kommentar
+            # darüber warnt. Gemessen 2026-08-17 über 63 Aufnahmen aus 18
+            # Sendern: field_order stimmt überall mit der Frame-Ebene
+            # überein — ausser bei einer (dvr-rtl-1780078500), wo der Stream
+            # NICHTS meldet und 97 von 97 dekodierten Frames interlaced
+            # sind. Unter der Regel oben ginge die als -c:v copy raus, also
+            # interlaced, also potenziell Ton-ohne-Bild im AVPlayer.
+            #
+            # Deshalb im Leerfall EINMAL nachsehen statt zu raten. Kosten:
+            # 40 Frames, lokal 0,05 s — das ist kein Stampede, es passiert
+            # nur dort, wo die Metadaten schweigen (~1 von 63). Schlaegt die
+            # Probe fehl, bleibt es bei der alten Annahme; schlechter als
+            # heute wird es dadurch nie.
+            if not interlaced and field_order in ("", "unknown"):
+                try:
+                    fp = subprocess.run(
+                        [FFPROBE, "-v", "error", "-select_streams", "v:0",
+                         "-read_intervals", "%+#40",
+                         "-show_entries", "frame=interlaced_frame",
+                         "-of", "csv=p=0", src_url],
+                        capture_output=True, text=True, timeout=60,
+                        env=SPAWN_ENV)
+                    w = [z.split(",")[0].strip()
+                         for z in fp.stdout.splitlines() if z.strip()]
+                    if w and sum(x == "1" for x in w) > len(w) / 2:
+                        interlaced = True
+                        print(f"  remux {uuid}: field_order leer, aber "
+                              f"{sum(x == '1' for x in w)}/{len(w)} Frames "
+                              f"interlaced → deinterlace statt copy",
+                              flush=True)
+                except Exception:
+                    pass
             if vcodec in SAFE_VIDEO and not interlaced:
                 v_opts = ["-c:v", "copy"]
             else:

@@ -404,15 +404,21 @@ def bloecke_aus_grob(punkte):
 FEIN_MARGE_S = 15
 
 
-def vorbereiten_fein():
+def vorbereiten_fein(uuids=None):
     """Aus fertigen Grob-Urteilen feine Auftraege machen — modellunabhaengig.
 
     Fenster: der grobe Punkt liegt per Konstruktion bis zu einen Takt NACH
     der Wahrheit, also `[t - TAKT - MARGE, t + MARGE]`. Was danach immer
     noch am Rand liegt, faengt `--nachfassen` mit dem weiten Fenster.
+
+    Mit `uuids` nur diese — sinnvoll beim Golden-Audit: der grobe Durchgang
+    schliesst grobe Fehler ueberall aus, die teure feine Runde lohnt nur
+    dort, wo er etwas gefunden hat.
     """
     n_auf = 0
     for d in sorted(ARBEIT.glob("*/")):
+        if uuids and d.name.rstrip("/") not in uuids:
+            continue
         ap, up = d / "auftrag.json", d / "urteil.json"
         if not (ap.is_file() and up.is_file()):
             continue
@@ -808,7 +814,7 @@ def main():
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
         if a.fein:
-            return vorbereiten_fein()
+            return vorbereiten_fein([x for x in a.uuids.split(',') if x])
         if a.grob:
             return vorbereiten_grob(
                 a.anzahl, [x for x in a.uuids.split(',') if x])

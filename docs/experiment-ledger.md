@@ -759,6 +759,41 @@ Die großen Werbesender liegen bei ein bis drei Sekunden; auffällig sind die
 Kinderkanäle und comedy-central. Bei n=2 bis 4 ist das keine Aussage,
 sondern eine Richtung.
 
+### ⚠️ WIDERRUFEN am selben Tag: „woraus der Schwanz besteht"
+
+Der folgende Abschnitt stand ein paar Stunden lang als Befund da und war ein
+**Auswahleffekt eigener Bauart**. Er bleibt stehen, weil der Fehler lehrreicher
+ist als das, was er behauptete — aber er trägt nicht.
+
+Der Denkfehler: aufgeteilt wurde danach, **was zwischen Modellkante und
+Wahrheit liegt**. Eine Lücke gibt es nur, wenn das Modell danebenliegt — die
+Aufteilung bedingt also auf die Existenz eines Fehlers. Richtig aufgeteilt,
+nach einer Eigenschaft der KANTE:
+
+```
+Blockenden, liegt vor der WAHREN Kante ein Trailer?
+  mit Trailer   n=31   |Fehler| Median 2.1 s   ueber 10 s: 6/31
+  ohne Trailer  n= 6   |Fehler| Median 1.1 s   ueber 10 s: 2/6
+```
+
+Ein Trailer steht vor 31 von 37 Enden — Normalfall, nicht Fehlermerkmal. Und
+die O15-Vorbereitung zeigte an fünf gesichteten Enden, dass die Korpus-Labels
+längst hinter dem Trailer sitzen; die zweite Annahme („der Korpus drückt die
+Regel nicht aus") war ebenfalls falsch.
+
+**Regel daraus:** nach einer Eigenschaft der Lücke aufzuteilen ist immer auf
+den Fehlerfall bedingt. Nach etwas aufteilen, das unabhängig vom Fehler da ist.
+
+Gekostet hat der Fehler nichts außer den vorbereiteten Frames: O15 wurde
+zurückgezogen, bevor eine einzige Aufnahme geschrieben wurde — weil ich nach
+vier von vierzig Sichtungen nachgesehen habe, statt alle abzuwarten.
+Aufgefallen wäre es sonst erst nach 40 Agentenläufen und einem Nachtlauf.
+
+**Der Schwanz bleibt real und unerklärt: Median 2.0 s, p90 21 s.**
+
+<details>
+<summary>Der widerrufene Abschnitt im Wortlaut</summary>
+
 ### Woraus der Schwanz besteht: der abschließende Trailer, 8 von 8
 
 Für jede Kante mit über 10 s Fehler lässt sich nachsehen, **was zwischen der
@@ -809,6 +844,8 @@ das genau dafür am 28.07. gebaut wurde, ist seit dem hsmm-Wechsel dormant
 zugleich einer, der NICHT durch Modellverbesserung zu holen ist, sondern
 durch Labels, die die geltende Regel ausdrücken. Was daraus wird, gehört vor
 den nächsten Schritt registriert, nicht in einem Zug gebaut.
+
+</details>
 
 ### Wie verlässlich die Agenten sind — kostenlos mitgemessen
 

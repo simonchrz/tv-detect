@@ -148,3 +148,21 @@ um die Modellkante herum zu suchen.
 sondern die Feststellung, dass mein Messsatz eine andere Population abbildet
 als der Korpus. Wer die Flankenauswahl wirklich beurteilen will, muss das
 zuerst reparieren.
+
+## Nachtrag 2026-08-17 — das Verfahren steht
+
+`agent-review.py` kann jetzt beides, und zwar getrennt:
+
+* `--vorbereiten --grob` tastet die ganze Aufnahme im 45-s-Takt ab und findet
+  die Blöcke **ohne das Modell**. Das behebt den Auswahleffekt.
+* `--vorbereiten --fein` misst die so gefundenen Stellen nach. Nötig, weil
+  der grobe Durchgang den Start per Konstruktion bis zu einen Takt zu spät
+  meldet — gegen menschliche Golden-Labels gemessen im Median +29 s. Wer
+  seine Zahlen direkt als Kantenfehler nimmt, misst sein eigenes Raster
+  (§3ak, Korrektur).
+
+Ein neuer Messsatz aus diesem Weg wäre die Voraussetzung, O14 überhaupt
+sinnvoll zu wiederholen. Das Urteil oben bleibt davon unberührt — eine
+zweite Runde derselben Frage braucht eine eigene Registrierung, und ob sie
+sich lohnt, entscheidet sich erst an der Frage, wie weit die Kanten in einem
+unverzerrten Satz überhaupt danebenliegen.

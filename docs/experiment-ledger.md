@@ -872,6 +872,42 @@ Frage und eine eigene Registrierung.
 sie gefunden wurden. Sie taugen als Abschätzung, nicht als Beleg. Eine Regel,
 die aus ihnen folgt, gehört prospektiv geprüft (§3ak).
 
+### Und wo der Hebel dann liegt: der Kopf ist seit dem 14.08. nackt
+
+Beim Nachsehen, ob der Kopf das Logo überhaupt sieht, kam der deployte Stand
+heraus:
+
+```
+head.bin (Daemon, 15.08.)  magic MLP1  input 1282 = backbone 1280 + logo 1 + audio 1
+                           n_channel 0, kein whisper, kein temporal, kein minute-prior
+head.channel-map.json      n=0, slugs []
+```
+
+Das ist **kein Drift, sondern Absicht** und steht so in `tv-train-head.sh`:
+seit dem 2026-08-14 überschreibt `TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"`
+die MLP5-Zeile (argparse gewinnt mit dem späteren Flag). Der deployte Kopf
+sieht das Logo — aber sonst nichts von dem, was MLP2 bis MLP5 gebaut haben.
+
+(Die veraltete `head.calibration.json` vom 06.08. mit
+`head_arch: mlp32-channel-whisper-temporal-mp-wm` ist dabei **harmlos**: es
+gibt keinen Go-Leser dafür, nur die Active-Learning-Fläche am Gateway nutzt
+sie. Geprüft, bevor daraus ein Alarm wurde.)
+
+**Der Kommentar im Skript hält selbst fest, dass die Umstellung gegen die
+Messlage erfolgte:** „bare 0.9332 vs prod 0.9372, Δ −0.0040". Dieses Δ liegt
+weit **innerhalb** der Seed-Streuung, die heute bei 0.0123 bis 0.0229 lag —
+die Entscheidung fiel also auf einen Unterschied, der kleiner ist als das
+Rauschen, und gemessen wurde er gegen die **unkorrigierten** Labels.
+
+Damit ist die nächste Frage nicht neu zu erfinden, sondern liegt fertig
+verdrahtet da: **sieht der volle Kopf (channel + whisper + temporal +
+minute-prior + whisper-mask) dort eine Flanke, wo der nackte keine hat?**
+§3ap sagt, genau daran hängt der Schwanz. Und der Maßstab, an dem das zu
+messen wäre, ist seit heute ein anderer.
+
+Kosten: eine Zeile im Skript und ein Nachtlauf. Das gehört registriert
+(Bedingungen und Vorhersage vorher), nicht in einem Zug umgelegt.
+
 <details>
 <summary>Der widerrufene Abschnitt im Wortlaut</summary>
 

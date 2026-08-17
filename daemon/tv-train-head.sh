@@ -42,7 +42,18 @@ export TVD_LAUF=nightly
 # desselben Morgens: der bare-Vorsprung war nach der Label-Runde weg
 # (bare 0.9332 vs prod 0.9372, Δ -0.0040; Verlauf im Ledger §3 O2).
 # Zurueckdrehen = diese Zeile leeren, eine Zeile, kein Umbau.
-TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"
+# ⚠️ AM 2026-08-17 FUER EINE NACHT GELEERT — O16 (Registrierung in
+# docs/o16-voller-kopf-preregistration.md, geschrieben VOR dieser Zeile).
+# Anlass: der Golden-Satz wurde am 17.08. bereinigt (16 von 66 Kanten lagen
+# falsch, Ledger §3an), und die Umstellung vom 14.08. fusste laut Kommentar
+# oben auf Δ -0.0040 — weit innerhalb der Seed-Streuung von 0.0123-0.0229 und
+# gegen genau die Labels, die sich als zu einem Viertel falsch erwiesen haben.
+# §3ap sagt ausserdem, der Kantenschwanz haengt an einer fehlenden NN-Flanke.
+#
+# ZURUECKSETZEN NACH DER AUSWERTUNG, unabhaengig vom Ergebnis: die Zeile
+# wieder auf "--head-arch mlp32" setzen. Simons Entscheid vom 14.08. gilt
+# weiter; O16 ist eine Messung, kein Architekturwechsel.
+TVH_HEAD_ARCH_OVERRIDE=""
 
 # launchd jobs can't reach the login keychain, so `gh` (used by the
 # off-site model-anchor at deploy time) can't read its keyring-stored

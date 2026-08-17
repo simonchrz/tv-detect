@@ -223,6 +223,33 @@ def kante_aus_folge(punkte, seite):
     return float(folge[i + 1][0]), None
 
 
+def urteile_von(d):
+    """Alle Bild-Urteile einer Aufnahme, ueber ALLE Runden hinweg.
+
+    ⚠️ Diese Funktion existiert, weil dieselbe Lese-Logik an drei Stellen
+    dupliziert war und eine davon nur `urteil.json` kannte. `--nachfassen`
+    benennt das aktuelle Urteil vor jeder neuen Runde in `urteil-r<n>.json`
+    um — danach uebersprang `vorbereiten_fein` acht Aufnahmen STILL, weil es
+    die eine Datei nicht fand. Ein stiller Skip auf genau den Dateien, die
+    ein frueherer Fehler angefasst hat, ist die teuerste Sorte.
+    """
+    je = {}
+    for p in [d / "urteil.json"] + sorted(d.glob("urteil-r*.json")):
+        if not p.is_file():
+            continue
+        try:
+            roh = json.loads(p.read_text()).get("bilder") or []
+        except Exception:
+            continue
+        for b in roh:
+            try:
+                je.setdefault(b["verzeichnis"], []).append(
+                    (float(b["zeit"]), str(b["kategorie"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return je
+
+
 def bloecke(pfad):
     """ads.json ist eine nackte Liste, ads_user.json ein Objekt mit "ads"."""
     try:
@@ -427,23 +454,18 @@ def vorbereiten_fein(uuids=None):
     for d in sorted(ARBEIT.glob("*/")):
         if uuids and d.name.rstrip("/") not in uuids:
             continue
-        ap, up = d / "auftrag.json", d / "urteil.json"
-        if not (ap.is_file() and up.is_file()):
+        ap = d / "auftrag.json"
+        if not ap.is_file():
             continue
         auftrag = json.loads(ap.read_text())
         if auftrag.get("art") != "grob":
             continue
-        try:
-            bilder = json.loads(up.read_text()).get("bilder") or []
-        except Exception:
-            continue
         u = auftrag["uuid"]
-        punkte = []
-        for b in bilder:
-            try:
-                punkte.append((float(b["zeit"]), str(b["kategorie"])))
-            except (KeyError, TypeError, ValueError):
-                continue
+        je = urteile_von(d)
+        if not je:
+            print(f"  {u}: noch kein Urteil — uebersprungen")
+            continue
+        punkte = [x for v in je.values() for x in v]
         grob = bloecke_aus_grob(punkte)
         if not grob:
             print(f"  {u}: der grobe Durchgang fand keinen Block — "
@@ -465,7 +487,10 @@ def vorbereiten_fein(uuids=None):
         # `--anwenden` die 45-s-Punkte als feine Kanten und schreibt das
         # Raster als Label.
         ap.rename(d / "auftrag-grob.json")
-        up.rename(d / "urteil-grob.json")
+        for i, up in enumerate([d / "urteil.json"] + sorted(d.glob("urteil-r*.json"))):
+            if up.is_file():
+                up.rename(d / (f"urteil-grob.json" if i == 0
+                               else f"urteil-grob-{up.stem}.json"))
         (d / "auftrag.json").write_text(json.dumps(
             {"uuid": u, "art": "fein-nach-grob", "dauer_s": auftrag.get("dauer_s"),
              "bloecke": [[round(a, 1), round(b, 1)] for a, b in grob],

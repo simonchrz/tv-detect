@@ -791,6 +791,87 @@ Aufgefallen wäre es sonst erst nach 40 Agentenläufen und einem Nachtlauf.
 
 **Der Schwanz bleibt real und unerklärt: Median 2.0 s, p90 21 s.**
 
+## 3ap. Der Schwanz erklärt — und der naheliegende Ausweg zugleich versperrt
+(2026-08-17, explorativ)
+
+Nach dem Trailer-Fehlschlag diesmal nach einer Eigenschaft aufgeteilt, die
+unabhängig vom Fehler existiert: **wie scharf ist die Flanke an der WAHREN
+Kante** (Signal-Dumps, keine Agenten nötig).
+
+```
+                      NN-Amplitude    Logo-Amplitude   (+-6 s um die wahre Kante)
+gut      (<= 5 s) n=52    0.970           0.958
+schlecht (> 10 s) n=17    0.628           0.980
+```
+
+Und wo die Flanken liegen:
+
+```
+             Abstand des 0.5-Durchgangs zur WAHREN Kante
+gut          NN  Median  4.8 s (57 % auf 5 s)    Logo  4.9 s (56 %)
+schlecht     NN  Median 16.0 s ( 6 % auf 5 s)    Logo  6.0 s (50 %)
+```
+
+**Der Schwanz ist damit erklärt: dort hat das NN keine Flanke.** Das Logo
+hat eine, und sie liegt an der richtigen Stelle. Das ist kein
+Auswahleffekt — gemessen wurde an der wahren Kante, die aus Bildern kommt,
+nicht aus dem Modell.
+
+### Warum daraus trotzdem keine Regel wird
+
+Zwei Prüfungen, beide negativ, beide VOR einer Registrierung gemacht:
+
+**1. Die Bedingung ist zur Laufzeit nicht erkennbar.** Man weiß ja nicht,
+welche Kante schlecht ist. Der einzige Kandidat für einen Auslöser ist die
+NN-Amplitude an der MODELLkante:
+
+```
+  gut 0.461   schlecht 0.313   — breit ueberlappend
+  Schwelle < 0.5 faengt 15/17 schlechte, trifft aber 34/52 gute
+```
+
+**2. „Fehlauslöser kosten nichts" stimmt nicht.** Unbedingtes Ziehen auf den
+Logo-Durchgang, durchgerechnet:
+
+```
+             Median   p75    p90   <=2s  <=5s  >10s
+heute          2.0s  10.0s  21.0s   50%   70%   23%
+mit Logo       5.3s  10.9s  25.7s    8%   47%   26%
+             besser 17, schlechter 46
+```
+
+⚠️ **Mein Denkfehler, derselbe Typ wie beim Trailer:** ich habe die
+Logo-Flanke gegen die **rohe NN-Flanke** gemessen (4.9 gegen 4.8 s) und
+daraus geschlossen, ein Fehlauslöser sei harmlos. Der Vergleichsmaßstab ist
+aber die **Decoder-Ausgabe**, und die liegt an guten Kanten bei 2.0 s — der
+hsmm leistet zwischen roher Flanke und Kante erheblich viel. Zwei
+verschiedene Baselines zu vermischen sieht genauso aus wie ein Ergebnis.
+
+### Was das für O14 heißt
+
+§3ak hatte O14s Urteil abgeschwächt: „belegt ist nur, dass Flankenauswahl auf
+schon korrekten Kanten schadet". Auf dem jetzt unverzerrten Satz — der die
+harten Fälle enthält — **bestätigt sich das Urteil**. Und O14s eigener
+Schlusssatz trifft genau:
+
+> „wenn eine Heuristik davon nichts holt, ist das Problem nicht die Auswahl,
+> sondern dass man ohne Kenntnis der Wahrheit nicht erkennt, welches Signal
+> gerade recht hat."
+
+Das ist jetzt gemessen statt vermutet. Die Flankenauswahl ist damit
+endgültig auf dem Friedhof.
+
+### Was offen bleibt
+
+Ein reales Signal ohne brauchbaren Auslöser. Der Hebel liegt nicht darin, das
+Logo *auszuwählen*, sondern darin, dass **das NN es sieht** — also im
+Trainingsweg, nicht in einer Nachlaufregel. Ob das trägt, ist eine eigene
+Frage und eine eigene Registrierung.
+
+⚠️ Alle Zahlen hier sind **explorativ** auf demselben Satz gerechnet, an dem
+sie gefunden wurden. Sie taugen als Abschätzung, nicht als Beleg. Eine Regel,
+die aus ihnen folgt, gehört prospektiv geprüft (§3ak).
+
 <details>
 <summary>Der widerrufene Abschnitt im Wortlaut</summary>
 

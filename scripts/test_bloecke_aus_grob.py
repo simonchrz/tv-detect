@@ -80,5 +80,39 @@ class BloeckeAusGrob(unittest.TestCase):
         self.assertEqual(_ar.bloecke_aus_grob(folge(S, S, S, S)), [])
 
 
+class FeinesFensterDecktDenTakt(unittest.TestCase):
+    """Die zweite Stufe muss die Wahrheit einschliessen — sonst misst sie
+    wieder nur das Raster.
+
+    ⚠️ Der Grund fuer diesen Test: der grobe Durchgang meldet den Start per
+    Konstruktion bis zu einen ganzen Takt ZU SPAET (gemessen gegen
+    menschliche Golden-Labels: Median +29 s bei 45 s Takt). Ein symmetrisches
+    Fenster um den groben Punkt wuerde die Wahrheit auf der frueheren Seite
+    zur Haelfte verfehlen — das feine Fenster ist deshalb absichtlich
+    asymmetrisch nach hinten gezogen.
+    """
+
+    def _fenster(self, t):
+        return (t - _ar.GROB_TAKT_S - _ar.FEIN_MARGE_S, t + _ar.FEIN_MARGE_S)
+
+    def test_deckt_das_ganze_taktintervall_davor(self):
+        # Die Wahrheit kann ueberall in (t-Takt, t] liegen.
+        t = 900.0
+        a, b = self._fenster(t)
+        self.assertLessEqual(a, t - _ar.GROB_TAKT_S)
+        self.assertGreaterEqual(b, t)
+
+    def test_ist_nach_hinten_gezogen_nicht_symmetrisch(self):
+        t = 900.0
+        a, b = self._fenster(t)
+        self.assertGreater(t - a, b - t)
+
+    def test_schrittweite_teilt_das_fenster(self):
+        # Sonst faellt der letzte Punkt aus dem Raster und die Kante kann
+        # genau am Rand liegen, wo die Ableitung sie ablehnt.
+        a, b = self._fenster(900.0)
+        self.assertEqual((b - a) % _ar.SCHRITT_S, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -367,6 +367,85 @@ def bloecke_aus_grob(punkte):
     return raus
 
 
+# Zweite Stufe: die grob gefundene Stelle fein nachmessen.
+#
+# ⚠️ Der grobe Durchgang KANN die Grenze nicht genau angeben, und wer seine
+# Zahlen trotzdem als Mass nimmt, misst sein eigenes Raster. Belegt am
+# 2026-08-17: derselbe Durchgang gegen MENSCHLICHE Golden-Labels ergab
+# Starts im Median +29 s — bei Grenzen, die ein Mensch gesetzt hat. Der
+# Grund ist Konstruktion, nicht Fehler: der Start wird auf den ersten
+# Werbe-Rasterpunkt gesetzt, die wahre Grenze liegt irgendwo im Takt davor,
+# also im Mittel 22 s frueher. Ich hatte daraus zuvor „das Modell startet
+# 20 bis 72 s zu frueh" gelesen; nach Abzug bleibt das nur fuer kabel-eins.
+#
+# Deshalb diese Stufe. Sie ist auch der eigentliche Zweck des groben
+# Durchgangs: er sagt WO eine Grenze ist, ohne das Modell zu fragen — die
+# Sekunde liefert erst das feine Fenster. Damit haengt das Review an keiner
+# Stelle mehr an der Modellkante, und der Auswahleffekt aus O14 (nur die
+# ohnehin richtig sitzenden Kanten kamen durch) ist an der Wurzel behoben.
+FEIN_MARGE_S = 15
+
+
+def vorbereiten_fein():
+    """Aus fertigen Grob-Urteilen feine Auftraege machen — modellunabhaengig.
+
+    Fenster: der grobe Punkt liegt per Konstruktion bis zu einen Takt NACH
+    der Wahrheit, also `[t - TAKT - MARGE, t + MARGE]`. Was danach immer
+    noch am Rand liegt, faengt `--nachfassen` mit dem weiten Fenster.
+    """
+    n_auf = 0
+    for d in sorted(ARBEIT.glob("*/")):
+        ap, up = d / "auftrag.json", d / "urteil.json"
+        if not (ap.is_file() and up.is_file()):
+            continue
+        auftrag = json.loads(ap.read_text())
+        if auftrag.get("art") != "grob":
+            continue
+        try:
+            bilder = json.loads(up.read_text()).get("bilder") or []
+        except Exception:
+            continue
+        u = auftrag["uuid"]
+        punkte = []
+        for b in bilder:
+            try:
+                punkte.append((float(b["zeit"]), str(b["kategorie"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+        grob = bloecke_aus_grob(punkte)
+        if not grob:
+            print(f"  {u}: der grobe Durchgang fand keinen Block — "
+                  f"nichts zu verfeinern")
+            continue
+        kanten = []
+        for i, (s, e) in enumerate(grob):
+            for seite, t in (("start", s), ("ende", e)):
+                zeiten = [float(x) for x in
+                          range(int(t) - GROB_TAKT_S - FEIN_MARGE_S,
+                                int(t) + FEIN_MARGE_S + 1, SCHRITT_S)]
+                verz = f"fein_{i}_{seite}"
+                kanten.append({"block": i, "seite": seite, "ist": round(t, 1),
+                               "verzeichnis": verz,
+                               "frames": frames_ziehen(
+                                   u, [z for z in zeiten if z >= 0], d / verz)})
+        # ⚠️ Die Grob-Dateien bleiben liegen, nur unter anderem Namen: das
+        # Urteil darf nicht als `urteil.json` stehenbleiben, sonst liest
+        # `--anwenden` die 45-s-Punkte als feine Kanten und schreibt das
+        # Raster als Label.
+        ap.rename(d / "auftrag-grob.json")
+        up.rename(d / "urteil-grob.json")
+        (d / "auftrag.json").write_text(json.dumps(
+            {"uuid": u, "art": "fein-nach-grob", "dauer_s": auftrag.get("dauer_s"),
+             "bloecke": [[round(a, 1), round(b, 1)] for a, b in grob],
+             "kanten": kanten}, indent=1))
+        n = sum(len(k["frames"]) for k in kanten)
+        print(f"  {u:36} {len(grob)} Bloecke aus dem groben Durchgang, "
+              f"{len(kanten)} Kanten, {n} Frames -> {d}")
+        n_auf += 1
+    print(f"{n_auf} Aufnahme(n) fein vorbereitet.")
+    return 0
+
+
 def vorbereiten(anzahl, dump_anfordern=False):
     kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
@@ -572,6 +651,27 @@ def nachfassen():
     return 0
 
 
+def golden_uuids():
+    """Der gepinnte Golden-Satz — was hier drin steht, wird NIE geschrieben.
+
+    ⚠️ Diese Sperre entstand aus einer Gefahr, die ich mir am 2026-08-17
+    selbst gebaut habe: um zu pruefen, ob der Golden-Satz dieselben groben
+    Kantenfehler enthaelt wie der Korpus, habe ich drei seiner Aufnahmen
+    als Auftraege ins Arbeitsverzeichnis gelegt. Ein spaeteres `--anwenden`
+    haette Agenten-Labels ueber die menschlichen Golden-Labels geschrieben —
+    und damit den Massstab still durch das ersetzt, was gemessen werden
+    soll. Der Lauf haette danach besser ausgesehen, nicht schlechter.
+    """
+    try:
+        return set(json.loads(
+            (Path.home() / ".cache/tvd-train-archive/golden-eval-set.json")
+            .read_text())["uuids"])
+    except Exception as e:
+        # Lieber gar nichts schreiben als ungeschuetzt schreiben.
+        print(f"⚠ Golden-Satz nicht lesbar ({e}) — schreibe sicherheitshalber nichts")
+        return None
+
+
 def anwenden(trocken):
     """Urteile lesen, Kanten ABLEITEN, schreiben.
 
@@ -584,10 +684,16 @@ def anwenden(trocken):
     mitmachtafel | unklar. Die Zuordnung zu Werbung/Sendung passiert in
     KONVENTION, die Kante in kante_aus_folge — beides hier, nicht im Agenten.
     """
+    gesperrt = golden_uuids()
+    if gesperrt is None:
+        return 1
     ges = 0
     for d in sorted(ARBEIT.glob("*/")):
         up, ap = d / "urteil.json", d / "auftrag.json"
         if not (up.is_file() and ap.is_file()):
+            continue
+        if d.name.rstrip("/") in gesperrt:
+            print(f"  {d.name.rstrip('/')}: GOLDEN — nicht angefasst")
             continue
         # ⚠️ Schon angewandt = nicht noch einmal schreiben. Jeder erneute
         # POST setzt reviewed_at neu und laesst eine alte Beurteilung wie
@@ -664,6 +770,10 @@ def main():
     ap.add_argument("--grob", action="store_true",
                     help="ganze Aufnahmen im festen Takt abtasten, statt um "
                          "die Modellkante herum — findet auch grob falsche Kanten")
+    ap.add_argument("--fein", action="store_true",
+                    help="mit --vorbereiten: fertige Grob-Urteile in feine "
+                         "Auftraege ueberfuehren (zweite Stufe — der grobe "
+                         "Durchgang allein ist nur auf den Takt genau)")
     ap.add_argument("--anwenden", action="store_true")
     ap.add_argument("--nachfassen", action="store_true",
                     help="unentschiedene Kanten mit weiterem Fenster neu vorbereiten")
@@ -679,6 +789,8 @@ def main():
     a = ap.parse_args()
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
+        if a.fein:
+            return vorbereiten_fein()
         if a.grob:
             return vorbereiten_grob(
                 a.anzahl, [x for x in a.uuids.split(',') if x])

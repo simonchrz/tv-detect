@@ -21,7 +21,9 @@ sonst zahlt jeder Einzelfund den vollen Preis.
 """
 import importlib.util
 import json
+import ssl
 import sys
+import urllib.request
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -31,6 +33,31 @@ _spec.loader.exec_module(_ar)
 
 KURZ = {"sendungsinhalt": "S", "produktwerbung": "W", "programmvorschau": "T",
         "mitmachtafel": "M", "unklar": "?"}
+
+_CTX = ssl.create_default_context()
+_CTX.check_hostname = False
+_CTX.verify_mode = ssl.CERT_NONE
+
+
+def label_vom_gateway(u):
+    """Das Label AM GATEWAY lesen, nicht im Snapshot.
+
+    ⚠️ `/tmp/tv-train-snapshot` ist ein Abzug und veraltet, sobald jemand ein
+    Label aendert. Nach der Korrektur vom 2026-08-17 meldete dieser Bericht
+    deshalb weiter die ALTEN Werte und damit dieselben 16 Funde als offen,
+    obwohl sie laengst geschrieben waren — ein Bericht, der aussieht, als
+    haette die Reparatur nicht gewirkt. Dieselbe Falle wie beim Catten von
+    ads.json (Memory `never_cat_gateway_caches`): der Endpunkt ist die
+    Wahrheit, die Datei ist eine Kopie.
+    """
+    try:
+        req = urllib.request.Request(f"{_ar.GATEWAY}/recording/{u}/ads")
+        with urllib.request.urlopen(req, context=_CTX, timeout=20) as r:
+            d = json.loads(r.read())
+        a = d.get("ads") if isinstance(d, dict) else d
+        return [(float(x[0]), float(x[1])) for x in a] if a else None
+    except Exception:
+        return None
 
 
 def bilder_von(d):
@@ -67,7 +94,7 @@ def main():
     n_kanten, abweichungen = 0, []
     for u in sorted(golden):
         d = _ar.ARBEIT / u
-        lab = _ar.bloecke(_ar.SNAPSHOT / f"_rec_{u}" / "ads_user.json")
+        lab = label_vom_gateway(u)
         if lab is None:
             continue
         # Feines Urteil schlägt grobes: kleinere Auflösung, echte Sekunden.

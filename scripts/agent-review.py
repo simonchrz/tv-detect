@@ -630,6 +630,15 @@ def nachfassen():
         if not (ap.is_file() and up.is_file()):
             continue
         auftrag = json.loads(ap.read_text())
+        # ⚠️ Grobe Auftraege NICHT nachfassen. Ein Grob-Urteil hat gar keine
+        # Kante, an der man nachfassen koennte — `kante_aus_folge` ueber die
+        # 45-s-Punkte liefert zwangslaeufig „unbestimmt", und diese Fassung
+        # legte daraufhin fuer JEDE grob durchgemessene Aufnahme eine
+        # sinnlose Folge-Runde an (ffmpeg-Laeufe, und das Urteil wanderte
+        # nach urteil-r1.json, wo der Audit es nicht mehr fand). Der richtige
+        # Anschluss an einen groben Durchgang ist `--vorbereiten --fein`.
+        if auftrag.get("art") == "grob":
+            continue
         try:
             bilder = json.loads(up.read_text()).get("bilder") or []
         except Exception:

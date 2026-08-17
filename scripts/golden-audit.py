@@ -33,21 +33,29 @@ KURZ = {"sendungsinhalt": "S", "produktwerbung": "W", "programmvorschau": "T",
         "mitmachtafel": "M", "unklar": "?"}
 
 
-def bilder_von(d, name="urteil.json"):
-    p = d / name
-    if not p.is_file():
-        return {}
-    try:
-        roh = json.loads(p.read_text()).get("bilder") or []
-    except Exception:
-        return {}
+def bilder_von(d):
+    """Alle Bild-Urteile einer Aufnahme, über ALLE Runden hinweg.
+
+    ⚠️ Nicht nur `urteil.json`. `--nachfassen` benennt das aktuelle Urteil in
+    `urteil-r<n>.json` um, bevor es die nächste Runde anlegt — die erste
+    Fassung las nur die eine Datei und meldete danach ein Dutzend Aufnahmen
+    als „noch kein Urteil", obwohl deren Sichtung längst vorlag. `anwenden()`
+    in agent-review.py sammelt aus demselben Grund über alle Runden.
+    """
     je = {}
-    for b in roh:
-        try:
-            je.setdefault(b["verzeichnis"], []).append(
-                (float(b["zeit"]), str(b["kategorie"])))
-        except (KeyError, TypeError, ValueError):
+    for p in [d / "urteil.json"] + sorted(d.glob("urteil-r*.json")):
+        if not p.is_file():
             continue
+        try:
+            roh = json.loads(p.read_text()).get("bilder") or []
+        except Exception:
+            continue
+        for b in roh:
+            try:
+                je.setdefault(b["verzeichnis"], []).append(
+                    (float(b["zeit"]), str(b["kategorie"])))
+            except (KeyError, TypeError, ValueError):
+                continue
     return je
 
 

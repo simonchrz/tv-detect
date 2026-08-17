@@ -503,8 +503,19 @@ def vorbereiten_fein(uuids=None):
     return 0
 
 
-def vorbereiten(anzahl, dump_anfordern=False):
-    kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
+def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
+    """Frames um jede Modellkante ziehen.
+
+    Mit `uuids` gezielt auf benannte Aufnahmen, auch wenn sie schon ein
+    menschliches Label haben — dann wird nicht gelabelt, sondern ein
+    vorhandenes Label nachgezogen (O15: Blockenden auf die
+    Trailer-Konvention). Ohne `uuids` wie bisher: nur Aufnahmen ohne Label.
+    """
+    if uuids:
+        kandidaten = [SNAPSHOT / f"_rec_{u}" for u in uuids]
+        kandidaten = [d for d in kandidaten if d.is_dir()]
+    else:
+        kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
     # ⚠️ Aufnahmen mit vorhandenem Signal-Dump zuerst. Der Schattenlauf
     # (kanten-schatten.py) braucht je Aufnahme einen Dump; ohne ihn ist das
@@ -524,14 +535,19 @@ def vorbereiten(anzahl, dump_anfordern=False):
     # schiefen Liste bleibt schief: der zweite Stapel lieferte wieder 5 von 7
     # aus einem Sender. Der Dump-Vorsprung ist ein Tempo-Vorteil, kein Grund,
     # den Korpus durch einen Kanal zu ersetzen.
-    gewaehlt = _reihum(mit + ohne)[:anzahl]
+    gewaehlt = kandidaten if uuids else _reihum(mit + ohne)[:anzahl]
     if dump_anfordern:
         gewaehlt = _dumps_besorgen([d for d in gewaehlt
                                     if not (DUMPS / f"{d.name[5:]}.json").is_file()],
                                    gewaehlt)
     for d in gewaehlt:
         u = d.name[5:]
-        auto = bloecke(d / "ads.json")
+        # ⚠️ Bei einer Aufnahme MIT Label ist das Label der Ausgangspunkt,
+        # nicht das Modell. Sonst wuerde ein Nachziehen die menschliche
+        # Blockeinteilung still durch die des Modells ersetzen — und dabei
+        # weit mehr aendern als die eine Kante, um die es geht.
+        auto = (bloecke(d / "ads_user.json") if uuids else None) \
+            or bloecke(d / "ads.json")
         # ⚠️ Zwischen Auswahl und Benutzung koennen Minuten liegen — das
         # Warten auf die Signal-Dumps dauert, und der Snapshot ist ein Abzug,
         # den jederzeit jemand neu ziehen kann. Genau dabei ist eine Aufnahme
@@ -738,7 +754,7 @@ def golden_uuids():
         return None
 
 
-def anwenden(trocken):
+def anwenden(trocken, nur_enden=False):
     """Urteile lesen, Kanten ABLEITEN, schreiben.
 
     Erwartetes Urteil-Format (eine Zeile je BILD, nicht je Kante):
@@ -792,6 +808,13 @@ def anwenden(trocken):
         n, offen = 0, []
         for k in auftrag["kanten"]:
             i, seite = k["block"], k["seite"]
+            # ⚠️ `nur_enden` fuer O15: dort ist die registrierte Frage
+            # ausdruecklich auf Blockenden begrenzt, weil §3ao an den Starts
+            # KEIN Muster zeigt. Eine unbestimmte Startkante darf die
+            # Aufnahme dann auch nicht blockieren — sie wird gar nicht
+            # angefasst.
+            if nur_enden and seite != "ende":
+                continue
             kante, grund = kante_aus_folge(je_verz.get(k["verzeichnis"], []), seite)
             if kante is None:
                 offen.append((i, seite, grund))
@@ -843,6 +866,9 @@ def main():
     ap.add_argument("--anwenden", action="store_true")
     ap.add_argument("--nachfassen", action="store_true",
                     help="unentschiedene Kanten mit weiterem Fenster neu vorbereiten")
+    ap.add_argument("--nur-enden", action="store_true",
+                    help="mit --anwenden: nur Blockenden schreiben, Starts "
+                         "unberuehrt lassen (O15)")
     ap.add_argument("--trocken", action="store_true",
                     help="mit --anwenden: nur zeigen, nichts schreiben")
     ap.add_argument("--anzahl", type=int, default=5)
@@ -860,11 +886,12 @@ def main():
         if a.grob:
             return vorbereiten_grob(
                 a.anzahl, [x for x in a.uuids.split(',') if x])
-        return vorbereiten(a.anzahl, a.dump_anfordern)
+        return vorbereiten(a.anzahl, a.dump_anfordern,
+                           [x for x in a.uuids.split(',') if x])
     if a.nachfassen:
         return nachfassen()
     if a.anwenden:
-        return anwenden(a.trocken)
+        return anwenden(a.trocken, a.nur_enden)
     ap.print_help()
     return 0
 

@@ -655,14 +655,30 @@ nicht — mit Ausreißern bis 54 s, und `sat-1-1781979300` allein trägt fünf.
 176 statt 121, rtlzwei-Start 1705 statt 1663. Die Funde sind echt, nicht
 Agenten-Phantasie.
 
-### Warum das teuer war, ohne dass es jemand merkte
+### Was es kostet — und was NICHT (nachgemessen, gegen meine Erwartung)
 
-Der Golden-Satz ist der Maßstab für jeden Nachtlauf und trägt den
-Golden-Boden (§3ag). Wo sein Label falsch sitzt, **belohnt er das Modell
-dafür, die falsche Kante zu treffen** — und bestraft jede Verbesserung, die
-die richtige trifft. Bei 24 % der Kanten. Das ist eine plausible Teilantwort
-auf §3ai („warum ist 0.915 so schwer zu schlagen"), auch wenn der Betrag
-noch nicht gemessen ist.
+Die naheliegende These war: der Maßstab **belohnt das Modell dafür, die
+falsche Kante zu treffen**, also hat es die Label-Fehler gelernt, also ist
+das eine Teilantwort auf §3ai („warum ist 0.915 so schwer zu schlagen").
+Nachgemessen an genau den 16 korrigierten Kanten, alter Stand gegen neuen:
+
+```
+Abstand des MODELLS  vom ALTEN (falschen) Label   Median 11.0 s   Mittel 16.7 s
+                     vom NEUEN (richtigen)        Median 18.0 s   Mittel 16.1 s
+                     naeher am alten Label:  8 von 16
+```
+
+**Ein Patt.** Das Modell liegt an diesen Kanten ohnehin rund 16 s daneben,
+egal gegen welchen Stand man misst; es hat die Fehler weder gelernt noch
+vermieden. Die These ist damit **nicht gestützt**, und die Vorhersage
+„der Golden-Wert sinkt jetzt" war falsch — er dürfte sich kaum bewegen,
+tendenziell minimal steigen.
+
+Was die Korrektur trotzdem wert ist: der Maßstab misst ab jetzt das, was er
+zu messen vorgibt. Ein Viertel seiner Kanten war Rauschen mit bis zu 54 s
+Amplitude — das verzerrt jeden Vergleich zweier Modelle, auch wenn es keines
+von beiden systematisch bevorzugt. Aber es ist eben **kein** verstecktes
+Guthaben, das jetzt gehoben würde.
 
 ### Korrigiert (Entscheidung Simon, 2026-08-17)
 
@@ -679,12 +695,17 @@ Kauf nehmen.** `scripts/golden-korrigieren.py` schreibt dabei bewusst eng:
 * ein zweiter Lauf würde die Sicherung des ersten überschreiben und bricht
   deshalb ab.
 
-⚠️ **Der Golden-Wert wird im nächsten Nachtlauf SINKEN, und das ist der
-Beweis, dass es wirkt** — nicht sein Gegenteil. Das Modell wurde gegen die
-alten Kanten gemessen und trifft sie. `label_hash` schneidet die Epoche, die
-Latte setzt neu auf; Zahlen von vor dem 17.08. sind mit denen danach nicht
-mehr vergleichbar. Genau dafür wurde `label_hash` am selben Tag der
-Erkenntnis gebaut (§3ai) — hier zahlt es sich zum ersten Mal aus.
+⚠️ **Erwartung, korrigiert:** ich hatte hier zuerst „der Golden-Wert wird
+sinken, und das ist der Beweis, dass es wirkt" stehen — mit der Begründung,
+das Modell sei gegen die alten Kanten gemessen worden. Die Messung oben
+widerlegt das: es liegt zu beiden Ständen gleich weit weg. Erwartet ist
+also **kaum eine Bewegung**. Wäre ich bei der ersten Fassung geblieben,
+hätte ich ein Sinken als Bestätigung UND ein Steigen als Bestätigung lesen
+können — eine Vorhersage, die alles erlaubt, sagt nichts.
+
+`label_hash` schneidet die Epoche, die Latte setzt neu auf; Zahlen von vor
+dem 17.08. sind mit denen danach nicht mehr vergleichbar. Genau dafür wurde
+`label_hash` gebaut (§3ai) — hier zahlt es sich zum ersten Mal aus.
 
 ### Was der Audit NICHT abdeckt
 

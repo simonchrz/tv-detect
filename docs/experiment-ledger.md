@@ -723,6 +723,42 @@ der LRU sie, während der Pi sie noch hat, und löscht der Pi seine Kopie
 später, sind beide weg, jeder Schritt für sich regelkonform. Das ist die
 Last-Copy-Lücke aus `tv-receiver/docs/dataflow.md` §3b.
 
+## 3ao. Der Kantenfehler, endlich ohne Label-Rauschen gemessen (2026-08-17)
+
+Mit dem korrigierten Golden-Satz lässt sich zum ersten Mal messen, wie weit
+das Modell von einer **bildgeprüften** Wahrheit weg ist statt von einem
+Label, das selbst zu 24 % danebenlag. 74 Kanten:
+
+```
+Median  2.0 s      p75 10.0 s      p90 21.0 s      max 40.0 s
+<= 2 s:  50 %      <= 5 s: 70 %    <= 10 s: 77 %   <= 30 s: 97 %
+```
+
+**Die Kantenerkennung ist kein Median-Problem, sondern ein Schwanz-Problem.**
+Die Hälfte aller Kanten sitzt schon auf zwei Sekunden. Der Schaden steckt in
+den knapp einem Viertel, die zehn Sekunden und mehr danebenliegen.
+
+⚠️ **Und das verschiebt eine ältere Zahl.** §3af nannte korpusweit „Median
+4.4 s, 36 % der Kanten ≤ 2 s". Gemessen war das gegen **Korpus-Labels**, und
+die tragen dieselbe Fehlerquote, die der Audit gerade im Golden-Satz gefunden
+hat. Ein Teil dieser 4.4 s war also nie Modellfehler, sondern
+Label-Rauschen. Wie groß der Teil ist, ist offen — der Golden-Satz ist auch
+eine andere Stichprobe als der Korpus, das hier ist kein direkter Ersatz für
+die alte Zahl.
+
+Nach Sender (kleine Zahlen, nur als Hinweis auf die nächste Grabung):
+
+```
+disney-channel 19.5 s (n=2)   nick 13.5 (4)   comedy-central 12.8 (4)
+kabel-eins     12.3 s (n=2)   toggo-plus 7.8 (2)
+vox 3.5 (8)   sat-1 3.2 (12)   rtlzwei 2.0 (14)   prosieben 1.6 (16)
+sixx 1.3 (6)   rtl 1.0 (4)
+```
+
+Die großen Werbesender liegen bei ein bis drei Sekunden; auffällig sind die
+Kinderkanäle und comedy-central. Bei n=2 bis 4 ist das keine Aussage,
+sondern eine Richtung.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

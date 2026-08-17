@@ -64,6 +64,7 @@ def main():
     if golden is None:
         return 1
     funde, geprueft, offen, ohne_partner = [], 0, [], []
+    n_kanten, abweichungen = 0, []
     for u in sorted(golden):
         d = _ar.ARBEIT / u
         lab = _ar.bloecke(_ar.SNAPSHOT / f"_rec_{u}" / "ads_user.json")
@@ -123,10 +124,18 @@ def main():
                 if (i, seite) not in sicher:
                     continue
                 ab = g[j] - l[j]
+                n_kanten += 1
+                abweichungen.append(abs(ab))
                 if abs(ab) > schwelle:
                     funde.append((u, quelle, seite, l[j], g[j], ab))
-    print(f"{geprueft} Golden-Aufnahmen geprueft, {len(funde)} Kanten ueber "
-          f"der jeweiligen Aufloesung:\n")
+    import statistics as st
+    print(f"{geprueft} Golden-Aufnahmen geprueft, {n_kanten} bestimmte Kanten, "
+          f"davon {len(funde)} ueber der jeweiligen Aufloesung "
+          f"({100*len(funde)/max(1,n_kanten):.0f} %).")
+    if abweichungen:
+        print(f"  |Abweichung| Median {st.median(abweichungen):.1f} s, "
+              f"p75 {st.quantiles(abweichungen, n=4)[2]:.1f} s, "
+              f"max {max(abweichungen):.1f} s\n")
     for u, q, seite, lw, gw, ab in sorted(funde, key=lambda x: -abs(x[5])):
         print(f"  {u:36} {q:4} {seite:5} Label {lw:7.1f} -> Bilder {gw:7.1f}"
               f"  {ab:+7.1f}s")

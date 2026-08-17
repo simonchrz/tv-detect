@@ -117,13 +117,31 @@ WEIT_SCHRITT_S = 6
 # dass ein Agent neu instruiert werden muss.
 KONVENTION = {
     "sendungsinhalt":  "sendung",
-    "mitmachtafel":    "sendung",   # kostenpflichtige Gewinnspiel-Einblendung
+    "mitmachtafel":    "werbung",   # kostenpflichtige Gewinnspiel-Einblendung
     "folgesendung":    "sendung",   # s. u.
     "produktwerbung":  "werbung",
     "programmvorschau": "werbung",  # Trailer und Sendertrenner am Blockrand
     "unklar":          None,
 }
 
+# ⚠️ `mitmachtafel` stand vom 2026-08-13 bis zum 2026-08-17 auf "sendung" —
+# so lautete die damalige Entscheidung. Am 2026-08-17 hat Simon sie
+# ZURUECKGENOMMEN: der Gewinnspiel-Insert zaehlt wieder als Werbung.
+#
+# Der Anlass war die Messung, nicht der Geschmack. Ueber 150 Aufnahmen und
+# 242 Bloecke liegen Modell und Label im Median exakt aufeinander — beide
+# folgen der alten Lesart. Die Entscheidung vom 13.08. war also nirgends
+# umgesetzt, weder in den Labels noch in dem, was das Modell gelernt hat.
+# Sie durchzusetzen haette geheissen: 9 der 38 Golden-Aufnahmen umschreiben
+# (kabel-eins), die Latte auf eine neue Label-Epoche setzen und den Verlauf
+# zerschneiden — Aufwand und ein Bruch im Massstab fuer eine Konvention, die
+# ausser 12 Agenten-Bloecken nichts betrifft.
+#
+# Lehre fuer die naechste solche Entscheidung: eine Konvention, die nur im
+# Ledger steht und in keiner Datei, ist keine Konvention. Wer sie aendert,
+# muss im selben Zug sagen, wer die Labels nachzieht — sonst driften Doku
+# und Daten auseinander und ein spaeterer Lauf misst die Luecke als Fehler.
+#
 # ⚠️ `folgesendung` fehlte zunaechst, und ein Agent hat die Luecke von sich
 # aus gemeldet: bei einer VOX-Aufnahme lief nach dem Film die naechste
 # Sendung (Medical Detectives), die weder Werbung noch Inhalt DIESER

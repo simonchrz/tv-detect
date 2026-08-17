@@ -50,11 +50,16 @@ class KanteAusFolge(unittest.TestCase):
         self.assertIsNone(grund)
         self.assertEqual(kante, 212)
 
-    def test_mitmachtafel_zaehlt_als_sendung(self):
-        folge = [(100, M), (104, M), (108, W), (112, W), (116, W)]
+    def test_mitmachtafel_zaehlt_als_werbung(self):
+        # ⚠️ Bis zum 2026-08-17 stand hier „zaehlt als Sendung" und die Kante
+        # lag auf 108. Simon hat die Konvention an diesem Tag
+        # zurueckgenommen — der Gewinnspiel-Insert ist Werbung, die Kante
+        # liegt damit VOR ihm. Genau diese Zuordnung hatte 12 von 22
+        # bearbeiteten Agenten-Bloecken um ~30 s verschoben (Ledger §3am).
+        folge = [(92, S), (96, S), (100, M), (104, M), (108, W), (112, W)]
         kante, grund = _ar.kante_aus_folge(folge, "start")
         self.assertIsNone(grund)
-        self.assertEqual(kante, 108)
+        self.assertEqual(kante, 100)
 
     # ── Die Ablehnungen: der eigentliche Zweck ──────────────────────────
 

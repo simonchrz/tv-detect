@@ -578,12 +578,42 @@ Golden-Wert**, weil ein Viertel des Maßstabs die alte Lesart festhält. Das
 Gate würde das Richtige ablehnen — dieselbe Bauart wie §3ah, nur diesmal
 vorher gesehen.
 
-⚠️ **Nicht einseitig repariert.** Den Maßstab anzufassen ist L2 und
-ausdrücklich keine Entscheidung, die eine Messung rechtfertigt. Der saubere
-Weg wäre ein Label-Epochenschnitt — genau wofür `label_hash` (§3ai) gebaut
-wurde: die kabel-eins-Golden-Labels auf die geltende Konvention bringen, die
-Latte auf die neue Epoche zurücksetzen und die Zahlen davor NICHT mit denen
-danach vergleichen. Das ist eine Entscheidung für Simon, keine Messung.
+### ENTSCHIEDEN (Simon, 2026-08-17): Konvention zurückgenommen
+
+Vorgelegt wurden vier Wege — Golden nachziehen mit Epochenschnitt, erst den
+Korpus, Konvention zurücknehmen, oder mehr Belege sammeln. **Entscheidung:
+zurücknehmen. Der Gewinnspiel-Insert zählt wieder als Werbung.**
+
+Das ist der billigste konsistente Zustand: die Regel vom 13.08. war ohnehin
+nirgends umgesetzt, sie durchzusetzen hätte den Maßstab zerschnitten, und
+betroffen waren ausser 12 Agenten-Blöcken keine Daten.
+
+**Umgesetzt am selben Tag:**
+
+* `KONVENTION["mitmachtafel"] = "werbung"` (eine Zeile — genau dafür steht
+  die Konvention an einer Stelle und nicht im Agenten-Auftrag).
+* Zwei Tests umgedreht, die die alte Lesart festhielten.
+* Neu: `scripts/konvention-nachziehen.py` — leitet die gespeicherten
+  **Bild**-Urteile unter der aktuellen Konvention neu ab, ohne einen
+  einzigen neuen Agentenlauf. Ergebnis: **5 kabel-eins-Aufnahmen, 10
+  Blockstarts je exakt 30 s zurück, 12 andere Aufnahmen unverändert** — die
+  Änderung ist sauber auf den einen Sender begrenzt.
+* Eine Aufnahme (`kabel-eins-1786028288`) liess sich nicht neu ableiten: die
+  Bilder wurden um die alte Kante gezogen, die neue Grenze liegt ausserhalb.
+  Als `reviewed_by: "zurueckgenommen"` auf den Vor-Review-Stand gesetzt und
+  für eine frische Runde freigegeben — lieber kein Label als ein falsches.
+
+**Die Lehre, die bleibt:** eine Konvention, die nur im Ledger steht und in
+keiner Datei, ist keine Konvention. Vier Tage lang war die Doku bindend und
+die Daten folgten ihr nirgends; erst eine Messung hat die Lücke gefunden,
+und sie sah dabei aus wie ein Modellfehler. Wer eine Konvention ändert, muss
+im selben Zug sagen, wer die Labels nachzieht — sonst misst ein späterer
+Lauf die Lücke als Qualität.
+
+Dass die Rücknahme in einer Zeile plus einem Nachzieh-Lauf machbar war, ist
+kein Zufall, sondern die Auszahlung der Bauart aus §3aj: der Agent urteilt
+über **Bilder**, die Konvention steht getrennt davon. Hätte der Agent direkt
+Kanten gemeldet, wäre jede Rücknahme ein kompletter Neulauf.
 
 **Offen und unabhängig davon:** bei `nick-1781550300` sagt das Bildmaterial
 Sendung bis 580 und Trailer ab 585, das Label 563 — kein Insert, kein

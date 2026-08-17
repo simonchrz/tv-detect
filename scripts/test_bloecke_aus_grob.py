@@ -46,10 +46,14 @@ class BloeckeAusGrob(unittest.TestCase):
         got = _ar.bloecke_aus_grob(folge(S, T, T, S))
         self.assertEqual(got, [(90, 180)])
 
-    def test_mitmachtafel_unterbricht_keinen_block(self):
-        # Eine Mitmachtafel zaehlt als Sendung — sie beendet den Block.
+    def test_mitmachtafel_unterbricht_den_block_nicht(self):
+        # ⚠️ Bis zum 2026-08-17 zaehlte die Mitmachtafel als Sendung und
+        # zerlegte den Block in zwei. Simon hat die Konvention an diesem Tag
+        # zurueckgenommen: der Gewinnspiel-Insert ist Werbung, der Block
+        # bleibt einer. Der Test steht hier, weil genau diese Zuordnung 12
+        # von 22 bearbeiteten Agenten-Bloecken um ~30 s verschoben hat.
         got = _ar.bloecke_aus_grob(folge(S, W, W, M, W, W, S))
-        self.assertEqual(len(got), 2)
+        self.assertEqual(got, [(90, 315)])
 
     # ── Die Absicherungen ───────────────────────────────────────────────
 

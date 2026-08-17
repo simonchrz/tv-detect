@@ -636,6 +636,72 @@ Das ist damit die nächste Arbeit: Golden-Label-Audit über den ganzen Satz.
 Die Sperre in `anwenden()` bleibt dabei drin; geschrieben wird erst, wenn
 alle Funde vorliegen und Simon sie gesehen hat.
 
+## 3an. Golden-Label-Audit — ein Viertel der Kanten war falsch, korrigiert
+(2026-08-17)
+
+Der ganze Satz, so weit er noch prüfbar ist: **22 Aufnahmen, 66 bestimmte
+Kanten**, jede grob gefunden (modellunabhängig) und dann fein nachgemessen.
+
+```
+16 von 66 Kanten ueber 5 s daneben          (24 %)
+|Abweichung|  Median 2.5 s   p75 5.2 s   max 53.8 s
+betroffen: 10 der 22 Aufnahmen, quer ueber alle Sender
+```
+
+Drei Viertel der Golden-Labels sitzen also sauber. Das restliche Viertel
+nicht — mit Ausreißern bis 54 s, und `sat-1-1781979300` allein trägt fünf.
+
+**Stichprobe Simon: 3 von 3 bestätigt.** nick 585 statt 563, rtlzwei-Ende
+176 statt 121, rtlzwei-Start 1705 statt 1663. Die Funde sind echt, nicht
+Agenten-Phantasie.
+
+### Warum das teuer war, ohne dass es jemand merkte
+
+Der Golden-Satz ist der Maßstab für jeden Nachtlauf und trägt den
+Golden-Boden (§3ag). Wo sein Label falsch sitzt, **belohnt er das Modell
+dafür, die falsche Kante zu treffen** — und bestraft jede Verbesserung, die
+die richtige trifft. Bei 24 % der Kanten. Das ist eine plausible Teilantwort
+auf §3ai („warum ist 0.915 so schwer zu schlagen"), auch wenn der Betrag
+noch nicht gemessen ist.
+
+### Korrigiert (Entscheidung Simon, 2026-08-17)
+
+Vorgelegt wurden vier Wege; gewählt: **alle 16 korrigieren, Epochenschnitt in
+Kauf nehmen.** `scripts/golden-korrigieren.py` schreibt dabei bewusst eng:
+
+* nur **einzelne Kanten**, keine ganzen Blöcke — was innerhalb von 5 s sitzt,
+  bleibt so, wie ein Mensch es gesetzt hat;
+* nur **bestimmte** Kanten (wo `kante_aus_folge` NEIN sagt, passiert nichts);
+* nur **feine** Urteile — grobe Funde sind Kandidaten, keine Werte (§3al);
+* Sicherung des Vorher-Stands nach
+  `~/.cache/tvd-train-archive/golden-labels-vor-audit-2026-08-17.json`, also
+  in das Verzeichnis, das nächtlich ins private Repo committet wird;
+* ein zweiter Lauf würde die Sicherung des ersten überschreiben und bricht
+  deshalb ab.
+
+⚠️ **Der Golden-Wert wird im nächsten Nachtlauf SINKEN, und das ist der
+Beweis, dass es wirkt** — nicht sein Gegenteil. Das Modell wurde gegen die
+alten Kanten gemessen und trifft sie. `label_hash` schneidet die Epoche, die
+Latte setzt neu auf; Zahlen von vor dem 17.08. sind mit denen danach nicht
+mehr vergleichbar. Genau dafür wurde `label_hash` am selben Tag der
+Erkenntnis gebaut (§3ai) — hier zahlt es sich zum ersten Mal aus.
+
+### Was der Audit NICHT abdeckt
+
+**15 der 38 Golden-Aufnahmen haben keine Quelle mehr** — Pi, Mac-Cache und
+HLS-VOD alle weg, alle aus dem Fenster 14.–26. Juli. Ihre Labels sind
+dauerhaft unprüfbar; die Archiv-`.npz` sind da, der Golden-Wert rechnet also
+weiter. Wenn die Fehlerquote dort dieselbe ist, stecken in diesen 15 noch
+einmal rund zehn falsche Kanten, an die niemand mehr herankommt.
+
+Seit heute sind die verbleibenden 23 gegen Verdrängung gepinnt
+(`golden_uuids()` in `tv-thumbs-daemon.py`, wirksam in `_maybe_evict_source_cache`
+UND `_maybe_gc_orphans`). Der bestehende Sole-Copy-Schutz reichte nicht: er
+verschont eine Datei nur, wenn der Pi sie schon nicht mehr hat — verdrängt
+der LRU sie, während der Pi sie noch hat, und löscht der Pi seine Kopie
+später, sind beide weg, jeder Schritt für sich regelkonform. Das ist die
+Last-Copy-Lücke aus `tv-receiver/docs/dataflow.md` §3b.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

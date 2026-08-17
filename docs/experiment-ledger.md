@@ -490,11 +490,36 @@ Auto und Label liegt. Der grobe Durchgang zeigt **eine Minute je Blockstart**
 — und beim Ad-Skip wird das von der Sendung abgeschnitten, was irreversibel
 ist. Die Klasse ist damit wieder offen und deutlich größer als gemessen.
 
-**Vorbehalt:** zwei Aufnahmen, fünf Blöcke, Rasterweite 45 s. Die Richtung
-ist über alle fünf gleich und die Beträge liegen über dem Raster; die
-einzelnen Werte sind es nicht auf die Sekunde. Bevor daraus eine Frage mit
-Registrierung wird, gehört der grobe Durchgang über deutlich mehr
-Aufnahmen — und er ist jetzt das Werkzeug dafür.
+⚠️⚠️ **KORREKTUR am 2026-08-17: die Beträge sind um ~22 s überzeichnet.**
+
+Der grobe Durchgang setzt den Blockstart auf den ersten Werbe-Rasterpunkt.
+Die wahre Grenze liegt irgendwo im 45-s-Intervall davor — das Verfahren
+meldet also **im Mittel 22 s zu spät**, per Konstruktion und unabhängig
+davon, ob die Referenz stimmt. Ich hatte oben „20 bis 72 s zu früh"
+geschrieben, ohne diesen Versatz abzuziehen.
+
+Belegt wurde er, indem derselbe Durchgang gegen die MENSCHLICHEN Labels des
+Golden-Satzes lief (3 Aufnahmen, 4 Blöcke): Starts Median **+29 s**, Enden
+**+8 s**, nur 1 von 4 Grenzen über der 45-s-Auflösung. Die +29 s bei
+Grenzen, die ein Mensch gesetzt hat, sind praktisch der
+Quantisierungsversatz — sie sagen nichts über die Labels.
+
+**Nach Abzug** bleiben von den fünf Modell-Blöcken:
+kabel-eins **+45 s / +49 s** (weiterhin groß), prosieben **−2 / +11 / +16 s**
+(im Rauschen). Die Richtung stimmt also, aber der Befund trägt nur noch für
+kabel-eins, nicht als allgemeine Aussage über den Korpus.
+
+**Was der grobe Durchgang kann und was nicht:** er findet zuverlässig
+Fehler ÜBER 45 s (bei kabel-eins-1778511363 im Golden-Satz einen von +54 s)
+und ist damit das Werkzeug gegen den Auswahlfehler aus §3ak. Für alles
+darunter ist er blind, und wer ihn dort auswertet, misst sein eigenes
+Raster. Wer genaue Beträge will, braucht einen zweiten, feinen Durchgang an
+den grob gefundenen Stellen — dieselbe Zwei-Stufen-Logik wie beim
+Nachfassen.
+
+**Vorbehalt bleibt:** zwei Aufnahmen für den Modellvergleich, drei für den
+Label-Vergleich. Bevor daraus eine registrierte Frage wird, gehört das über
+deutlich mehr Aufnahmen — und mit der feinen zweiten Stufe.
 
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)

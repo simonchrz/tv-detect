@@ -291,12 +291,22 @@ DUMPS = Path.home() / ".cache/tv-detect-daemon/emit-signals"
 GROB_TAKT_S = 45
 
 
-def vorbereiten_grob(anzahl):
-    """Ganze Aufnahmen im festen Takt abtasten — modellunabhaengig."""
-    kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
+def vorbereiten_grob(anzahl, uuids=None):
+    """Ganze Aufnahmen im festen Takt abtasten — modellunabhaengig.
+
+    Mit `uuids` gezielt auf benannte Aufnahmen, auch wenn sie schon Labels
+    haben: der grobe Durchgang misst dann NICHT, um zu labeln, sondern um
+    zu pruefen, wo die vorhandenen Labels und die Modellbloecke liegen.
+    Genau dafuer gedacht, den Golden-Satz gegen den Korpus zu halten.
+    """
+    if uuids:
+        kandidaten = [SNAPSHOT / f"_rec_{u}" for u in uuids]
+        kandidaten = [d for d in kandidaten if d.is_dir()]
+    else:
+        kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
-    print(f"{len(kandidaten)} Aufnahmen ohne Review mit lokaler Quelle")
-    for d in _reihum(kandidaten)[:anzahl]:
+    print(f"{len(kandidaten)} Aufnahmen mit lokaler Quelle")
+    for d in (kandidaten if uuids else _reihum(kandidaten))[:anzahl]:
         u = d.name[5:]
         dauer = _laufzeit(d)
         if not dauer:
@@ -660,6 +670,8 @@ def main():
     ap.add_argument("--trocken", action="store_true",
                     help="mit --anwenden: nur zeigen, nichts schreiben")
     ap.add_argument("--anzahl", type=int, default=5)
+    ap.add_argument("--uuids", default="",
+                    help="mit --grob: gezielt diese uuids (kommagetrennt), auch wenn sie schon Labels haben")
     ap.add_argument("--dump-anfordern", action="store_true",
                     help="fehlende Signal-Dumps per redetect anfordern und "
                          "abwarten, BEVOR die Frames gezogen werden (sonst "
@@ -668,7 +680,8 @@ def main():
     ARBEIT.mkdir(parents=True, exist_ok=True)
     if a.vorbereiten:
         if a.grob:
-            return vorbereiten_grob(a.anzahl)
+            return vorbereiten_grob(
+                a.anzahl, [x for x in a.uuids.split(',') if x])
         return vorbereiten(a.anzahl, a.dump_anfordern)
     if a.nachfassen:
         return nachfassen()

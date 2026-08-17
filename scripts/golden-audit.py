@@ -139,8 +139,17 @@ def main():
         print(f"\n{len(offen)} offen:")
         for u, warum in offen:
             print(f"  {u:36} {warum}")
+    nur_grob = sum(1 for u in sorted(golden)
+                   if (_ar.ARBEIT / u / "auftrag.json").is_file()
+                   and not (_ar.ARBEIT / u / "auftrag-grob.json").is_file())
     print("\n⚠️ Nichts geschrieben. Grobe Funde sind Kandidaten, keine Werte —"
           "\n   fuer die Sekunde braucht es `agent-review.py --vorbereiten --fein`.")
+    if nur_grob:
+        print(f"\n⚠️ {nur_grob} Aufnahme(n) nur GROB geprueft. Das heisst „kein"
+              "\n   Fehler ueber 45 s\", NICHT „Label korrekt\" — die bisher"
+              "\n   bestaetigten Funde liegen zwischen 16 und 54 s, also"
+              "\n   groesstenteils UNTER dieser Schwelle. Wer den Satz wirklich"
+              "\n   pruefen will, faehrt die feine Runde ueber alle.")
     return 0
 
 

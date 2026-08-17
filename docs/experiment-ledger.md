@@ -759,6 +759,57 @@ Die großen Werbesender liegen bei ein bis drei Sekunden; auffällig sind die
 Kinderkanäle und comedy-central. Bei n=2 bis 4 ist das keine Aussage,
 sondern eine Richtung.
 
+### Woraus der Schwanz besteht: der abschließende Trailer, 8 von 8
+
+Für jede Kante mit über 10 s Fehler lässt sich nachsehen, **was zwischen der
+Modellkante und der Wahrheit liegt** — die Bild-Urteile decken den Bereich
+ja ab. Ergebnis über alle 74 Kanten, getrennt danach, ob in der Lücke ein
+Programmtrailer steckt:
+
+```
+Luecke enthaelt einen Trailer    ENDE  Median -14.4 s   Modell frueher: 8 von 8
+                                 START Median  +0.3 s   Modell spaeter: 9 von 17
+Luecke enthaelt KEINEN Trailer   ENDE  Median   0.0 s   Modell frueher: 13 von 29
+                                 START Median   0.0 s
+```
+
+**Das Modell beendet den Werbeblock VOR dem abschließenden Trailer, die
+Wahrheit liegt dahinter — 8 von 8, ohne Gegenbeispiel, im Median 14 s.** An
+den Blockstarts gibt es kein solches Muster; dort ist der Fehler ein Patt.
+
+Damit ist der Schwanz kein „das Modell ist ungenau", sondern **eine einzige,
+benennbare Sache**: der Rand-Trailer am Blockende.
+
+### Die Konvention dahinter — dreimal am Bild bestätigt, ungefragt
+
+Nach dem Gewinnspiel-Rückzieher von heute früh lag die Frage nahe, ob auch
+„Rand-Trailer gehören zur Werbung" (§3y, 13.08.) nur auf dem Papier steht.
+Sie steht nicht: Simons drei Stichproben heute lagen jeweils **genau am
+Trailer**, ohne dass der Auftrag die Konvention nannte.
+
+```
+rtlzwei-1784571300  Sendung bis 1700, Trailer ab 1705   -> Urteil 1705
+nick-1781550300     Sendung bis  580, Trailer ab  585   -> Urteil  585
+rtlzwei-1780341300  Trailer 120-150, Werbung 155-170, Sendung ab 175 -> Urteil 176
+```
+
+Die Konvention gilt also. Der Golden-Satz folgt ihr seit heute (die Korrektur
+hat genau die Kanten angefasst, an denen die beiden Lesarten auseinandergehen
+— wo sie zusammenfallen, blieb das menschliche Label stehen; der Satz ist
+dadurch **nicht** gemischt, sondern durchgehend auf der geltenden Lesart).
+
+⚠️ **Der Trainingskorpus folgt ihr NICHT.** §3am hat gezeigt: über 150
+Aufnahmen liegen Modell und Korpus-Label im Median exakt aufeinander, beide
+in der alten Lesart. Das Modell kann die Regel also gar nicht gelernt haben —
+es hat nie ein Label gesehen, das sie ausdrückt. Und `snapToBumperGuarded`,
+das genau dafür am 28.07. gebaut wurde, ist seit dem hsmm-Wechsel dormant
+(Memory `bumper_end_nn_guard`): unter `hsmm` gibt es keine Snaps.
+
+**Das ist der bislang konkreteste Hebel auf die Kantengenauigkeit** — und
+zugleich einer, der NICHT durch Modellverbesserung zu holen ist, sondern
+durch Labels, die die geltende Regel ausdrücken. Was daraus wird, gehört vor
+den nächsten Schritt registriert, nicht in einem Zug gebaut.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

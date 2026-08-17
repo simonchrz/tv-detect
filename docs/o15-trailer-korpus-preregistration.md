@@ -105,3 +105,59 @@ Fehler, den dieses System machen kann.
 ⚠️ Kein Ausgang rechtfertigt, den Golden-Boden zu senken (L1) oder den
 Golden-Satz anzufassen (L2). Und die Enden, an denen es nicht klappt, werden
 nicht per Frame-Review nachträglich zu Label-Fehlern erklärt.
+
+
+---
+
+# ZURÜCKGEZOGEN (2026-08-17, wenige Stunden nach der Registrierung)
+
+**Nicht wegen eines Ergebnisses — die Prämisse war falsch, und das kam
+heraus, bevor der Eingriff geschrieben wurde.**
+
+Von den 40 vorbereiteten Aufnahmen waren fünf Enden gesichtet, als ich
+nachgesehen habe, ob sich überhaupt etwas bewegt:
+
+```
+comedy-central-1778617500  Label 1088.0 -> Bilder 1088.0   +0.0s   WTTTTTTWSSSSSSSSS
+disney-channel-1779140400  Label  910.4 -> Bilder  905.0   -5.4s   TTTTTTTSSSSSSSSSS
+nick-1778516100            Label  180.1 -> Bilder  180.0   -0.1s   T?TTTTTTSSSSSSSSS
+prosieben-1777383597       Label 1135.1 -> Bilder 1135.0   -0.1s   TTTTTTTTSSSSSSSSS
+sat-1-1779112822           Label 1710.6 -> Bilder 1711.0   +0.4s   TTTTTTTTSSSSSSSSS
+```
+
+**Die Korpus-Labels sitzen bereits hinter dem Trailer**, genau auf der
+T→S-Grenze. Der Korpus drückt die Konvention aus. Die Annahme, er tue es
+nicht, war falsch.
+
+## Der Denkfehler, der dahintersteckt
+
+§3ao teilte die Kanten danach auf, **was zwischen Modellkante und Wahrheit
+liegt**. Eine Lücke gibt es aber nur, wenn das Modell danebenliegt — die
+Aufteilung bedingt also auf die Existenz eines Fehlers. Richtig aufgeteilt,
+nach einer Eigenschaft der KANTE statt der Lücke:
+
+```
+Blockenden, liegt vor der WAHREN Kante ein Trailer?
+  mit Trailer   n=31   |Fehler| Median 2.1 s   ueber 10 s: 6/31
+  ohne Trailer  n= 6   |Fehler| Median 1.1 s   ueber 10 s: 2/6
+```
+
+Ein Trailer steht vor **31 von 37** Enden. Er ist der Normalfall, nicht das
+Merkmal des Fehlerfalls — und wo er steht, liegt der Fehler im Median bei
+2.1 s. Das „8 von 8" war also die Aussage „wenn das Modell am Ende irrt,
+ist meist ein Trailer dabei", und die ist fast tautologisch.
+
+**Regel daraus:** nach einer Eigenschaft der Lücke aufzuteilen ist immer auf
+den Fehlerfall bedingt. Aufteilen nach einer Eigenschaft, die unabhängig vom
+Fehler existiert.
+
+## Was bleibt
+
+* Der Schwanz ist real (§3ao: Median 2.0 s, p90 21 s) — aber **unerklärt**.
+  Der Trailer erklärt ihn nicht.
+* Die Konvention gilt und ist im Korpus umgesetzt. Kein Nachziehbedarf.
+* Die 40 vorbereiteten Aufnahmen bleiben liegen; geschrieben wurde nichts.
+
+Die nächste Frage muss also anders lauten: **was unterscheidet die ~20 % der
+Kanten mit über 10 s Fehler von den übrigen 80 %** — und die Aufteilung dafür
+darf nicht aus der Lücke kommen.

@@ -521,6 +521,75 @@ Nachfassen.
 Label-Vergleich. Bevor daraus eine registrierte Frage wird, gehört das über
 deutlich mehr Aufnahmen — und mit der feinen zweiten Stufe.
 
+## 3am. Der kabel-eins-Gewinnspiel-Insert — 12 von 12, und der Maßstab
+kennt die Konvention nicht (2026-08-17)
+
+Die feine zweite Stufe lief über fünf Aufnahmen. Auf einer, bei der das
+Label mit dem Modell identisch ist (also auto-bestätigt), bestätigt sie die
+Modellkanten auf **±5 s über sechs Kanten** — das Verfahren misst, was es
+messen soll. Auf den anderen weicht sie 14–33 s ab, immer an den **Starts**,
+während die **Enden stimmen** (−4 / +2 / +3 s). Ein Zeitachsen-Versatz wäre
+das nicht: der träfe beide Enden gleich.
+
+Die Bildfolgen sagen, warum:
+
+```
+kabel-eins-1778511363  start  1245..1320  MMMM WWWW TTT WWWWW
+kabel-eins-1786546385  start  1560..1635  MMMMM TTT WWWWWWWW
+```
+
+`M` = Gewinnspiel-Insert. **Deine Konvention vom 2026-08-13 (§3y) sagt: der
+zählt als SENDUNG.** Modell und alte Labels ziehen den Werbeblock trotzdem
+darüber auf.
+
+**Korpusweit, ohne Agenten nachgezählt:** von 22 tatsächlich bearbeiteten
+Agenten-Blöcken liegen **12 mehr als 15 s später als die Modellkante — und
+alle 12 sind kabel-eins.** Die übrigen 10 verteilen sich auf sieben Sender
+und sind gewöhnliche Feinkorrekturen unter 15 s. Zum Vergleich: bei 196
+menschlich bearbeiteten Blöcken liegt der Start-Median bei ±0 s (p25 −1,
+p75 +4).
+
+Die Agenten haben also **nicht** den Korpus verzerrt, wie ich zuerst
+befürchtet habe — sie korrigieren einen sender-spezifischen, systematischen
+Fehler, den seit der Konventions-Entscheidung niemand angefasst hat.
+
+### Die Gegenprobe, die die bequeme Erklärung widerlegt
+
+Naheliegend wäre: „das Modell folgt der neuen Konvention, die Labels der
+alten, daher ein systematischer Boden auf dem Golden-Wert". Nachgemessen
+über **150 Aufnahmen / 242 Blöcke**: Start-Median **+0.0 s**, Ende-Median
+**+0.0 s**, Streuung symmetrisch (57 früher / 62 später). Modellblöcke sind
+weder systematisch breiter noch schmaler als die Labels.
+
+**Modell und Labels leben in derselben, ALTEN Lesart.** Die Konvention vom
+13.08. ist eine dokumentierte Entscheidung ohne Umsetzung — weder in den
+Labels noch in dem, was das Modell gelernt hat.
+
+### Was das für den Maßstab heißt
+
+Von den 38 Golden-Aufnahmen trägt **keine einzige** ein menschliches Urteil
+nach dem 2026-08-13: 18 sind von Mai bis Juli, 20 haben gar keinen
+Zeitstempel. Und **9 der 38 sind kabel-eins** — also fast ein Viertel des
+Maßstabs mit genau dem Insert-Fehler im Label.
+
+Daraus folgt eine Falle, die beim nächsten Nachtlauf zuschnappen würde:
+**wer das Modell auf die geltende Konvention bringt, verschlechtert den
+Golden-Wert**, weil ein Viertel des Maßstabs die alte Lesart festhält. Das
+Gate würde das Richtige ablehnen — dieselbe Bauart wie §3ah, nur diesmal
+vorher gesehen.
+
+⚠️ **Nicht einseitig repariert.** Den Maßstab anzufassen ist L2 und
+ausdrücklich keine Entscheidung, die eine Messung rechtfertigt. Der saubere
+Weg wäre ein Label-Epochenschnitt — genau wofür `label_hash` (§3ai) gebaut
+wurde: die kabel-eins-Golden-Labels auf die geltende Konvention bringen, die
+Latte auf die neue Epoche zurücksetzen und die Zahlen davor NICHT mit denen
+danach vergleichen. Das ist eine Entscheidung für Simon, keine Messung.
+
+**Offen und unabhängig davon:** bei `nick-1781550300` sagt das Bildmaterial
+Sendung bis 580 und Trailer ab 585, das Label 563 — kein Insert, kein
+Trailer davor. Entweder ist das Label 22 s zu früh oder der Agent hat die
+ersten Bilder falsch gelesen. Zur Stichprobe gegeben, noch nicht entschieden.
+
 ## 3ak. O14 NICHT ERFÜLLT — und der Messsatz bildet den Korpus nicht ab
 (2026-08-16)
 

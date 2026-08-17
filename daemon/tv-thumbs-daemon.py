@@ -200,6 +200,44 @@ SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 SOURCE_CACHE.mkdir(parents=True, exist_ok=True)
 SOURCE_CACHE_MAX_GB = int(os.environ.get("SOURCE_CACHE_MAX_GB", "60"))
 
+# Golden-Satz: NIE verdraengen.
+#
+# ⚠️ Der Anlass, 2026-08-17: von den 38 Golden-Aufnahmen haben **15 weder
+# eine Quelle auf dem Pi noch im Mac-Cache noch ein HLS-VOD** — alle drei
+# Kopien weg, alle aus einem Zwei-Wochen-Fenster (14.-26. Juli). Ihre Labels
+# sind damit fuer immer unpruefbar; genau an so einem Label ist gerade ein
+# echter Fehler gefunden worden (nick, 22 s zu frueh).
+#
+# Der vorhandene Sole-Copy-Schutz unten reicht dafuer NICHT: er verschont
+# eine Datei nur, wenn der Pi sie schon nicht mehr hat. Verdraengt der LRU
+# sie, WAEHREND der Pi sie noch hat, und loescht der Pi seine Kopie spaeter
+# (Dedup, Serien-Retention), sind beide weg — jeder Schritt fuer sich
+# regelkonform. Das ist die Luecke aus docs/dataflow.md §3b („kein globaler
+# Last-Copy-Check").
+#
+# Fuer den Korpus ist das ein Verlust unter vielen. Fuer den MASSSTAB ist es
+# etwas anderes: er soll ueber Monate dieselbe Frage stellen, und was man
+# nicht mehr anschauen kann, kann man nicht mehr korrigieren.
+GOLDEN_SET = Path.home() / ".cache" / "tvd-train-archive" / "golden-eval-set.json"
+_golden_cache = (0.0, frozenset())
+
+
+def golden_uuids():
+    """Die gepinnten Golden-uuids, hoechstens minuetlich neu gelesen."""
+    global _golden_cache
+    alter, wert = _golden_cache
+    if time.time() - alter < 60:
+        return wert
+    try:
+        wert = frozenset(json.loads(GOLDEN_SET.read_text())["uuids"])
+    except Exception:
+        # ⚠️ Datei unlesbar → NICHTS schuetzen waere die falsche Richtung.
+        # Den letzten bekannten Stand behalten; beim allerersten Fehlschlag
+        # ist er leer, dann verhaelt sich der LRU wie vorher.
+        pass
+    _golden_cache = (time.time(), wert)
+    return wert
+
 
 def detect_timeout_s(uuid):
     """Length-scaled detect kill-timeout (see DETECT_TIMEOUT_* above).
@@ -465,6 +503,8 @@ def _maybe_evict_source_cache():
         # 404 from /recording/<uuid>/source means dual-existence is
         # already broken; skip evict and try the next-oldest dup.
         uuid = oldest.stem
+        if uuid in golden_uuids():
+            continue  # Maßstab — nie verdrängen, s. GOLDEN_SET oben
         try:
             req = urllib.request.Request(
                 f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
@@ -580,6 +620,8 @@ def _maybe_gc_orphans():
         uuid = f.stem
         if uuid in valid:
             continue  # valid → forgiven (drops out of the ledger)
+        if uuid in golden_uuids():
+            continue  # Maßstab — nie löschen, s. GOLDEN_SET oben
         first = pending.get(uuid, now)  # first time orphaned → start the clock now
         if now - first < ORPHAN_GRACE_S:
             next_pending[uuid] = first  # still in grace → keep, don't delete

@@ -723,6 +723,80 @@ der LRU sie, während der Pi sie noch hat, und löscht der Pi seine Kopie
 später, sind beide weg, jeder Schritt für sich regelkonform. Das ist die
 Last-Copy-Lücke aus `tv-receiver/docs/dataflow.md` §3b.
 
+## 3aq. Die Logo-Spur ist tot — vier kostenlose Pruefungen, keine Registrierung
+(2026-08-18)
+
+§3ap zeigte: wo das Modell weit danebenliegt, hat das NN keine Flanke, das
+Logo aber schon. Daraus wollte ich eine Trainingsfrage machen. Sie ist
+viermal gestorben, jedes Mal an einer Messung von zwei Minuten — und jedes
+Mal BEVOR eine Registrierung geschrieben oder ein Nachtlauf verbraucht war.
+
+**1. „Der Kopf beachtet das Logo zu wenig."** Widerlegt aus den Gewichten:
+
+```
+Backbone-Spalten  Mittel 1.67   LOGO 4.58 = 2.7x   Rang 14 von 1301
+```
+
+Der Kopf gewichtet das Logo unter den obersten ein Prozent aller Eingaenge.
+
+**2. „Die Backbone-Masse uebertoent es."** Widerlegt aus den Aktivierungen —
+Aenderung der Vor-Aktivierung ueber die WAHRE Kante (±8 s):
+
+```
+                   Δ Logo   Δ Backbone   Logo-Anteil
+gut      (<=5 s)     2.90       26.75        8.4 %
+schlecht (>10 s)     1.20       26.25        4.7 %
+```
+
+Der Backbone bewegt sich an den schlechten Kanten GENAUSO stark. Er ist dort
+nicht lauter — das Logo ist leiser. „Uebertoenen" beschreibt es nicht.
+
+⚠️ Und Gewichte sind ohnehin nicht Einfluss: eine Spalte mit grossem Gewicht
+und flachem Signal traegt nichts bei. Wer aus Schritt 1 auf Einfluss
+geschlossen haette, waere derselben Verwechslung aufgesessen.
+
+**3. „Der Kopf lernt auf einem FALSCHEN Logo-Signal."** Die Merkmalsspalte
+1280 und `logo_confs` aus dem Dump korrelieren nur mit r = +0.53. An EINER
+Aufnahme sah das nach einer umgekehrten Verteilung aus (Merkmale Median
+0.25, Dump 0.97) — bei acht Aufnahmen stimmten aber fuenf sauber ueberein,
+und die drei Abweichler gingen in BEIDE Richtungen. Eine Aussage aus einer
+Stichprobe von eins, schon wieder.
+
+**4. „Wo die Signale auseinandergehen, ist der Kantenfehler groesser."** Das
+war die naheliegende Rettung der Spur, weil die drei Abweichler zufaellig die
+drei Sender mit den schlechtesten Kanten waren. Ueber alle 20 Aufnahmen
+gerechnet:
+
+```
+Korrelation r = -0.078
+kleiner Unterschied (n=10)  Kantenfehler Median 2.3 s
+grosser  Unterschied (n=10)                     3.5 s
+```
+
+Nichts. Und die beiden schlimmsten Kanten (kabel-eins 46.3 s, prosieben
+34.0 s) haben KLEINE Unterschiede, waehrend comedy-central mit dem groessten
+(0.517) bei 3.6 s liegt. Die Uebereinstimmung bei acht Punkten war Zufall.
+
+### Was daraus folgt
+
+**Das Logo ist nicht der Hebel.** §3ap bleibt als Beobachtung richtig — an
+den schlechten Kanten hat das Logo-Signal eine Flanke —, aber sie laesst sich
+durch den Kopf nicht nutzbar machen: er sieht es, gewichtet es hoch, wird
+nicht uebertoent, und bekommt kein falsches Signal.
+
+Uebrig bleibt die Richtung aus §3ap durch Ausschluss, nicht durch Beleg:
+das fehlende Signal ist **visuell** und das Backbone sieht es bei 224x224
+nicht (Memory `backbone_liest_keinen_text`). Das waere eigens zu
+registrieren — und diesmal mit dem Wissen, dass vier naheliegende
+Erklaerungen davor schon nicht getragen haben.
+
+### Die Lehre, die mehr wert ist als der Befund
+
+Vier Vermutungen, vier Messungen von je zwei Minuten, vier Absagen. Zum
+Vergleich: O16 hat dieselbe Sorte Frage ueber einen ganzen Nachtlauf
+beantwortet. **Wer eine Annahme benennen kann, kann sie meist auch billig
+pruefen** — und drei der vier hier haetten als Registrierung Tage gekostet.
+
 ## 3ao. Der Kantenfehler, endlich ohne Label-Rauschen gemessen (2026-08-17)
 
 Mit dem korrigierten Golden-Satz lässt sich zum ersten Mal messen, wie weit

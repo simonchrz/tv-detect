@@ -171,3 +171,36 @@ Flanke?** Nach diesem Ergebnis zeigt sie nicht auf Kontextspalten, sondern
 auf **Bildinhalt**: höhere Auflösung, der Logo-Kanal ins Backbone, OCR. Das
 Backbone verwirft bei 224×224 genau die Details, um die es geht (Memory
 `backbone_liest_keinen_text`). Das wäre eigens zu registrieren.
+
+---
+
+# Nachtrag (2026-08-18, zweiter Tagesdurchgang): gepaarte Replikation
+bestätigt, Vorbehalt aufgelöst
+
+Unabhängig nachgemessen mit `scripts/o16-kantenmass.py` — anders als
+`o16-messen.py` (Produktions-`ads.json` gegen die registrierten
+Basiszahlen) laufen hier BEIDE Köpfe (nackter Kandidat 17.08. aus dem
+Archiv, voller Kandidat 18.08.) durch denselben Replay-Pfad des Nightly
+(`_replay_blocks`, Produktions-Decoder), gewertet nur auf Aufnahmen, die
+beide liefern — **identische Sätze in beiden Armen**, 22 Aufnahmen /
+74 Kanten:
+
+```
+                       nackt      voll      Delta
+  Median               1.8 s      2.0 s     +0.2 s   [2] erfuellt
+  Anteil > 10 s         22 %       22 %     +-0 pp   [1] verfehlt
+  p90                 35.5 s     23.5 s
+```
+
+Gleiches Urteil: **NICHT ERFÜLLT.** Und der Vorbehalt des Morgenlaufs
+(p90/max-Verschlechterung, „könnte an den fehlenden drei Aufnahmen
+hängen") löst sich auf: gepaart ist der volle Kopf im Schwanz sogar
+etwas BESSER (p90 23.5 gegen 35.5 s) — die Verschlechterung war
+Satz-Zusammensetzung, nicht Modell. Er wurde zu Recht nicht verbucht.
+
+**Die zusätzlich versprochene Mechanismus-Zahl** (NN-Flanken-Amplitude
+±6 s um die wahre Kante, an den Kanten mit Basisfehler > 10 s, n=16):
+nackt Median **0.558**, voll Median **0.678**. Der volle Kopf sieht dort
+also etwas mehr Amplitude — aber keine Flanke, die der Decoder in eine
+bessere Kante übersetzen könnte. Das stützt die Deutung aus §3ap: das
+fehlende Signal ist visuell, nicht kontextuell.

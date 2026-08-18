@@ -1975,6 +1975,7 @@ Grund, der DIESE Serie entwertet, nicht nur die alte.
 | Deinterlace als Detect-Fix für comedy-central | **falsche Spur** | 2026-08 | NN-Signal ist dort gut (Trennung 0.646); 0.30 heilt das nicht. |
 | Decoder-Sweeps, per-Show-Config, Label-Korrekturen als Hebel auf 0.915 | **ausgereizt** | 2026-08 | Einzelmessungen stehen, die Kanal-These dahinter ist widerlegt. |
 | Detect-Fallback auf dem Pi | **per Design aus** | — | Pi5 ist always-on-Transport, CPU/ML läuft auf dem Mac. |
+| Kontextspalten (voller MLP5-Kopf) als Hebel auf den Kantenschwanz | **NICHT ERFÜLLT** | 2026-08-18 (O16) | Eine Nacht voller Kopf, registriert: Anteil >10 s unverändert (Ziel −5 pp), gepaarte Replikation identisch. Der Kopf sieht an den schlechten Kanten etwas mehr NN-Amplitude (0.56→0.68), der Decoder macht daraus keine bessere Kante. Wiedervorlage nur über **Bildinhalt** (Auflösung, Logo-Kanal, OCR), eigens registriert — nicht erneut über Kontextspalten. Details: `o16-voller-kopf-preregistration.md`. |
 
 ## 5. Leitplanken
 

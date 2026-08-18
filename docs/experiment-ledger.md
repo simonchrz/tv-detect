@@ -790,6 +790,44 @@ nicht (Memory `backbone_liest_keinen_text`). Das waere eigens zu
 registrieren — und diesmal mit dem Wissen, dass vier naheliegende
 Erklaerungen davor schon nicht getragen haben.
 
+### Woraus der Schwanz besteht — und warum er kein Architekturproblem ist
+
+Nach den vier Absagen dieselbe Frage von der Datenseite: WER traegt die 24 %?
+
+```
+68 Kanten, 16 ueber 10 s — verteilt auf 13 von 20 Aufnahmen
+   nur 3 Aufnahmen haben ZWEI schlechte Kanten, zehn genau eine
+```
+
+**Der Schwanz ist nicht konzentriert.** Es ist nicht „ein paar schwere
+Aufnahmen", sondern „fast jede Aufnahme hat eine schwere Kante". Damit
+faellt auch die Hoffnung, ihn ueber einen Sender oder eine Sendungsart zu
+fassen.
+
+Und die Haelfte davon ist erst seit gestern sichtbar:
+
+```
+von den 16 Kanten ueber 10 s sind
+   8  am 17.08. korrigiert  — dort wurde das Label vom Modell WEGbewegt
+   8  unabhaengig davon
+```
+
+Die acht sind keine neuen Fehler, sondern neu SICHTBARE: das Modell lag dort
+immer falsch, das alte Label hat es verdeckt. (Fuer den O16-Vergleich ohne
+Folgen — Basis und Messung liefen beide gegen die korrigierten Labels.)
+
+⚠️ **Was daraus fuer die Deutung folgt.** Die Haelfte des Schwanzes sitzt an
+Kanten, an denen das LABEL ueber die Zeit auf die Modellposition gerutscht
+war — also dort, wo sich Mensch, Agent und Modell gleichermassen schwertun.
+Das sind keine Stellen, an denen ein besseres Modell offensichtlich gewinnt;
+es sind mehrdeutige Uebergaenge. Wer den Schwanz als „Modell zu schwach"
+liest, unterstellt eine Eindeutigkeit, die das Material dort nicht hat.
+
+Das ist kein Beweis, dass nichts zu holen ist — aber es senkt die erwartete
+Ausbeute jeder Architekturidee, und es erklaert, warum vier verschiedene
+Hebel (Kontextspalten, Logo-Gewicht, Logo-Signal, Flankenauswahl) alle
+nichts gebracht haben.
+
 ### Die Lehre, die mehr wert ist als der Befund
 
 Vier Vermutungen, vier Messungen von je zwei Minuten, vier Absagen. Zum

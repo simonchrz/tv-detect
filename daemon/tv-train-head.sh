@@ -53,7 +53,11 @@ export TVD_LAUF=nightly
 # ZURUECKSETZEN NACH DER AUSWERTUNG, unabhaengig vom Ergebnis: die Zeile
 # wieder auf "--head-arch mlp32" setzen. Simons Entscheid vom 14.08. gilt
 # weiter; O16 ist eine Messung, kein Architekturwechsel.
-TVH_HEAD_ARCH_OVERRIDE=""
+# ZURUECKGESETZT 2026-08-18 nach dem O16-Urteil (NICHT ERFUELLT): der volle
+# Kopf bringt an den Kanten nichts (Anteil >10 s 23.5 % gegen Ziel 18 %,
+# Median unveraendert). Wie in der Registrierung festgelegt — unabhaengig vom
+# Ergebnis — traegt der Nachtlauf wieder den nackten Kopf.
+TVH_HEAD_ARCH_OVERRIDE="--head-arch mlp32"
 
 # launchd jobs can't reach the login keychain, so `gh` (used by the
 # off-site model-anchor at deploy time) can't read its keyring-stored

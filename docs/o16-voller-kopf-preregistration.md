@@ -102,3 +102,72 @@ registrieren.
 anzufassen (L2) oder die Bedingung nachträglich auf den IoU umzustellen, weil
 das Kantenmaß nicht gefällt. Genau dieser Tausch ist der Grund, warum die
 Kennzahl hier vorher benannt ist.
+
+---
+
+# Ergebnis (2026-08-18): NICHT ERFÜLLT
+
+Nachtlauf mit geleertem Override, Kandidat `MLP5` (input 1301 = backbone 1280
++ logo + audio + 19 Kontextspalten). Gemessen wie registriert: Kantenfehler
+gegen den korrigierten Golden-Satz, Produktions-Decoder `hsmm --hsmm-dur-w 15`.
+
+```
+                       Basis (nackt)   Kandidat (voll)
+  Median                   2.0 s            2.0 s      [2] ERFUELLT
+  Anteil > 10 s             23 %            23.5 %     [1] VERFEHLT (Ziel <= 18 %)
+  p75                      10.0 s            7.0 s
+  p90                      21.0 s           27.0 s
+  max                      40.0 s           74.0 s
+```
+
+**Bedingung 1 verfehlt, Bedingung 2 erfüllt → NICHT ERFÜLLT.** Die
+Vorhersage lautete „nicht erfüllt"; sie trifft zu, und die Begründung trägt
+auch: die 19 Spalten sind Kontext (Kanal, Uhrzeit, Whisper, Nachbarschaft),
+das fehlende Signal ist laut §3ap ein visuelles.
+
+Ein zweiter Beleg aus demselben Lauf, unabhängig von meiner Messung: die
+interne Whisper-Probe zeigt `ct+mp 0.941 → cwt+mp 0.922` (Δ −0.020), golden
+0.941 → 0.919. Die Zusatzspalten schaden dort messbar.
+
+⚠️ **Vorbehalt zur Vergleichbarkeit:** 20 Aufnahmen / 68 Kanten gegen 23 / 74
+in der Basis (eine Aufnahme 404t beim Redetect, zwei Dumps kamen nicht
+rechtzeitig). Die Sätze sind also nicht identisch. Für Bedingung 1 ist das
+unerheblich — 23.5 % gegen ein Ziel von 18 % ist kein Randfall —, für die
+p90/max-Verschlechterung schon: die könnte an den fehlenden drei Aufnahmen
+hängen. Ich verbuche sie deshalb NICHT als Befund, nur die Bedingungen.
+
+## ⚠️ Was dieser Lauf NICHT zeigt — der Gate war außer Kraft
+
+Im Protokoll steht `DEPLOYED`, und das liest sich wie eine Bestätigung. Es
+ist keine:
+
+> Golden-Boden: noch kein Bestwert fuer diesen Satz (set_hash c8727e82,
+> decoder hsmm) — heutiger Wert 0.939 wird der erste
+
+Der Label-Epochenschnitt vom 17.08. (§3an) hat die Latte entfernt. Der Kopf
+wurde ausgeliefert, weil **nichts da war, das ihn hätte ablehnen können** —
+am Vortag, noch mit Latte, wurde derselbe Mechanismus abgelehnt („0.936
+liegt 0.012 unter dem höchsten zweimal erreichten Wert 0.948").
+
+Das ist die vorhersehbare Kehrseite eines Epochenschnitts und war beim Bau
+von `label_hash` so gedacht: die Latte MUSS neu aufsetzen, sonst vergliche
+man über verschiedene Labels hinweg. Es heißt aber, dass der Schutz für
+diese Epoche erst wieder greift, wenn ein Wert zweimal erreicht wurde. Wer
+in dieser Zeit einen Kopf deployt sieht, hat keinen Beleg für seine Güte.
+
+## Umgesetzt
+
+`TVH_HEAD_ARCH_OVERRIDE` ist auf `--head-arch mlp32` zurückgesetzt — wie in
+der Registrierung festgelegt, **unabhängig vom Ergebnis**. Der nächste
+Nachtlauf trainiert wieder den nackten Kopf und deployt ihn (leere Latte).
+Bis dahin trägt die Produktion den vollen Kopf; das ist unschädlich (IoU
+vergleichbar) und korrigiert sich heute Nacht von selbst. Wer es sofort
+zurückdrehen will: `scripts/rollback-head.sh`.
+
+## Was daraus folgt
+
+Die Frage aus §3ap bleibt offen — **woher bekommt das NN die fehlende
+Flanke?** Nach diesem Ergebnis zeigt sie nicht auf Kontextspalten, sondern
+auf **Bildinhalt**: höhere Auflösung, der Logo-Kanal ins Backbone, OCR. Das
+Backbone verwirft bei 224×224 genau die Details, um die es geht (Memory
+`backbone_liest_keinen_text`). Das wäre eigens zu registrieren.

@@ -723,6 +723,56 @@ der LRU sie, während der Pi sie noch hat, und löscht der Pi seine Kopie
 später, sind beide weg, jeder Schritt für sich regelkonform. Das ist die
 Last-Copy-Lücke aus `tv-receiver/docs/dataflow.md` §3b.
 
+## 3as. Eine der acht Fehlkanten war ein Label — der Rest nicht
+(2026-08-18)
+
+Nachlese zu §3ar. Von den sieben nach dem Audit noch unbestimmten
+Golden-Kanten waren nur ZWEI ueberhaupt folgenreich; bei drei sind Label und
+Modell sich einig (der Ausgang kann den Schwanz nicht aendern), eine ist
+mangels Modellwert im Snapshot nicht einordenbar, eine liegt mit 5.8 s knapp
+ueber der Schwelle. Simon hat die zwei echten am Bildstreifen entschieden:
+
+```
+kabel-eins-1778511363 start   Label 1250.6 -> 1231.0   Modell 1232.0
+                              Modellfehler 18.6 s  ->  1.0 s   RAUS
+vox-1779206400        start   Label 1826.0 -> 1822.0   Modell 1807.0
+                              Modellfehler 19.0 s  ->  15.0 s  BLEIBT
+```
+
+Die kabel-eins-Kante war nie ein Modellfehler. Beide Agenten des
+Aufloesungstests hatten dort unabhaengig -19.6 s gesagt, also dem MODELL
+zugestimmt und dem Label widersprochen — und Simons Ablesung trifft das auf
+1 s. Sie stand im Audit vom 17.08. als „unbestimmt" und blieb deshalb
+unkorrigiert: die vorsichtige Regel (nur schreiben, was bestimmt ist) hat
+hier einen echten Fehler durchgelassen. Das ist der Preis der Regel und
+nicht ihr Fehler, aber er ist jetzt beziffert.
+
+**Was das ueber den Schwanz sagt:** von acht Fehlkanten war EINE ein
+uebriggebliebener Label-Fehler, nach einem Audit, das 16 andere gefunden
+hatte. Die restlichen sieben bleiben — bei vox sogar nach der Korrektur mit
+15 s. Der Schwanz ist also ganz ueberwiegend echt.
+
+### Zwei Werkzeugfehler derselben Bauart, beide still
+
+1. Meine Wegwerf-Liste setzte bei FEHLENDEM Modellwert stillschweigend
+   Modell = Label und meldete sixx dadurch als „einig", wo gar nichts vorlag.
+   In `golden-audit.py` ist der Fall jetzt ein eigener Zweig, der die
+   Datenluecke benennt. Nebenbei: **18 von 38** Golden-Aufnahmen haben keine
+   ads.json im Snapshot.
+2. `golden-audit.py` verglich gegen die ZUSAMMENGEFUEHRTE `ads`-Sicht des
+   Gateways, und die enthaelt den **overrun**-Block — den Schwanz hinter dem
+   geplanten Ende, den weder ein Mensch noch der Detektor gesetzt hat.
+   Aufgefallen beim Abgleich Archiv gegen Gateway: fuenf Aufnahmen wichen ab,
+   und zwar ausschliesslich um genau diesen Block. Wird jetzt abgezogen.
+   `kante-setzen.py` schreibt aus demselben Grund gegen `user`, nie gegen
+   `ads` — sonst wuerde der overrun-Block beim Zurueckschreiben still zu
+   einem Menschen-Label.
+
+Neues Werkzeug `scripts/kante-setzen.py`: EINE Kante auf einen von Simon
+abgelesenen Wert, mit Drift-Sicherung (der alte Wert muss stimmen),
+Sicherung nach `~/.cache/tvd-train-archive/kante-setzen-<datum>.jsonl` und
+Rueckleseprobe. Ein Agenten-Urteil ist dort ausdruecklich KEINE Deckung.
+
 ## 3ar. Die Aufloesung ist es NICHT — 224x224 aendert keine einzige Kante
 (2026-08-18)
 

@@ -55,7 +55,22 @@ def label_vom_gateway(u):
         with urllib.request.urlopen(req, context=_CTX, timeout=20) as r:
             d = json.loads(r.read())
         a = d.get("ads") if isinstance(d, dict) else d
-        return [(float(x[0]), float(x[1])) for x in a] if a else None
+        if not a:
+            return None
+        bl = [(float(x[0]), float(x[1])) for x in a]
+        # ⚠️ `ads` ist die ZUSAMMENGEFUEHRTE Sicht und enthaelt den
+        # overrun-Block: den Schwanz hinter dem geplanten Ende, den das
+        # Gateway als „nicht die Sendung" anhaengt. Der stammt von KEINEM
+        # Menschen und von keinem Detektor — er ist reine Buchhaltung ueber
+        # die Aufnahmedauer. Ihn mitzupruefen erzeugt bei jeder ueberzogenen
+        # Aufnahme einen Block, zu dem die Sichtung nie einen Partner findet.
+        # Aufgefallen 2026-08-18 beim Abgleich Archiv gegen Gateway: fuenf
+        # Aufnahmen wichen ab, und zwar ausschliesslich um genau diesen Block.
+        ov = d.get("overrun") if isinstance(d, dict) else None
+        if ov and len(ov) == 2:
+            o0, o1 = float(ov[0]), float(ov[1])
+            bl = [b for b in bl if not (abs(b[0] - o0) < 1 and abs(b[1] - o1) < 1)]
+        return bl or None
     except Exception:
         return None
 

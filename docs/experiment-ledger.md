@@ -723,6 +723,73 @@ der LRU sie, während der Pi sie noch hat, und löscht der Pi seine Kopie
 später, sind beide weg, jeder Schritt für sich regelkonform. Das ist die
 Last-Copy-Lücke aus `tv-receiver/docs/dataflow.md` §3b.
 
+## 3ar. Die Aufloesung ist es NICHT — 224x224 aendert keine einzige Kante
+(2026-08-18)
+
+Nach vier toten Spuren (§3aq) blieb die visuelle Richtung uebrig: das
+Backbone sieht 224x224, vielleicht frisst der Detailverlust genau das, was
+die Kante traegt. Simon hatte die acht unabhaengigen Fehlkanten angeschaut
+und gesagt, die Modellposition sei erkennbar falsch und die wahre erkennbar
+richtig — also keine Mehrdeutigkeit, sondern ein klarer Fehler an klarer
+Stelle. Das machte die Frage messbar.
+
+**Aufbau, gepaart.** Dieselben acht Kanten, je 17 Bilder im 5-s-Takt, in ZWEI
+Fassungen: einmal scharf (960 px), einmal auf 224x224 gequetscht und zurueck
+— also mit genau dem Detailgehalt des Backbones. Je ein Review-Agent pro
+Fassung, blind: er weiss weder, welche Fassung er sieht, noch wo Modell oder
+Label liegen. Ohne die scharfe Gegenprobe waere ein Fehlschlag nicht von
+"Aufgabe ist schwer" zu unterscheiden gewesen.
+
+```
+#  Aufnahme                  Modell     scharf       grob
+01 kabel-eins-1778511363     +74.0s      +5.0s      +5.0s
+02 rtl-1782090300            -41.2s      -0.2s      -0.2s
+03 nick-1781550300           -27.0s      +0.0s      +0.0s
+04 vox-1779206400            -19.0s  unbestimmt unbestimmt
+05 kabel-eins-1778511363     -18.6s     -19.6s     -19.6s
+06 nick-1783889700           +17.4s  unbestimmt unbestimmt
+07 rtlzwei-1779128100        +14.7s      -0.3s      -0.3s
+08 prosieben-1783401000      -13.8s      +0.2s      +0.2s
+
+  6 in BEIDEN bestimmt, davon 6 auf die Zehntelsekunde gleich
+  |Fehler| scharf 0.3 s   grob 0.3 s   MODELL 18.8 s
+```
+
+**Der Detailverlust aendert keine einzige Kante.** Nicht eine. Die
+Information ueberlebt 224x224 vollstaendig — und die zwei unbestimmten sind
+in BEIDEN Fassungen unbestimmt, haengen also an der Kante selbst und nicht
+an der Aufloesung.
+
+⚠️ **Was das nicht sagt:** ein Agent ist kein Backbone. Er liest ein Bild
+anders als ein CNN mit 1280 Ausgaengen. Belegt ist, dass die Information IM
+BILD ueberlebt — nicht, dass dieses Backbone sie nutzen kann. Das ist die
+schwaechere, aber ehrliche Aussage, und sie stand vor dem Versuch fest.
+
+### Nebenfund: eine der acht ist womoeglich gar kein Modellfehler
+
+Bei Kante 05 sagen BEIDE Fassungen -19.6 s — also fast genau dort, wo das
+Modell steht (-18.6 s). Die Agenten stimmen dem MODELL zu und widersprechen
+dem Label. Es ist die kabel-eins-Startkante bei 1250.6, die im Audit vom
+17.08. "unbestimmt" geblieben und deshalb NICHT korrigiert worden war.
+
+Das heisst: von den acht "unabhaengigen" Fehlkanten ist mindestens eine
+vermutlich ein uebriggebliebener Label-Fehler. Der Audit hat die
+unbestimmten Kanten stehengelassen — richtig so, aber sie sind damit auch
+nicht geprueft.
+
+### Was jetzt uebrig ist
+
+Die Information ist im Bild, sie ueberlebt die Aufloesung, das Logo ist es
+nicht, Kontextspalten sind es nicht, die Richtung des Uebergangs ist es
+nicht, und ein paar schwere Aufnahmen sind es auch nicht. Was bleibt, ist
+die Frage, warum das Backbone bzw. der Kopf aus einem Bild, in dem die
+Antwort steht, an diesen Stellen die falsche zieht.
+
+Das ist keine Frage mehr, die eine weitere Zusatzspalte beantwortet. Wer
+hier weiterkommen will, muss am Backbone selbst ansetzen (Feinabstimmung
+statt eingefrorene Merkmale) — und das ist ein anderes Vorhaben als alles,
+was in diesem Ledger bisher steht.
+
 ## 3aq. Die Logo-Spur ist tot — vier kostenlose Pruefungen, keine Registrierung
 (2026-08-18)
 

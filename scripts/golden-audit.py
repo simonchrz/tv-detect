@@ -60,6 +60,29 @@ def label_vom_gateway(u):
         return None
 
 
+SNAPSHOT = Path("/tmp/tv-train-snapshot")
+
+
+def modell_bloecke(u):
+    """Was der Detektor sagt — aus dem Snapshot, rein zum Einordnen.
+
+    Nur dafuer da, eine unbestimmte Kante als FOLGENLOS zu erkennen: wo Label
+    und Modell ohnehin uebereinstimmen, kann der Ausgang der Sichtung den
+    Fehlerschwanz nicht aendern. Ohne diese Unterscheidung stehen solche
+    Kanten fuer immer als „offen" in der Liste und sehen nach Arbeit aus,
+    die keine ist.
+    """
+    pfad = SNAPSHOT / f"_rec_{u}" / "ads.json"
+    if not pfad.is_file():
+        return None
+    try:
+        d = json.loads(pfad.read_text())
+    except Exception:
+        return None
+    a = d.get("ads") if isinstance(d, dict) else d
+    return [(float(x[0]), float(x[1])) for x in a] if a else None
+
+
 def bilder_von(d):
     """Alle Bild-Urteile einer Aufnahme, über ALLE Runden hinweg.
 
@@ -91,6 +114,7 @@ def main():
     if golden is None:
         return 1
     funde, geprueft, offen, ohne_partner = [], 0, [], []
+    folgenlos, ohne_modell = [], []
     n_kanten, abweichungen = 0, []
     for u in sorted(golden):
         d = _ar.ARBEIT / u
@@ -123,12 +147,33 @@ def main():
             # +54.4 s als „fein" erschien, obwohl die feine Ableitung dort
             # gar keine Kante liefert.
             gef = [list(x) for x in auftrag["bloecke"]]
+            mod = modell_bloecke(u)
             sicher, unbestimmt = set(), 0
             for k in auftrag["kanten"]:
                 kante, _ = _ar.kante_aus_folge(je.get(k["verzeichnis"], []),
                                                k["seite"])
                 if kante is None:
-                    unbestimmt += 1
+                    j = 0 if k["seite"] == "start" else 1
+                    anker = gef[k["block"]][j]
+                    lk = min(lab, key=lambda x: abs(x[j] - anker), default=None)
+                    mk = (min(mod, key=lambda x: abs(x[j] - anker))
+                          if mod else None)
+                    if (lk and mk and abs(lk[j] - mk[j]) <= _ar.SCHRITT_S
+                            and abs(lk[j] - anker) < 180):
+                        # Label und Modell sind sich einig — wie die Sichtung
+                        # ausgeht, aendert am Fehlerschwanz nichts.
+                        folgenlos.append((u, k["seite"], lk[j]))
+                    elif mk is None:
+                        # ⚠️ Kein Modellwert heisst NICHT „einig". Die erste
+                        # Fassung dieser Einordnung stand in einem Wegwerf-
+                        # Skript und setzte bei fehlendem Modell still
+                        # Modell = Label — und meldete sixx daraufhin als
+                        # folgenlos, wo schlicht nichts vorlag. Fehlende
+                        # Daten muessen sichtbar bleiben.
+                        ohne_modell.append(u)
+                        unbestimmt += 1
+                    else:
+                        unbestimmt += 1
                     continue
                 gef[k["block"]][0 if k["seite"] == "start" else 1] = kante
                 sicher.add((k["block"], k["seite"]))
@@ -171,9 +216,17 @@ def main():
               f"Label (verpasster Block — oder ein Artefakt der Ableitung):")
         for u, q, g in ohne_partner:
             print(f"  {u:36} {q:4} {g[0]:7.1f}-{g[1]:7.1f}")
+    if folgenlos:
+        print(f"\n{len(folgenlos)} unbestimmt, aber FOLGENLOS "
+              f"(Label und Modell einig, kein Beitrag zum Fehlerschwanz):")
+        for u, seite, wert in folgenlos:
+            print(f"  {u[4:38]:34} {seite:6} {wert:8.1f}s")
     if offen:
         print(f"\n{len(offen)} offen:")
+        ohne = set(ohne_modell)
         for u, warum in offen:
+            if u in ohne:
+                warum += " — kein Modellwert im Snapshot, nicht einordenbar"
             print(f"  {u:36} {warum}")
     nur_grob = sum(1 for u in sorted(golden)
                    if (_ar.ARBEIT / u / "auftrag.json").is_file()

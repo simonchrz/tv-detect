@@ -1429,12 +1429,29 @@ def _upload_files_put(url_template, files):
         conn.close()
 
 
-def process_recording(uuid, do_hls, do_thumbs):
+def process_recording(uuid, do_hls, do_thumbs, chase=False):
     """Combined job: single ffmpeg pass produces HLS bundle AND
     thumbs from one .ts download. Source resolved via local cache
-    first (NVMe ~3 GB/s); HTTP fallback only on cache miss."""
-    local = get_source(uuid)
-    src_url = str(local) if local else f"{GATEWAY}/recording/{uuid}/source"
+    first (NVMe ~3 GB/s); HTTP fallback only on cache miss.
+
+    chase=True: the recording is still running. Force the HTTP /source
+    endpoint, which TAILS the growing .ts (recsource.go) — ffmpeg follows
+    it live to completion, uploads the growing EVENT playlist each cycle,
+    and is never killed by the completion timeout. No local cache exists
+    mid-recording, and a HEAD to the tailing endpoint would block, so both
+    the cache lookup and the stub-size probe are skipped."""
+    if chase:
+        local = None
+        src_url = f"{GATEWAY}/recording/{uuid}/source"
+    else:
+        local = get_source(uuid)
+        src_url = str(local) if local else f"{GATEWAY}/recording/{uuid}/source"
+    # The GATEWAY is Caddy with an internal cert ffmpeg/ffprobe don't trust
+    # (the Python side already uses an unverified SSL context, CTX). Mirror that
+    # for the media tools whenever the source is the HTTPS gateway — a local
+    # cache file needs no flag. Without this a gateway source fails with
+    # "Peer certificate failed verification" (chase has no cache fallback).
+    tls_opts = ["-tls_verify", "0"] if src_url.startswith("https") else []
     # Stub-source short-circuit: ffmpeg can't extract thumbnails from
     # a 500KB-1MB broken recording (tuner cut mid-stream), produces 0
     # jpgs, daemon retried forever (= 2026-05-18+19 incidents). Probe
@@ -1442,7 +1459,9 @@ def process_recording(uuid, do_hls, do_thumbs):
     # if <2 MB. Recordings legitimately that small don't exist — even
     # 1 min of DVB-C ~25 Mbit/s is 180 MB.
     try:
-        if local:
+        if chase:
+            src_size = 0  # live recording — not a stub; HEAD would block on the tail
+        elif local:
             src_size = local.stat().st_size
         else:
             import urllib.request
@@ -1461,14 +1480,14 @@ def process_recording(uuid, do_hls, do_thumbs):
     with tempfile.TemporaryDirectory() as td:
         td_p = Path(td)
         cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
-               "-i", src_url]
+               *tls_opts, "-i", src_url]
         if do_hls:
             try:
                 probe = subprocess.run(
                     [FFPROBE, "-v", "error", "-select_streams", "v:0",
                      "-show_entries",
                      "stream=codec_name,field_order:format=duration",
-                     "-of", "json", src_url],
+                     "-of", "json", *tls_opts, src_url],
                     capture_output=True, text=True, timeout=30,
                     env=SPAWN_ENV)
                 pj = json.loads(probe.stdout or "{}")
@@ -1506,7 +1525,7 @@ def process_recording(uuid, do_hls, do_thumbs):
                         [FFPROBE, "-v", "error", "-select_streams", "v:0",
                          "-read_intervals", "%+#40",
                          "-show_entries", "frame=interlaced_frame",
-                         "-of", "csv=p=0", src_url],
+                         "-of", "csv=p=0", *tls_opts, src_url],
                         capture_output=True, text=True, timeout=60,
                         env=SPAWN_ENV)
                     w = [z.split(",")[0].strip()
@@ -1555,7 +1574,7 @@ def process_recording(uuid, do_hls, do_thumbs):
                 ap = subprocess.run(
                     [FFPROBE, "-v", "error", "-select_streams", "a:0",
                      "-show_entries", "stream=channels", "-of",
-                     "default=nokey=1:noprint_wrappers=1", src_url],
+                     "default=nokey=1:noprint_wrappers=1", *tls_opts, src_url],
                     capture_output=True, text=True, timeout=30, env=SPAWN_ENV)
                 # A multi-program TS lists the stream once per program, so stdout
                 # can be "6\n6" — take the first token (and string-compare, no
@@ -1592,7 +1611,9 @@ def process_recording(uuid, do_hls, do_thumbs):
         # polling never deadlocks a PIPE. The final batch below re-uploads
         # anything the stream missed, so this can only help, never lose a seg.
         seg_url = f"{GATEWAY}/api/internal/hls-segment/{uuid}/{{name}}"
+        pl_url = f"{GATEWAY}/api/internal/hls-segment/{uuid}/index.m3u8"
         uploaded = set()
+        pl_pushed = False  # chase: whether the growing EVENT playlist is live on the Pi
         errf = open(td_p / "ffmpeg.stderr", "w+")
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                  stderr=errf, env=SPAWN_ENV)
@@ -1610,9 +1631,29 @@ def process_recording(uuid, do_hls, do_thumbs):
                         uploaded.update(s.name for s in new)
                     except Exception as e:
                         print(f"  hls stream err: {e}", flush=True)
+                # Chase play: push the GROWING EVENT playlist each cycle a new
+                # segment landed, so the app can already watch from the start
+                # while the recording is still running. ffmpeg appends a
+                # segment's playlist entry only AFTER closing that file, so the
+                # playlist never references the in-flight last segment — every
+                # URI it lists is already uploaded above. The playlist stays
+                # EVENT (no ENDLIST) until ffmpeg finalizes; the completed
+                # bundle's playlist is uploaded LAST below as the readiness
+                # signal, exactly as for a non-chase remux.
+                if chase and rc is None and new:
+                    pl = td_p / "index.m3u8"
+                    if pl.exists():
+                        try:
+                            _upload_files_put(pl_url, [pl])
+                            pl_pushed = True
+                        except Exception as e:
+                            print(f"  chase playlist push err: {e}", flush=True)
             if rc is not None:
                 break
-            if time.time() - t0 > TIMEOUT_S:
+            # A chase remux runs for the whole recording (hours) — the
+            # completion timeout must not kill it. The tailing /source closes
+            # at recording end, which is ffmpeg's real EOF.
+            if not chase and time.time() - t0 > TIMEOUT_S:
                 proc.kill(); proc.wait(); rc = -9
                 break
             time.sleep(1.0)
@@ -2685,6 +2726,9 @@ def main():
                   flush=True)
         thumb_uuids = {j["uuid"] for j in thumbs}
         hls_uuids = {j["uuid"] for j in hls}
+        # Chase play: recordings still running whose remux reads the tailing
+        # /source. Dispatched like any other HLS job but with chase=True.
+        hls_chase = {j["uuid"] for j in hls if j.get("chase")}
         detect_uuids = {j["uuid"] for j in detect}
         # Failure cooldown — Pi-fallback timer picks up locally
         now = time.time()
@@ -2757,9 +2801,9 @@ def main():
         # worker-thread that runs process_recording (= HLS+thumbs in one
         # shot). Pool cap = HLS_PARALLEL. Skip if already in-flight on
         # this pool OR on the detect pool (= same uuid being touched).
-        def _run_hls(uuid, do_hls, do_thumbs):
+        def _run_hls(uuid, do_hls, do_thumbs, chase=False):
             try:
-                process_recording(uuid, do_hls, do_thumbs)
+                process_recording(uuid, do_hls, do_thumbs, chase=chase)
             except Exception as e:
                 print(f"  hls {uuid}: unhandled err: {e}", flush=True)
             finally:
@@ -2768,6 +2812,7 @@ def main():
         for uuid in sorted((hls_uuids | thumb_uuids) - cooled):
             do_hls = uuid in hls_uuids
             do_thumbs = uuid in thumb_uuids
+            do_chase = uuid in hls_chase
             with detect_lock:
                 if uuid in detect_in_flight:
                     continue
@@ -2778,9 +2823,9 @@ def main():
                     break  # pool full, try again next cycle
                 hls_in_flight.add(uuid)
             print(f"  → {uuid} hls={do_hls} thumbs={do_thumbs} "
-                  f"(pool {len(hls_in_flight)}/{HLS_PARALLEL})",
+                  f"chase={do_chase} (pool {len(hls_in_flight)}/{HLS_PARALLEL})",
                   flush=True)
-            hls_executor.submit(_run_hls, uuid, do_hls, do_thumbs)
+            hls_executor.submit(_run_hls, uuid, do_hls, do_thumbs, do_chase)
         time.sleep(POLL_INTERVAL_S)
 
 

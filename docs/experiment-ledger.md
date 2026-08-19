@@ -1974,6 +1974,13 @@ Was ansteht, in dieser Reihenfolge:
    sind über Serien positiv gemessen, Minute-Prior über acht Nächte als
    inert (Δ ≈ −0.001) — die Reihenfolge richtet sich nach der
    Einzelmessung der Schattenreihe.
+
+   ⚠️ **O8 WIEDER OFFEN als O8b (2026-08-19).** temporal−nackt hat sich seit
+   dem 17.08. von null auf konsistent positiv gedreht (0817–19: +0.017 /
+   +0.008 / +0.022), zeitgleich mit dem Golden-Label-Audit. Spiegel-Serie
+   registriert (`o8b-temporal-nutzt-preregistration.md`), `serie_ab
+   20260820` (gesehene Nächte zählen nicht), Schwelle wortgleich 0.010.
+   Erfüllt → L5-Vorlage `mlp32` → `mlp32-temporal`.
 2. **Trägt der Schatten-Vorsprung in die Produktion? — BEANTWORTET
    2026-08-12 abends, ohne neuen Lauf.** Zwei Code-Funde und ein
    Daten-Kreuzvergleich:

@@ -43,13 +43,21 @@ echo "Tagesserie $TS — Arme: $ARME, $N Paare, Seeds: $SEEDS"
 # in 50 GB Swap. Sequentiell kostet die Fits-Phase doppelt — dafuer
 # stirbt nichts still nach 40 Minuten Vorlauf. Wer Parallelitaet will,
 # misst vorher den freien Speicher, nicht hinterher den Swap.
-PIDS=()
+# Beide Archiv-Kopien VOR dem ersten Fit ziehen — Kopien vom selben
+# Stand, sonst misst der zweite Arm einen anderen Korpus (die zweite
+# Lehre aus dem 2026-08-12-Versuch).
 IFS=',' read -ra ARMLISTE <<< "$ARME"
 for ARM in "${ARMLISTE[@]}"; do
   D="$BASIS/$ARM"
   mkdir -p "$D/out"
   cp -R "$ECHT" "$D/archive"
-  ( "$PY" "$REPO/scripts/train-head.py" \
+done
+
+RC=0
+for ARM in "${ARMLISTE[@]}"; do
+  D="$BASIS/$ARM"
+  echo "  Arm $ARM: Log $D/lauf.log"
+  "$PY" "$REPO/scripts/train-head.py" \
       --workers 4 \
       --backbone "$HOME/.cache/tv-detect-daemon/backbone.onnx" \
       --logo-dir "$HOME/.cache/tv-detect-daemon/logos" \
@@ -65,13 +73,8 @@ for ARM in "${ARMLISTE[@]}"; do
       --tagesserie-nur-arm "$ARM" \
       --tagesserie-ts "$TS" \
       --tagesserie-seeds "$SEEDS" \
-      >"$D/lauf.log" 2>&1 ) &
-  PIDS+=($!)
-  echo "  Arm $ARM: PID ${PIDS[-1]}, Log $D/lauf.log"
+      >"$D/lauf.log" 2>&1 || RC=1
 done
-
-RC=0
-for P in "${PIDS[@]}"; do wait "$P" || RC=1; done
 echo ""
 echo "=== Laeufe beendet (rc=$RC) — das Urteil rechnet das Audit: ==="
 "$PY" "$REPO/scripts/audit-preregistration.py"

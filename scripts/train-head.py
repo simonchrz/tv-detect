@@ -385,7 +385,7 @@ class _DeployedMLP:
 
 
 def load_deployed_mlp(path):
-    """Parse a v2 ('MLP2') or v3 ('MLP3') head.bin into a _DeployedMLP, or
+    """Parse a v1..v5 ('MLP1'..'MLP5') head.bin into a _DeployedMLP, or
     None if it isn't one (legacy logreg head / missing / corrupt). Used for
     the head-to-head deploy gate; the caller must check .input_dim matches
     the candidate's feature dim."""
@@ -421,6 +421,26 @@ def load_deployed_mlp(path):
             return None
         input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
         off = 44
+    elif magic == 0x31504C4D:  # "MLP1", version 1, 36-byte header
+        # ⚠️ MLP1 ist KEIN Altbestand, sondern das laufende Format fuer
+        # Koepfe OHNE Whisper-Spalte (s. die Schreibstelle: "MLP2 v2" if
+        # wants_whisper else "MLP1 v1"). Produktion faehrt seit dem
+        # Rueckbau auf den nackten Kopf genau das.
+        #
+        # Dass der Zweig hier fehlte, hat den PAARWEISEN Gate-Vergleich
+        # still ausgeschaltet: load_deployed_mlp gab None zurueck,
+        # deployed_test_metrics blieb None, und der Nightly fiel jede
+        # Nacht in den Zweig "test-set composition changed — comparison
+        # invalidated, deploying". Es schuetzte allein der Golden-Boden.
+        # Aufgefallen 2026-08-22, nachdem drei Naechte in Folge dieselbe
+        # Invalidierungs-Meldung trugen (101→102, unveraendert).
+        if len(raw) < 36:
+            return None
+        hdr = struct.unpack("<9I", raw[:36])
+        if hdr[1] != 1:
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        off = 36
     elif magic == 0x32504C4D:  # "MLP2", version 2, 40-byte header
         hdr = struct.unpack("<10I", raw[:40])
         if hdr[1] != 2:
@@ -4721,6 +4741,24 @@ def main():
                       f"{_dep.input_dim}, candidate {mlp_prod_in_dim} — "
                       f"Architekturwechsel. Es schuetzen nur noch der "
                       f"historische IoU-Boden und der Golden-Boden.")
+            else:
+                # ⚠️ Der VIERTE Fall, und bis 2026-08-22 der einzige ohne
+                # Meldung: der deployte Kopf laesst sich gar nicht laden.
+                # Genau der trat ein — load_deployed_mlp kannte MLP1 nicht,
+                # das Format der whisper-losen Produktionskoepfe. Folge: der
+                # paarweise Vergleich fiel jede Nacht still aus, der Nightly
+                # meldete nur "test-set composition changed — comparison
+                # invalidated", und es schuetzte allein der Golden-Boden.
+                # Drei Naechte lang, bis jemand die immergleiche Zahl
+                # (101→102) bemerkte.
+                #
+                # Die Lehre ist dieselbe wie 2026-08-06 einen Zweig weiter
+                # oben: ein Schutz, der still ausfaellt, ist kein Schutz.
+                print(f"  ⚠️ head-to-head SKIPPED: {_dep_src.name} laesst sich "
+                      f"NICHT als MLP-Kopf lesen (unbekanntes Magic oder "
+                      f"beschaedigt). Der paarweise Vergleich faellt aus — es "
+                      f"schuetzen nur noch der historische IoU-Boden und der "
+                      f"Golden-Boden. Das ist ein DEFEKT, kein Normalfall.")
 
         # --- Holdout overfit diagnostic (env HOLDOUT_REPORT_UUIDS) -----------
         # Read-only: score the deployed champion vs this run's candidate on a

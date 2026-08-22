@@ -13,6 +13,11 @@
 #     gehen ueber --serie-archiv ins echte shadow-trend.jsonl.
 #   * Kein TVD_LAUF=nightly. Die Zeilen tragen quelle=tagesserie und
 #     zaehlen ausschliesslich fuer tagesserie-registrierte Regeln.
+#
+# ⚠️ ABGEKOPPELT starten (nohup ... & mit eigenem Log), NIE im Vordergrund
+# eines Werkzeugs mit Timeout: die Laeufe vom 20. und 21.08. starben nach
+# ~1 min still mit dem Prozessbaum des Aufrufers — kein Fehler im lauf.log,
+# Arm 2 lief nie an, das Audit meldete nur "Serie hat noch nicht begonnen".
 set -u
 ARME="${1:?Arme fehlen, z.B. 'mlp32-channel-whisper-temporal-mp-wm,mlp32'}"
 N="${2:-5}"

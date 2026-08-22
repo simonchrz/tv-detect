@@ -1981,6 +1981,33 @@ Was ansteht, in dieser Reihenfolge:
    registriert (`o8b-temporal-nutzt-preregistration.md`), `serie_ab
    20260820` (gesehene Nächte zählen nicht), Schwelle wortgleich 0.010.
    Erfüllt → L5-Vorlage `mlp32` → `mlp32-temporal`.
+
+   → **O8b ENTSCHIEDEN 2026-08-22, REGEL NICHT ERFÜLLT.** Tagesserie
+   `20260822T081005`, fünf seed-gleiche Paare auf identischem Korpus (287
+   Aufnahmen im Schnappschuss): **+0.0062 / −0.0174 / −0.0071 / −0.0074 /
+   −0.0071**, Median **−0.0071**, 4/5 negativ. Vorzeichen-Bedingung
+   erfüllt, Größen-Bedingung (≤ −0.010) verfehlt — buchstäblich derselbe
+   Ausgang wie O1. Konsequenz laut Registrierung: **temporal bleibt, wo es
+   ist**, kein L5-Wechsel auf `mlp32-temporal`. Abschluss in
+   [`serien-abschluss.json`](serien-abschluss.json).
+
+   ⚠️ **Der Wert dieser Serie liegt in dem, was sie ausgeschlossen hat.**
+   Die vorab gesehenen Nächte 0817–19 versprachen +0.017; prospektiv unter
+   kontrollierten Bedingungen bleiben −0.0071, also gut ein Drittel. Genau
+   dafür stand `serie_ab` in der Zukunft. Wer die drei gesehenen Nächte
+   mitgezählt hätte, hätte die Frage mit „ja, deutlich" beantwortet — und
+   falsch. Dieselbe Mechanik wie bei O2.
+
+   ⚠️ Auch die **Schattenreihe** hätte in die Irre geführt: dort liegt
+   `mlp32-temporal` in 5/5 Nächten über `mlp32`, mit Abständen bis +0.024.
+   Das sind aber ungepaarte Zeilen aus verschiedenen Fits; die gepaarte
+   Messung halbiert den Abstand. Schattenreihe = Kandidatensuche,
+   Tagesserie = Urteil.
+
+   Damit stehen Kanal (O7), Whisper (O1) und temporal (O8/O8b) gleichauf:
+   **kein belegter Schaden, kein belegter Nutzen.** Die Architektur-Abwägung
+   bleibt, was Punkt 1 oben feststellt — es gibt keinen Kandidaten für
+   „diese eine Spalte", die belegte Alternative ist der nackte Kopf.
 2. **Trägt der Schatten-Vorsprung in die Produktion? — BEANTWORTET
    2026-08-12 abends, ohne neuen Lauf.** Zwei Code-Funde und ein
    Daten-Kreuzvergleich:

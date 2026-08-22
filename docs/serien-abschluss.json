@@ -23,5 +23,10 @@
     "datum": "2026-08-14",
     "urteil": "REGEL NICHT ERFUELLT — Whisper-Spalte schadet nicht belegbar (Median -0.0044, 4/5 negativ; Vorzeichen erfuellt, Groesse verfehlt). Bleibt vorerst, hat aber ebenso wenig belegten Nutzen wie Kanal/Temporal.",
     "verbucht": "experiment-ledger.md §3 O1"
+  },
+  "O8b": {
+    "datum": "2026-08-22",
+    "urteil": "REGEL NICHT ERFUELLT — Temporal-Spalte nuetzt nicht belegbar (Median -0.0071, 4/5 negativ; Vorzeichen erfuellt, Groesse verfehlt). Prospektiv gemessen schrumpft der Effekt auf gut ein Drittel der vorab gesehenen +0.017 — genau wogegen serie_ab in die Zukunft gesetzt wurde.",
+    "verbucht": "experiment-ledger.md §3a Punkt 1 (O8b)"
   }
 }

@@ -4723,14 +4723,26 @@ def main():
                     _dep_slugs = json.loads(_cm.read_text()).get("slugs")
                 except Exception:
                     _dep_slugs = None
+            # ⚠️ Nur die TATSAECHLICH deployten Kanaele vergleichen. prod_chan_slugs
+            # wird IMMER berechnet (z. B. 13), aber bei --head-arch mlp32
+            # (wants_kanal=False, die Produktion) NICHT ins Modell noch in den
+            # channel-map geschrieben — der Champion-Sidecar ist dann leer [].
+            # Der alte Vergleich `[] == [13 slugs]` schlug JEDE Nacht fehl → das
+            # head-to-head wurde uebersprungen → Rueckfall auf die
+            # komposition-empfindliche Invalidierung (101→102 „comparison
+            # invalidated"). Das war die ZWEITE Haelfte des Gate-Problems, nach
+            # dem MLP1-Lesefix. `_dep_slugs or []` faengt zusaetzlich einen
+            # fehlenden/leeren Sidecar ab. Gefixt 2026-08-23.
+            _prod_slugs_wirksam = prod_chan_slugs if wants_kanal else []
             if (_dep is not None and _dep.input_dim == mlp_prod_in_dim
-                    and _dep_slugs == prod_chan_slugs):
+                    and (_dep_slugs or []) == _prod_slugs_wirksam):
                 print("\n=== deployed-head re-eval (head-to-head, smooth=10s) ===")
                 deployed_test_metrics = eval_split(_dep, test_recs_ch,
                                                    args.fps_extract, smooth_s=10)
             elif _dep is not None and _dep.input_dim == mlp_prod_in_dim:
-                print("  head-to-head skipped: channel-map differs from the "
-                      "deployed head — falling back to the historical floor")
+                print(f"  head-to-head skipped: channel-map differs — deployt "
+                      f"{_dep_slugs or []!r}, Kandidat wirksam "
+                      f"{_prod_slugs_wirksam!r} — falling back to the historical floor")
             elif _dep is not None:
                 # ⚠️ Dieser Fall war bis 2026-08-06 STILL. Er tritt bei jedem
                 # Architekturwechsel ein (input_dim des Kandidaten passt nicht

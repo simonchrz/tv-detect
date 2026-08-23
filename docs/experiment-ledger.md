@@ -2097,6 +2097,30 @@ unter Rauschen** und nicht als Defekt. `seed_golden` läuft ab jetzt jede Nacht
 mit; nach ein paar Nächten ist die Spanne eine Verteilung statt einer Anekdote,
 und dann erst lohnt die Entscheidung.
 
+**Nachtrag 2026-08-23 — warum der Boden überhaupt allein urteilen musste.**
+Die Klage oben ("das Gate urteilt unterhalb seiner eigenen Auflösung") betrifft
+den GOLDEN-BODEN. Das Werkzeug, das genau dieses Rauschen wegrechnet, existiert
+längst: der paarweise head-to-head vergleicht PRO AUFNAHME auf identischen
+Daten (Schwierigkeit kürzt sich weg) und entscheidet über ein Bootstrap-KI auf
+dem Median-Δ. Nur: er fiel **wochenlang still aus** — erst weil
+`load_deployed_mlp` das MLP1-Format nicht kannte (Fix b033978), dann weil der
+channel-map-Vergleich `[] == [13 slugs]` lautete, obwohl die Produktion
+(`--head-arch mlp32`) gar keine Kanäle deployt (Fix eaf526c). In beiden Fällen
+fiel der Nightly in den komposition-empfindlichen Zweig ("comparison
+invalidated") und der Boden war die EINZIGE Verteidigung.
+
+Das ordnet §2 neu ein: Der Boden ist nicht als Feinwerkzeug gedacht und muss es
+auch nicht sein — er ist die grobe zweite Linie. Die Auflösungsfrage stellte
+sich so scharf, weil die erste Linie tot war. Ab der Nacht 2026-08-24 läuft der
+paarweise Vergleich wieder; **bevor** eine der drei Optionen oben angefasst
+wird, gehören ein paar Nächte MIT aktivem head-to-head beobachtet — es kann
+sein, dass sich die Frage damit erledigt.
+
+Erkennungsmerkmal im Log: `=== deployed-head re-eval` und
+`head-to-head PAIRED on N recs` = erste Linie lebt. `head-to-head skipped` oder
+`comparison invalidated` = sie ist wieder tot, und dann ist DAS das Problem,
+nicht die Bodentoleranz.
+
 **Gemessen statt gewartet (2026-08-11 abends): der Seed ist es NICHT.**
 
 12 Fits auf identischen Daten, nur der Init-Seed unterschiedlich, danach die

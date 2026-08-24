@@ -2121,6 +2121,44 @@ Erkennungsmerkmal im Log: `=== deployed-head re-eval` und
 `comparison invalidated` = sie ist wieder tot, und dann ist DAS das Problem,
 nicht die Bodentoleranz.
 
+**Ergebnis der ersten Nacht (2026-08-24) — er lief, und die Wächter
+widersprechen sich.**
+
+    head-to-head PAIRED on 104 recs: median Δ -0.000 (90% CI [-0.001,+0.000]),
+    6 better / 13 worse — not a confident regression, deploy
+    ABER GOLDEN-BODEN: 0.941 liegt 0.014 unter 0.954, Champion 0.953 → REJECTED
+
+Das KI ist **ein Tausendstel breit** — der paarweise Test löst rund zwanzigmal
+feiner auf als der Boden (±0.014 bei ~0.020 Seed-Rauschen). Damit ist die
+Prämisse von §2 bestätigt und zugleich entschärft.
+
+Zwei Lehren:
+
+1. **Vorzeichen zählen reicht nicht.** 6 besser / 13 schlechter *klingt* nach
+   Regression; die Beträge heben sich auf. Wer hier die Mehrheit zählte statt
+   das KI zu lesen, lehnte einen unveränderten Kandidaten als Rückschritt ab.
+2. **Der Widerspruch ist jetzt erst sichtbar.** Paarweise (rotierender Satz,
+   104 recs) sagt "identisch", Boden (gepinnte 38) sagt "0.012 schlechter".
+   Ob der Boden systematisch zu streng ist, war nie prüfbar, solange er allein
+   urteilte. 3–4 Nächte sammeln, DANN erst an Schwellen gehen.
+
+**Dritter Fundort derselben Blindheit (2026-08-24).** Am Ende des Laufs stand
+`unbekannter head-magic 'MLP1'` — das nächtliche Korpus-Label-Audit
+(`scripts/corpus-label-audit.py`) hatte dieselbe Lücke wie das Gate und lief
+seit dem Rückbau auf `--head-arch mlp32` jede Nacht leer durch. Der
+Orchestrator fängt es als "report only / non-fatal" ab, also meldete nichts.
+
+Der Ein-Zeilen-Fix (Magic-Tabelle) hätte es NICHT geheilt: `build_X` setzte
+whisper/temporal/minute-prior hart auf an, der Zusatzblock wäre vier Spalten zu
+breit gewesen, die Breitenprüfung hätte jede Aufnahme übersprungen — 0
+Vergleiche, kein Fehler. Fix 04f3a4f leitet alle Zusatzspalten aus dem
+Kopf-HEADER ab. Verifiziert: 632/652 geprüft, 6 widersprüchlich.
+
+⚠️ Das Muster ist damit dreimal aufgetreten: **ein Format-Leser, der ein
+unbekanntes Magic in einen stillen Rückfall übersetzt.** Wer das nächste Mal
+ein head.bin liest, prüfe zuerst, ob ALLE Leser das laufende Format kennen —
+`grep -rn 'MLP5\|head-magic' scripts/`.
+
 **Gemessen statt gewartet (2026-08-11 abends): der Seed ist es NICHT.**
 
 12 Fits auf identischen Daten, nur der Init-Seed unterschiedlich, danach die

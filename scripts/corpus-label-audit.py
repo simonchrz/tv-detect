@@ -134,7 +134,14 @@ def load_head(path):
     # bricht das naechtliche Label-Audit ab, sobald ein v5-Kopf deployt
     # ist — nicht fatal fuer den Lauf (der Orchestrator faengt es ab),
     # aber die Pruefung faellt still aus.
-    nh = {"MLP5": 13, "MLP4": 12, "MLP3": 11, "MLP2": 10}.get(name)
+    # MLP1 (9 Felder, 36-Byte-Kopf) ist KEIN Altbestand, sondern das
+    # laufende Format fuer Koepfe OHNE Whisper-Spalte — die Produktion
+    # faehrt seit dem Rueckbau auf `--head-arch mlp32` genau das. Fehlte
+    # der Eintrag, brach das Audit mit "unbekannter head-magic 'MLP1'" ab;
+    # der Orchestrator faengt das ab ("report only"), also lief der
+    # Korpus-Label-Abgleich seither JEDE Nacht stumm ins Leere.
+    # Gefunden 2026-08-24, dieselbe Blindheit wie im Gate (load_deployed_mlp).
+    nh = {"MLP5": 13, "MLP4": 12, "MLP3": 11, "MLP2": 10, "MLP1": 9}.get(name)
     if nh is None:
         raise SystemExit(f"unbekannter head-magic {name!r}")
     hdr = struct.unpack(f"<{nh}I", raw[:nh * 4])
@@ -178,7 +185,8 @@ def head_prob(X, p):
 
 
 def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
-            with_whispermask=False, n_temporal=2):
+            with_whispermask=False, n_temporal=2, with_whisper=True,
+            with_prior=True):
     """Die Eingabematrix, wie der Kopf sie sieht.
 
     ⚠️ Die Spalten entstehen NICHT hier, sondern in train-head.py's
@@ -198,9 +206,19 @@ def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
             return arr[minutes].reshape(-1, 1)
         return np.full((T, 1), neutral, np.float32)
 
+    # ⚠️ JEDE Zusatzspalte aus dem KOPF-HEADER ableiten, nie hart setzen.
+    # whisper=True/temporal=True/mp_col=_mp waren fest verdrahtet — richtig
+    # fuer v3..v5, falsch fuer einen Kopf ohne diese Spalten: der Block
+    # waere 4 Spalten zu breit (1282 → 1286), die Breitenpruefung unten
+    # haette JEDE Aufnahme als "Feature-Breite passt nicht" uebersprungen,
+    # und das Audit haette 0 Vergleiche gemeldet — ohne Fehler. Ein
+    # reiner Magic-Fix haette also nur die Fehlermeldung beseitigt,
+    # nicht die Stummheit.
     return TH.mit_zusatz(feat, uuid, slug, chan_idx, n_chan,
-                         whisper=True, temporal=True,
-                         churn=n_temporal >= 3, mp_col=_mp,
+                         kanal=n_chan > 0,
+                         whisper=with_whisper, temporal=n_temporal >= 2,
+                         churn=n_temporal >= 3,
+                         mp_col=_mp if with_prior else None,
                          maske=with_whispermask)
 
 
@@ -254,6 +272,8 @@ def main():
     is_v5 = felder["whispermask"] > 0
     n_chan = felder["channel"]
     n_temporal = felder["temporal"]
+    has_whisper = felder["whisper"] > 0
+    has_prior = felder["minuteprior"] > 0
     print(f"head input_dim={idim}  n_chan={n_chan}  "
           f"channel-map={len(chan_idx)}  prior-slugs={len(prior)}  "
           f"neutral={neutral:.3f}")
@@ -293,7 +313,8 @@ def main():
                 continue
             feat = np.load(fp)
             X = build_X(feat, m.get("slug", ""), u, int(m.get("start_ts") or 0),
-                        chan_idx, n_chan, prior, neutral, is_v5, n_temporal)
+                        chan_idx, n_chan, prior, neutral, is_v5, n_temporal,
+                        has_whisper, has_prior)
             if X.shape[1] != idim:
                 # Older extraction with a different feature width — not a
                 # verification failure, just not comparable.
@@ -345,7 +366,7 @@ def main():
         feat = np.load(fp, mmap_mode="r")
         X = build_X(np.asarray(feat), m.get("slug", ""), u,
                     int(m.get("start_ts") or 0), chan_idx, n_chan, prior,
-                    neutral, is_v5, n_temporal)
+                    neutral, is_v5, n_temporal, has_whisper, has_prior)
         if X.shape[1] != idim:
             skipped += 1
             continue

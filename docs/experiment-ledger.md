@@ -2159,6 +2159,48 @@ unbekanntes Magic in einen stillen Rückfall übersetzt.** Wer das nächste Mal
 ein head.bin liest, prüfe zuerst, ob ALLE Leser das laufende Format kennen —
 `grep -rn 'MLP5\|head-magic' scripts/`.
 
+**2026-08-25 — eine Zeile Log, fünf Ebenen tief: die verschobene Merkmalsspalte.**
+Der Nightly meldete drei Nächte lang `BOTH-HEADS-COLD … cand=0.000 champ=0.000
+Sturm der Liebe / ONE HD`. Gelesen als „systematischer blinder Fleck". Es war
+das Gegenteil, und die Ursache lag fünf Ebenen tiefer:
+
+1. `uuid_slug` speist sich aus dem **lebenden DVR-Grid**. Serien-Retention
+   löscht alte Folgen → kein Grid-Eintrag → kein Slug.
+2. `if args.with_logo and slug` greift nicht → Extraktion **ohne Logo-Spalte**,
+   1281 statt 1282. Betroffen: 20 Archiv-Einträge. Bei **14 davon liegt das
+   Template im logo-Verzeichnis** — es fehlte nur der Name (7× sat-1-gold).
+3. Der Cache-Schlüssel trägt trotzdem `-l2`: **der Dateiname behauptet Logo,
+   der Inhalt hat keins.** `dvr-one-hd-1781285100` wurde deshalb 5× extrahiert
+   (Juni–August, je 16,9 MB) und blieb jedes Mal bei 1281.
+4. Der Auffüller hängte **rechts** an → `[backbone|audio|0.5]`. Der Audiowert
+   landete im **Logo-Slot**, der Audio-Slot bekam eine Konstante.
+5. Beide Köpfe erfinden daraufhin Blöcke auf einem werbefreien ARD-Sender.
+   `block_iou()` gibt 0.0, wenn genau eine Seite leer ist → 0.000.
+
+Nachgemessen an der betroffenen Datei (uniq-Werte je Spalte):
+
+| | Sp1280 (Logo) | Sp1281 (Audio) |
+|---|---|---|
+| intakte Referenz | 1053 | 1050 |
+| ALT — rechts angehängt | **1621** ← Audio | **1** ← Konstante |
+| NEU — an 1280 eingesetzt | **1** ← Sentinel | **1621** ← Audio |
+
+Fix f0b6c93: Sentinel an Index 1280 **einsetzen**; Slug aus der uuid
+zurückholen (die Ableitung gab es schon für den Test-Split); Cache als veraltet
+werten, wenn ein Template existiert aber die Spalte fehlt; `FALSCHPOSITIV-KALT`
+von `BOTH-HEADS-COLD` trennen; im Audit zwei Abbruchgründe = zwei Zähler.
+
+⚠️ **Drei übertragbare Lehren:**
+
+- **Ein Auffüller muss wissen, WELCHE Spalte fehlt.** „Rechts anhängen" ist nur
+  richtig, wenn die fehlende Spalte die letzte ist. Sonst verschiebt er still.
+- **Ein Cache-Schlüssel muss abbilden, was drin ist, nicht was angefordert
+  wurde.** `-l2` bedeutete „mit Logo gewünscht", nicht „mit Logo enthalten" —
+  daher fünf identische Fehlversuche.
+- **Eine Kennzahl von 0.000 bei leerer Wahrheit heißt überempfindlich, nicht
+  blind.** Die Beschriftung „blind spot" hat die Diagnose aktiv in die falsche
+  Richtung geschickt.
+
 **Gemessen statt gewartet (2026-08-11 abends): der Seed ist es NICHT.**
 
 12 Fits auf identischen Daten, nur der Init-Seed unterschiedlich, danach die

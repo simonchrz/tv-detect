@@ -2982,7 +2982,20 @@ def main():
         if args.with_yamnet:  suffix += "-y1"
         if args.with_uniformity: suffix += "-u1"
         fps_tag = f"-fps{int(args.fps_extract*100)}"
+        # ⚠️ `uuid_slug` kommt aus dem LEBENDEN DVR-Grid. Wessen Eintrag die
+        # Serien-Retention geloescht hat, steht dort nicht mehr — und ohne
+        # slug findet der Logo-Lookup unten ("if args.with_logo and slug")
+        # kein Template, obwohl eines existiert. Ergebnis: die Aufnahme wird
+        # OHNE Logo-Spalte extrahiert (1281 statt 1282). 2026-08-25 waren das
+        # 20 Aufnahmen, davon 7 sat-1-gold — deren Template liegt im
+        # logo-Verzeichnis, es fehlte nur der Name.
+        # Die Ableitung aus der uuid gibt es im selben File schon fuer den
+        # Test-Split (`_uuid_slug_for_split`); hier fehlte sie.
+        # Bewusst NICHT in `uuid_slug` selbst geschrieben: das ist "was der
+        # Grid weiss" und speist prod_chan_slugs/minute-prior.
         slug = uuid_slug.get(uuid, "")
+        if not slug and uuid.startswith("dvr-"):
+            slug = "-".join(uuid.split("-")[1:-1])
         # The source .ts lives in the daemon's T7 cache (UUID-keyed). It's
         # preferred — it lets us key the feature cache by the .ts mtime and
         # re-extract on demand. BUT after Pi-dedup the .ts is frequently gone
@@ -3014,6 +3027,20 @@ def main():
                                        / len(arr))
                             if nan_pct >= args.reextract_logo_nan_pct:
                                 reextract = True
+                        # ⚠️ Der Cache-Schluessel traegt "-l2", sobald
+                        # --with-logo gesetzt ist — AUCH wenn beim Extrahieren
+                        # gar kein Template gefunden wurde. Der Dateiname
+                        # behauptet also Logo, der Inhalt hat keins. Deshalb
+                        # zusaetzlich die BREITE gegen das pruefen, was jetzt
+                        # verfuegbar ist: existiert ein Template und fehlt die
+                        # Spalte, ist der Eintrag veraltet.
+                        # Ohne diese Pruefung blieb `dvr-one-hd-1781285100`
+                        # ueber fuenf Extraktionen (Juni–August) bei 1281
+                        # Spalten haengen — je 16,9 MB, jedes Mal umsonst.
+                        elif (arr.shape[1] <= 1281 and slug
+                              and (Path(args.logo_dir) /
+                                   f"{slug}.logo.txt").is_file()):
+                            reextract = True
                     except Exception:
                         reextract = True
                 if reextract:
@@ -3501,23 +3528,58 @@ def main():
             print(f"train-archive: injected {injected} deleted/dedup'd "
                   f"recording(s) (trained via frozen label + cached features)")
 
-    # Right-pad all per_rec feature matrices to the widest column count
-    # we have. Cached .npy files from older runs (extracted before
-    # the slug→logo lookup landed) can be 1 column narrower than the
-    # current full-feature pipeline. Padding with neutral 0.5 keeps
-    # train/eval/concat happy without forcing a full re-extraction
-    # of every old recording.
+    # Schmalere Merkmalsmatrizen auf die Sollbreite bringen.
+    #
+    # ⚠️ RECHTS anzuhaengen war FALSCH und hat still Spalten verschoben.
+    # Die Lage ist [backbone(1280) | logo | audio | ...]. Fehlt einer
+    # Aufnahme die LOGO-Spalte (weil beim Extrahieren kein Template
+    # gefunden wurde, s. `if args.with_logo and slug` weiter oben), ist
+    # sie 1281 breit und enthaelt [backbone | audio]. Rechts anhaengen
+    # ergab [backbone | audio | 0.5] — der Audio-Wert landete im
+    # LOGO-Slot und der Audio-Slot bekam eine Konstante. ZWEI falsche
+    # Spalten, kein Fehler, keine Meldung.
+    #
+    # Gemessen 2026-08-25 an 20 Aufnahmen (alle mit leerem slug, weil ihr
+    # DVR-Eintrag durch die Serien-Retention aus dem Grid gefallen war).
+    # Eine davon, `dvr-one-hd-1781285100` (Sturm der Liebe / ONE HD,
+    # werbefrei, ads=[]), lag im Test-Satz und bekam auf BEIDEN Koepfen
+    # IoU 0.000 — beide halluzinierten Werbeblöcke auf einem werbefreien
+    # Sender. Der Nightly meldete das als "systematic blind spot"; es war
+    # eine verschobene Spalte.
+    #
+    # 0.5 ist der dokumentierte Logo-Sentinel (s. logo_sentinel_05_silent_fail),
+    # also der richtige Fuellwert — nur eben an Position 1280.
     if per_rec:
         target_dim = max(r[3].shape[1] for r in per_rec)
+        eingesetzt = []
+        angehaengt = []
         for i, r in enumerate(per_rec):
             f = r[3]
-            if f.shape[1] < target_dim:
+            if f.shape[1] >= target_dim:
+                continue
+            if args.with_logo and f.shape[1] == target_dim - 1 and target_dim > 1281:
+                # Genau eine Spalte fehlt und wir fahren MIT Logo → es ist
+                # die Logo-Spalte an Index 1280, nicht die letzte.
+                f = np.insert(f, 1280, 0.5, axis=1)
+                eingesetzt.append(r[0])
+            else:
                 pad = np.full((f.shape[0], target_dim - f.shape[1]),
                               0.5, dtype=f.dtype)
                 f = np.concatenate([f, pad], axis=1)
-                per_rec[i] = (r[0], r[1], r[2], f, r[4], r[5],
-                              r[6], r[7], r[8], r[9], r[10], r[11], r[12],
-                              r[13] if len(r) > 13 else [])
+                angehaengt.append((r[0], r[3].shape[1]))
+            per_rec[i] = (r[0], r[1], r[2], f, r[4], r[5],
+                          r[6], r[7], r[8], r[9], r[10], r[11], r[12],
+                          r[13] if len(r) > 13 else [])
+        if eingesetzt:
+            print(f"  Merkmalsbreite: {len(eingesetzt)} Aufnahme(n) ohne "
+                  f"Logo-Spalte — Sentinel 0.5 an Index 1280 EINGESETZT "
+                  f"(nicht angehaengt): {', '.join(eingesetzt[:6])}"
+                  + (" …" if len(eingesetzt) > 6 else ""))
+        if angehaengt:
+            print(f"  ⚠ Merkmalsbreite: {len(angehaengt)} Aufnahme(n) rechts "
+                  f"aufgefuellt auf {target_dim} — Spaltenlage NICHT "
+                  f"verifiziert, bitte pruefen: "
+                  + ", ".join(f"{u}({w})" for u, w in angehaengt[:6]))
     if dropped_high:
         print(f"hygiene: dropped {len(dropped_high)} recording(s) with "
               f"ad-rate > {args.max_ad_rate*100:.0f}% "
@@ -6298,6 +6360,9 @@ def main():
                 # user REVIEWED: there the ground truth is trusted, so a >veto drop
                 # is a genuine local regression the median must not paper over.
                 reviewed = {r[0] for r in per_rec if len(r) > 5 and r[5]}
+                # uuid → Werbeblöcke, um leere Wahrheit von echter Kaelte zu
+                # trennen (s. FALSCHPOSITIV-KALT weiter unten).
+                _ads_je_uuid = {r[0]: (r[2] or []) for r in per_rec}
                 # BISTABLE recs are excluded as veto sources. Some recordings sit
                 # exactly on a block-boundary decision edge and flip between two
                 # attractors run to run — 2ff4df28 alternates between ~0.48 and
@@ -6396,11 +6461,35 @@ def main():
                 # floor are systematic blind spots — the paired gate is structurally
                 # blind to them (champion equally bad → Δ≈0), so they never improve
                 # on their own. Surface them for label review / feature work.
+                #
+                # ⚠️ Aufnahmen OHNE Werbeblöcke (ads=[]) gehoeren hier getrennt
+                # ausgewiesen. block_iou() gibt 1.0 wenn beide Seiten leer sind
+                # und 0.0 wenn genau eine leer ist — bei leerer Wahrheit heisst
+                # 0.000 also nicht "der Kopf findet nichts", sondern das
+                # GEGENTEIL: er erfindet Bloecke, wo keine sind. Das unter
+                # "blind spot" zu fuehren schickt den Leser in die falsche
+                # Richtung (2026-08-25 genau so passiert: Sturm der Liebe auf
+                # ONE HD, einem werbefreien ARD-Sender, stand drei Naechte als
+                # blinder Fleck im Log — es war ein Falschpositiv, ausgeloest
+                # von einer verschobenen Merkmalsspalte).
+                _leer_gt = {u for u in shared if not (_ads_je_uuid.get(u) or [])}
                 both_cold = sorted(
                     ((min(cand_pr[u], dep_pr[u]), u) for u in shared
                      if cand_pr[u] < args.both_cold_floor
                      and dep_pr[u] < args.both_cold_floor),
                     key=lambda x: x[0])
+                _falschpositiv = [(i, u) for i, u in both_cold if u in _leer_gt]
+                both_cold = [(i, u) for i, u in both_cold if u not in _leer_gt]
+                if _falschpositiv:
+                    print(f"  FALSCHPOSITIV-KALT ({len(_falschpositiv)} rec(s) "
+                          f"ohne Werbeblöcke, beide Koepfe erfinden welche — "
+                          f"NICHT blind, sondern ueberempfindlich):")
+                    for _i, u in _falschpositiv[:12]:
+                        t, c = uuid_cohort.get(u, ("", ""))
+                        lbl = f"{t} / {c}" if t else u
+                        rev = " [reviewed]" if u in reviewed else ""
+                        print(f"    cand={cand_pr[u]:.3f} champ={dep_pr[u]:.3f}  "
+                              f"{lbl}{rev}  ({u})")
                 if both_cold:
                     print(f"  BOTH-HEADS-COLD ({len(both_cold)} recs < "
                           f"{args.both_cold_floor:.2f} on BOTH heads — systematic "

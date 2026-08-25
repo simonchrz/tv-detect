@@ -354,21 +354,27 @@ def main():
         return 0
 
     print(f"\n=== Audit ueber {len(files)} archivierte Aufnahmen ===")
-    flagged, checked, skipped = [], 0, 0
+    # ⚠️ Zwei Abbruchgruende, zwei Zaehler. Vorher teilten sie sich einen —
+    # und die EINE Beschriftung lautete "(keine Features)". Am 2026-08-25
+    # meldete das "uebersprungen 20 (keine Features)", obwohl kein einziges
+    # Feature fehlte: alle 20 waren 1281 statt 1282 Spalten breit. Die
+    # falsche Begruendung hat die Suche in die falsche Richtung geschickt.
+    flagged, checked = [], 0
+    ohne_features, falsche_breite = [], []
     for f in files:
         u = os.path.basename(f)[:-4]
         z = np.load(f, allow_pickle=True)
         m = json.loads(str(z["meta"]))
         fp = m.get("feature_npy", "")
         if not os.path.exists(fp):
-            skipped += 1
+            ohne_features.append(u)
             continue
         feat = np.load(fp, mmap_mode="r")
         X = build_X(np.asarray(feat), m.get("slug", ""), u,
                     int(m.get("start_ts") or 0), chan_idx, n_chan, prior,
                     neutral, is_v5, n_temporal, has_whisper, has_prior)
         if X.shape[1] != idim:
-            skipped += 1
+            falsche_breite.append((u, int(feat.shape[1]), int(X.shape[1])))
             continue
         ps = head_prob(X, params)
         k = max(1, args.smooth)
@@ -409,7 +415,21 @@ def main():
             frozen = (newest_npz - os.path.getmtime(f)) > 36 * 3600
             flagged.append((u, m.get("which", "?"), str(m.get("title"))[:26],
                             n, hole, phan, frozen))
-    print(f"  geprueft {checked}, uebersprungen {skipped} (keine Features)")
+    print(f"  geprueft {checked}, uebersprungen "
+          f"{len(ohne_features) + len(falsche_breite)}")
+    if ohne_features:
+        print(f"    {len(ohne_features)} ohne Feature-Datei: "
+              + ", ".join(ohne_features[:6])
+              + (" …" if len(ohne_features) > 6 else ""))
+    if falsche_breite:
+        # Das ist KEIN Randfall zum Wegschauen: eine Aufnahme mit falscher
+        # Spaltenzahl wird auch im Training falsch behandelt (der Auffueller
+        # in train-head.py verschob bis 2026-08-25 die Spalten). Deshalb
+        # laut, mit Breite, damit die Ursache im Log steht.
+        print(f"    ⚠ {len(falsche_breite)} mit unpassender Merkmalsbreite "
+              f"(Kopf erwartet {idim}) — im Training ebenfalls verdaechtig:")
+        for u, roh, gebaut in falsche_breite[:8]:
+            print(f"        {u:32} .npy {roh}  →  gebaut {gebaut}")
     print(f"\n{len(flagged)} Aufnahmen widersprechen ihrem eigenen Signal:")
     print(f"  {'uuid':30} {'which':>7} {'dauer':>6} {'hole':>6} {'phantom':>8}"
           f"  Titel")

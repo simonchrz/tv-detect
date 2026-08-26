@@ -2437,3 +2437,33 @@ dvr-anixe-1781518500          658x525 @30,24   83%
 ```
 
 Verwendbar wären sie nur mit einer Flächenschranke. Offen.
+
+### Nachtrag 2026-08-26 (Tagesdurchgang) — O13 sammelt seit Aktivierung nichts
+
+Der Schattenlauf zu O13 (`kanten-schatten.py`) meldet seit mindestens
+acht Nächten `0 angefasste Kanten aus 0 Aufnahmen` und `Schattenlauf: 0
+Aufnahmen ergänzt`. Das ist kein langsamer Start, sondern ein Lauf, der
+**nicht stattfindet** — drei Voraussetzungen fehlen gleichzeitig, jede
+für sich reicht zum Verhungern:
+
+1. **`--ocr-marker` wird in der Produktionskette nie gesetzt.** Der
+   Detect-Spawn in `tv-thumbs-daemon.py` hängt bei vorhandenem `.want`
+   nur `--emit-signals-json` an; `ocr-marker` kommt in `daemon/` und
+   `~/bin/` nicht vor. Die 9 Dumps mit `ocr_funde` im Schatten-Ledger
+   stammen aus dem Nachrüsten vom 15.08. (fa6d138), nicht aus dem Betrieb.
+   Die Registrierung setzt „das Signal ist echt in der Kette" voraus —
+   das stimmt für das Binary, nicht für den Aufruf.
+2. **`.want` setzt nur `agent-review.py`.** Für eine vom Menschen
+   reviewte Aufnahme entsteht kein Dump. Neuester Dump: 2026-08-19.
+3. **Seit dem 15.08. gibt es genau eine Menschen-Review** (ohne Dump);
+   26 Agent-Reviews, die O13 laut Registrierung nicht zählen darf.
+
+Konsequenz: die Mindestmenge (40 Kanten / 20 Aufnahmen) ist auf diesem
+Pfad unerreichbar. Das Audit sieht es nicht, weil O13 keinen
+```regel-Block hat — eine verhungernde Serie ohne Regelblock ist für
+`audit-preregistration.py` unsichtbar. Nicht angefasst, weil es
+Produktion und Kosten betrifft: `--ocr-marker` für alle Aufnahmen kostet
++7 % je Detect, Dumps für alle Aufnahmen waren wegen 301 MB/Tag schon
+einmal zurückgenommen. Entscheidung (Simon): Kette schließen (Marker +
+Dump gezielt für neue Menschen-Reviews) oder O13 als „nicht messbar"
+schließen. Bis dahin steht die Serie, nicht die Frage.

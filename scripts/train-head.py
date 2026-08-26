@@ -3022,25 +3022,30 @@ def main():
                 if args.with_logo:
                     try:
                         arr = np.load(cache_path, mmap_mode="r")
-                        if arr.shape[1] > 1280 and len(arr) > 0:
+                        # Breite, die die gesetzten Flags verlangen. Bei
+                        # yamnet/uniformity/channel ist die Rechnung nicht
+                        # eindeutig (mehrspaltig) — dann keine Breitenpruefung.
+                        breite_eindeutig = not (args.with_yamnet
+                                                or args.with_uniformity
+                                                or args.with_channel)
+                        erwartet = 1281 + (1 if args.with_audio else 0)
+                        # ⚠️ Diese Pruefung MUSS VOR der NaN-Pruefung stehen.
+                        # `1281 > 1280` ist wahr, also fing der NaN-Zweig auch
+                        # den Fall "Logo-Spalte fehlt" ab: er las Spalte 1280
+                        # (= dort steht dann AUDIO), fand nie NaN, und der
+                        # Breiten-Zweig darunter war unerreichbar. Genau daran
+                        # ist der Wächter in der Nacht 2026-08-26 wirkungslos
+                        # geblieben — die Bedingung sah richtig aus und tat
+                        # nichts.
+                        if breite_eindeutig and arr.shape[1] < erwartet:
+                            if slug and (Path(args.logo_dir)
+                                         / f"{slug}.logo.txt").is_file():
+                                reextract = True
+                        elif arr.shape[1] > 1280 and len(arr) > 0:
                             nan_pct = (100.0 * np.isnan(arr[:, 1280]).sum()
                                        / len(arr))
                             if nan_pct >= args.reextract_logo_nan_pct:
                                 reextract = True
-                        # ⚠️ Der Cache-Schluessel traegt "-l2", sobald
-                        # --with-logo gesetzt ist — AUCH wenn beim Extrahieren
-                        # gar kein Template gefunden wurde. Der Dateiname
-                        # behauptet also Logo, der Inhalt hat keins. Deshalb
-                        # zusaetzlich die BREITE gegen das pruefen, was jetzt
-                        # verfuegbar ist: existiert ein Template und fehlt die
-                        # Spalte, ist der Eintrag veraltet.
-                        # Ohne diese Pruefung blieb `dvr-one-hd-1781285100`
-                        # ueber fuenf Extraktionen (Juni–August) bei 1281
-                        # Spalten haengen — je 16,9 MB, jedes Mal umsonst.
-                        elif (arr.shape[1] <= 1281 and slug
-                              and (Path(args.logo_dir) /
-                                   f"{slug}.logo.txt").is_file()):
-                            reextract = True
                     except Exception:
                         reextract = True
                 if reextract:

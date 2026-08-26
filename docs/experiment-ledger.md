@@ -2385,3 +2385,55 @@ sie liest, muss lokal laufen.
 committet es in das private Repo. Davor lag das gesamte Gedächtnis der
 Schleife — Golden-Verlauf, Golden-Satz, Test-Split, 660 eingefrorene
 Archiv-Aufnahmen — ungesichert in einem Cache-Verzeichnis.
+
+### Nachtrag 2026-08-26 — der Wächter war unerreichbar
+
+Die Nacht 08-26 war der Prüfpunkt für die vier Korrekturen vom 08-25.
+Ergebnis geteilt:
+
+* **Auffüller: greift.** `Merkmalsbreite: 22 Aufnahme(n) ohne Logo-Spalte
+  — Sentinel 0.5 an Index 1280 EINGESETZT (nicht angehaengt)`, keine
+  `⚠`-Zeile. Die Spaltenlage stimmt jetzt.
+* **Neuextraktion: griff nicht.** Der Audit meldete unverändert
+  `.npy 1281 → gebaut 1281`.
+
+Ursache: der Frische-Wächter stand als `elif` hinter
+`if arr.shape[1] > 1280`. Für eine 1281 Spalten breite Datei ist diese
+Bedingung **wahr** — der NaN-Zweig fing also genau den Fall ab, gegen
+den der Wächter gerichtet war. Er las dann Spalte 1280, wo bei fehlender
+Logo-Spalte das Audio steht, fand kein NaN und erklärte den Cache für
+frisch. Belegt:
+
+```
+dvr-kabel-eins-1780856070  Breite=1281  NaN(Sp1280)=0.0%  -> reextract=False
+dvr-prosieben-1782929700   Breite=1281  NaN(Sp1280)=0.0%  -> reextract=False
+```
+
+Behoben in `81ba547`: Breite zuerst, gegen die von den Flags verlangte
+Breite (1281 + Audio); NaN nur noch bei erwarteter Breite. Simulation
+gegen den Cache: **12 der 22 extrahieren neu**, 3 haben ein Template
+aber kein `.ts` mehr, 7 gar kein Template.
+
+**Lehre — die vierte Instanz desselben Musters.** Die drei vorherigen
+waren Format-Leser, die bei unbekanntem Magic still zurückfielen. Diese
+hier ist ein Wächter, dessen *Bedingung* korrekt ist und der trotzdem
+nichts tut, weil ein früherer Zweig den Fall schon wegnimmt. Gemeinsamer
+Nenner: **eine Bedingung, die richtig aussieht, ist nicht geprüft —
+geprüft ist sie erst, wenn belegt ist, dass sie erreicht wird.** Der
+Beleg kostete zwei Minuten (Breite + NaN-Rate der echten Dateien
+ausdrucken) und hätte eine ganze Nacht gespart.
+
+**Nebenfund, bewusst nicht angefasst.** Im source-Verzeichnis liegen 95
+per-uuid-Templates `<uuid>.trained.logo.txt` — für alle 7 Aufnahmen
+ohne slug-Template. Sie als Ersatzquelle einzuhängen wäre naheliegend
+und wäre falsch: drei davon sind entartet und umfassen praktisch das
+ganze Bild.
+
+```
+dvr-one-hd-1781285100        1186x719 @14,0    92% des Bildes
+dvr-prosieben-maxx-1778622221 710x575 @5,0     98%
+dvr-anixe-1781518500          658x525 @30,24   83%
+   zum Vergleich: vox 60x32, prosieben 28x37, sat-1-gold 91x33  (je <1%)
+```
+
+Verwendbar wären sie nur mit einer Flächenschranke. Offen.

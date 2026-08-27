@@ -622,6 +622,68 @@ class WeightedMLP:
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(np.int64)
 
 
+def merge_mlp_ensemble(clfs):
+    """k einlagige ReLU-MLPs zu EINEM Kopf zusammenlegen, der exakt den
+    Mittelwert ihrer Logits rechnet.
+
+    Der Vorwaertspass ist  sigmoid(b2 + sum_j relu(b1_j + x.W1[:,j]) * W2_j).
+    Der Mittelwert von k solchen Logits ist wieder genau diese Form, wenn man
+    die Hidden-Bloecke nebeneinanderhaengt:
+
+        W1 = [W1_0 | W1_1 | ... ]        (d, k*h)
+        b1 = [b1_0 ; b1_1 ; ... ]        (k*h,)
+        W2 = [W2_0 ; W2_1 ; ... ] / k    (k*h, 1)
+        b2 = mittelwert(b2_i)            (1,)
+
+    Ergebnis ist also ein voellig normaler Kopf mit hidden_dim = k*h — KEIN
+    neues Dateiformat und keine Aenderung auf der Go-Seite noetig: nn.go liest
+    hidden_dim durchweg aus dem Header (nn.go:390/497/598/703), nichts ist auf
+    32 verdrahtet.
+
+    ⚠️ Das mittelt LOGITS, nicht Wahrscheinlichkeiten. Beides ist ein
+    uebliches Ensemble; nur ist die Logit-Variante die, die sich exakt als ein
+    Netz schreiben laesst. Die Platt-Kalibrierung wird ohnehin auf dem
+    fertigen Kopf neu gefittet, der Unterschied im Niveau ist damit erledigt.
+
+    ⚠️ Warum ueberhaupt: die drei Seeds liegen auf dem TESTSATZ 0.003
+    auseinander (= ununterscheidbar), auf dem Golden-Satz aber 0.015. Der
+    Testsatz kann also nicht sagen, welcher Seed generalisiert — die Auswahl
+    ist ein Muenzwurf. Gegen Varianz, die die Auswahl nicht sehen kann, hilft
+    keine bessere Auswahl, sondern Mitteln.
+
+    Warum NICHT einfach den auf Golden besten Seed nehmen: Golden ist genau
+    deshalb der ehrliche Trend, weil nichts darauf selektiert. Wer darauf
+    auswaehlt, verbrennt den einzigen unabhaengigen Massstab (s. Memory
+    `golden_satz_erodiert_und_ist_jetzt_gepinnt`).
+    """
+    if not clfs:
+        raise ValueError("merge_mlp_ensemble: keine Koepfe")
+    if len(clfs) == 1:
+        return clfs[0]
+    k = len(clfs)
+    W1s, b1s, W2s, b2s = [], [], [], []
+    for c in clfs:
+        if len(c.coefs_) != 2 or len(c.intercepts_) != 2:
+            raise ValueError("merge_mlp_ensemble: nur einlagige Koepfe")
+        W1s.append(np.asarray(c.coefs_[0], dtype=np.float64))
+        b1s.append(np.asarray(c.intercepts_[0], dtype=np.float64).ravel())
+        W2s.append(np.asarray(c.coefs_[1], dtype=np.float64))
+        b2s.append(np.asarray(c.intercepts_[1], dtype=np.float64).ravel())
+    d = W1s[0].shape[0]
+    if any(w.shape[0] != d for w in W1s):
+        raise ValueError("merge_mlp_ensemble: uneinheitliche Eingangsbreite")
+    if any(w.shape[1] != 1 for w in W2s):
+        raise ValueError("merge_mlp_ensemble: nur ein Ausgang unterstuetzt")
+    out = WeightedMLP(hidden_dim=sum(w.shape[1] for w in W1s))
+    out.coefs_ = [np.hstack(W1s), np.vstack(W2s) / float(k)]
+    out.intercepts_ = [np.concatenate(b1s),
+                       np.array([float(np.mean([b[0] for b in b2s]))])]
+    out.n_iter_ = max(int(getattr(c, "n_iter_", 0) or 0) for c in clfs)
+    out.loss_ = float(np.mean([float(getattr(c, "loss_", np.nan))
+                               for c in clfs]))
+    return out
+
+
 WHISPER_CACHE = Path.home() / ".cache" / "tv-whisper"
 
 
@@ -2067,7 +2129,8 @@ def golden_label_hash(uuids, hls_root):
     return h.hexdigest()[:12]
 
 
-def golden_bestwert(trend_pfad, set_hash, label_hash="*", ohne_ts=None):
+def golden_bestwert(trend_pfad, set_hash, label_hash="*", ohne_ts=None,
+                    select_rule="median-seed"):
     """Der hoechste Golden-Median, den der Stack MINDESTENS ZWEIMAL erreicht
     hat — nicht der hoechste ueberhaupt.
 
@@ -2147,6 +2210,17 @@ def golden_bestwert(trend_pfad, set_hash, label_hash="*", ohne_ts=None):
             continue
         if (e.get("decoder") or "form") != jetzt:
             continue
+        # ⚠️ Und nur Eintraege mit DERSELBEN AUSWAHLREGEL. Am 2026-08-27 kam
+        # das Seed-Ensemble; davor lieferte der Nightly einen Einzel-Seed aus
+        # und Golden mass dessen Train-only-Fit. Das ist dieselbe Sorte
+        # stiller Neudefinition wie der Decoder-Wechsel eine Zeile hoeher —
+        # ein geerbter Bestwert aus der alten Regel waere kein Boden, sondern
+        # ein Vergleich zweier verschiedener Messungen. Folge: nach der
+        # Umstellung ist der Boden zunaechst leer und baut sich ueber die
+        # naechsten Naechte neu auf. Gewollt, aber nicht gratis: die erste
+        # Nacht schuetzt nur noch das paarweise Head-to-head.
+        if (e.get("select_rule") or "median-seed") != select_rule:
+            continue
         v = e.get("golden_median")
         ts = str(e.get("ts") or "")
         if v is None:
@@ -2206,7 +2280,8 @@ def golden_stau(trend_pfad, set_hash, label_hash="*"):
 
 
 def golden_boden(deploy, reason, *, golden_floor, train_archive,
-                 cand_pr, champ_pr, hls_root=None, ts=None, melde=print):
+                 cand_pr, champ_pr, hls_root=None, ts=None,
+                 select_rule="median-seed", melde=print):
     if not deploy or golden_floor <= 0:
         return deploy, reason
     try:
@@ -2240,7 +2315,8 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
                 if hls_root and golden else "*")
         best, best_ts = golden_bestwert(
             Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
-            meta.get("set_hash"), _lab, ohne_ts=ts)
+            meta.get("set_hash"), _lab, ohne_ts=ts,
+            select_rule=select_rule)
         if best is None:
             # ⚠️ Diese Zeile erscheint auch in der ERSTEN Nacht nach einem
             # Decoder-Wechsel, nicht nur bei einem neuen Golden-Satz. Ohne den
@@ -2248,7 +2324,8 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
             # aus, als waere er verloren gegangen — er wird nur neu aufgebaut.
             melde(f"  Golden-Boden: noch kein Bestwert fuer diesen Satz "
                   f"(set_hash {str(meta.get('set_hash'))[:8]}, decoder "
-                  f"{' '.join(EVAL_DECODER) or 'form'}) — heutiger Wert "
+                  f"{' '.join(EVAL_DECODER) or 'form'}, Auswahl "
+                  f"{select_rule}) — heutiger Wert "
                   f"{g_cand:.3f} wird der erste")
             return deploy, reason
 
@@ -2516,6 +2593,18 @@ def main():
                          "einzelner Fit traegt laut Seed-Sweep bis zu 0.023 "
                          "Willkuer. Kostet N-1 zusaetzliche Fits samt "
                          "Auswertung. 1 = altes Verhalten.")
+    ap.add_argument("--prod-select", choices=("ensemble", "median"),
+                    default="ensemble",
+                    help="Was aus den --prod-seeds Fits ausgeliefert wird. "
+                         "ensemble (Standard seit 2026-08-27): alle Koepfe "
+                         "zu einem zusammenlegen, der ihren Logit-Mittelwert "
+                         "rechnet (= ein normaler Kopf mit hidden N*32, kein "
+                         "neues Dateiformat). median: den nach Testsatz "
+                         "mittleren Einzel-Seed ausliefern (Verhalten "
+                         "2026-08-09 bis 2026-08-26). "
+                         "⚠️ Ein Wechsel aendert, was golden_median misst — "
+                         "der Golden-Boden baut sich danach neu auf, siehe "
+                         "select_rule in golden-trend.jsonl.")
     ap.add_argument("--nur-cache", action="store_true",
                     help="Keine neuen Aufnahmen extrahieren — Korpus = Stand "
                          "des letzten Laufs. Fuer Tagesserien: die Frage "
@@ -4559,6 +4648,12 @@ def main():
     # Vorbelegung: der All-Data-Refit und die golden-trend-Zeile lesen beide
     # diese Werte, laufen aber auch, wenn der MLP-Zweig uebersprungen wurde.
     prod_seed_used, prod_seed_spread, prod_seed_golden = 0, None, {}
+    prod_golden_spread = None
+    # Welche Regel den ausgelieferten Kopf bestimmt hat. Steht in
+    # golden-trend.jsonl und ist ein Filter des Bodens: eine neue Regel
+    # ist eine neue Messung, kein besserer Wert derselben Messung.
+    prod_select_rule = "median-seed"
+    prod_hidden = 32
     if wants_mlp and test_recs:
         prod_chan_slugs = sorted({uuid_slug.get(r[0], "")
                                    for r in train_recs + test_recs} - {""})
@@ -4672,9 +4767,11 @@ def main():
             return round(float(np.median([pr[u] for u in _golden_pin])), 4)
 
         prod_seeds = max(1, int(args.prod_seeds))
+        prod_select = args.prod_select
         kandidaten = []
         for _sd in range(prod_seeds):
-            _clf = WeightedMLP(hidden_dim=32, max_iter=200, random_state=_sd)
+            _clf = WeightedMLP(hidden_dim=prod_hidden, max_iter=200,
+                               random_state=_sd)
             _clf.fit(X_train_ch, y_train, sw_train)
             if prod_seeds > 1:
                 print(f"\n=== Seed {_sd}: {_clf.n_iter_} Epochen, "
@@ -4688,10 +4785,11 @@ def main():
         kandidaten.sort(key=lambda k: k[0])
         _gewaehlt = kandidaten[len(kandidaten) // 2]
         prod_seed_used = _gewaehlt[1]
-        mlp_prod_clf = _gewaehlt[2]
-        metrics_smooth_mlp = _gewaehlt[3]
         prod_seed_spread = round(kandidaten[-1][0] - kandidaten[0][0], 4)
         prod_seed_golden = {sd: _gold(m) for _, sd, _, m in kandidaten}
+        _gvals_seed = [g for g in prod_seed_golden.values() if g is not None]
+        prod_golden_spread = (round(max(_gvals_seed) - min(_gvals_seed), 4)
+                              if len(_gvals_seed) > 1 else None)
         if prod_seeds > 1:
             print(f"\n  Seed-Auswahl (Testsatz): " + "  ".join(
                 f"{sd}={med:.3f}" + ("*" if sd == prod_seed_used else "")
@@ -4701,10 +4799,51 @@ def main():
                 + ("*" if sd == prod_seed_used else "")
                 for sd, g in sorted(prod_seed_golden.items()))
             print(f"  dieselben Koepfe auf dem Golden-Satz: {_gtxt}")
-            print(f"  Spanne {prod_seed_spread:.3f} (Testsatz) — ausgeliefert "
-                  f"wird der mittlere (Seed {prod_seed_used}), nicht der beste. "
-                  f"Der Golden-Wert von Seed 0 ist das, was die Regel VOR dem "
-                  f"2026-08-09 gemeldet haette.")
+            print(f"  Spanne {prod_seed_spread:.3f} (Testsatz)"
+                  + (f" / {prod_golden_spread:.3f} (Golden)"
+                     if prod_golden_spread is not None else ""))
+        # Ensemble STATT Auswahl (2026-08-27). Begruendung ausfuehrlich in
+        # merge_mlp_ensemble; die Kurzfassung: ueber sechs Naechte lagen die
+        # drei Seeds auf dem Testsatz im Mittel 0.004 auseinander, auf dem
+        # Golden-Satz aber 0.015, und dreimal war der ausgewaehlte Seed der
+        # auf Golden schlechteste. Der Testsatz kann also nicht sagen, welcher
+        # Seed generalisiert — die Auswahl ist ein Muenzwurf auf einer
+        # Groesse, die sie nicht messen kann. Gegen Varianz, die die Auswahl
+        # nicht sieht, hilft keine bessere Auswahl, sondern Mitteln.
+        #
+        # ⚠️ Der Kandidat, den Gate und Golden bewerten, MUSS derselbe
+        # Rechenweg sein wie der ausgelieferte Kopf. Deshalb wird hier
+        # ensembled UND unten beim All-Data-Refit ensembled. Nur eine der
+        # beiden Stellen umzustellen hiesse, eine Zahl zu melden, die zu
+        # keinem ausgelieferten Modell gehoert — und genau das war hier schon
+        # der Fall: bis heute meldete Golden den Train-only-Kopf des
+        # gewaehlten Seeds, waehrend head.bin ein separater All-Data-Refit
+        # war, der nur den random_state mit ihm teilte.
+        if prod_select == "ensemble" and prod_seeds > 1:
+            mlp_prod_clf = merge_mlp_ensemble(
+                [k[2] for k in sorted(kandidaten, key=lambda k: k[1])])
+            metrics_smooth_mlp = eval_split(mlp_prod_clf, test_recs_ch,
+                                            args.fps_extract, smooth_s=10)
+            _e_med = _med(metrics_smooth_mlp)
+            _e_gold = _gold(metrics_smooth_mlp)
+            print(f"  ENSEMBLE der {prod_seeds} Koepfe (Logit-Mittel, hidden "
+                  f"{prod_hidden} → {prod_hidden * prod_seeds}): Testsatz "
+                  f"{_e_med:.3f}, Golden "
+                  + (f"{_e_gold:.3f}" if _e_gold is not None else "—")
+                  + " — ausgeliefert wird DIESER, kein Einzel-Seed.")
+            # ⚠️ Das aendert, WAS golden_median misst — dieselbe Sorte stiller
+            # Neudefinition wie 2026-08-09 (Seed 0 → mittlerer Seed) und
+            # 2026-08-05 (form → hsmm). Beide Male brach die Reihe unsichtbar.
+            # Deshalb steht `select_rule` in golden-trend.jsonl und
+            # golden_bestwert filtert darauf: der Boden baut sich neu auf,
+            # statt einen Bestwert aus einer anderen Messregel zu erben.
+            prod_select_rule = f"ensemble{prod_seeds}"
+        else:
+            mlp_prod_clf = _gewaehlt[2]
+            metrics_smooth_mlp = _gewaehlt[3]
+            if prod_seeds > 1:
+                print(f"  ausgeliefert wird der mittlere (Seed "
+                      f"{prod_seed_used}), nicht der beste.")
         print(f"\n=== {args.head_arch} held-out evaluation (smooth=10s) ===")
         eval_split(mlp_prod_clf, test_recs_ch, args.fps_extract, smooth_s=0)
         # Override the deploy-decision metric — the deploy block
@@ -6025,13 +6164,35 @@ def main():
         # Derselbe Seed wie der ausgewaehlte Kopf — sonst waere der
         # ausgelieferte Refit wieder eine unbeobachtete Einzelziehung und die
         # Auswahl oben umsonst.
-        mlp_prod_clf = WeightedMLP(hidden_dim=32, max_iter=200,
-                                   random_state=prod_seed_used)
-        mlp_prod_clf.fit(X_all_ch, y_all_ch, sw_all_ch)
+        #
+        # ⚠️ Und bei --prod-select ensemble MUSS hier ebenfalls ensembled
+        # werden. Sonst bewertet das Gate ein Ensemble und ausgeliefert wird
+        # ein Einzelfit — die gemeldete Zahl gehoerte dann zu keinem
+        # existierenden Modell. Dieselbe Anzahl Seeds, dieselben
+        # random_states, damit der Zusammenhang zwischen Messung und
+        # Auslieferung so eng ist, wie er ohne einen zweiten Testsatz sein
+        # kann.
+        _refit_seeds = (list(range(prod_seeds))
+                        if prod_select_rule.startswith("ensemble")
+                        else [prod_seed_used])
+        _refits = []
+        for _rs in _refit_seeds:
+            _rc = WeightedMLP(hidden_dim=prod_hidden, max_iter=200,
+                              random_state=_rs)
+            _rc.fit(X_all_ch, y_all_ch, sw_all_ch)
+            if len(_refit_seeds) > 1:
+                print(f"  Refit Seed {_rs}: acc "
+                      f"{(_rc.predict(X_all_ch) == y_all_ch).mean()*100:.1f}%, "
+                      f"epochs {_rc.n_iter_}, loss {_rc.loss_:.4f}")
+            _refits.append(_rc)
+        mlp_prod_clf = merge_mlp_ensemble(_refits)
         full_acc = (mlp_prod_clf.predict(X_all_ch) == y_all_ch).mean()
         print(f"  full-data fit acc {full_acc*100:.1f}%, "
               f"epochs {mlp_prod_clf.n_iter_}, "
-              f"loss {mlp_prod_clf.loss_:.4f}")
+              f"loss {mlp_prod_clf.loss_:.4f}"
+              + (f"  (Ensemble aus {len(_refits)}, hidden "
+                 f"{prod_hidden * len(_refits)})" if len(_refits) > 1 else ""))
+        del _refits
         del X_all_ch, y_all_ch, sw_all_ch
         gc.collect()
         # BIAS-CHECK (env BIAS_CHECK): this all-data refit IS what becomes
@@ -6727,13 +6888,20 @@ def main():
 
     def _write_head(path, clf=None):
         clf = clf if clf is not None else mlp_prod_clf
+        # Breite aus dem Kopf ableiten, NICHT als 32 verdrahten. Ein
+        # Ensemble aus k Seeds ist ein ganz normaler Kopf mit hidden k*32
+        # (s. merge_mlp_ensemble), und die Go-Seite liest hidden_dim ohnehin
+        # aus dem Header. Blieb hier die 32 stehen, wuerde write_mlp_head_v*
+        # laut auf der Formpruefung scheitern — das ist die richtige Sorte
+        # Fehler, aber ein vermeidbarer.
+        hd = int(np.asarray(clf.coefs_[0]).shape[1])
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs) if wants_kanal else 0
         if wants_whispermask:
             write_mlp_head_v5(path, clf,
                               input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
+                              hidden_dim=hd, backbone_dim=1280,
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
@@ -6743,7 +6911,7 @@ def main():
         elif wants_minuteprior:
             write_mlp_head_v4(path, clf,
                               input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
+                              hidden_dim=hd, backbone_dim=1280,
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
@@ -6752,7 +6920,7 @@ def main():
         elif wants_temporal:
             write_mlp_head_v3(path, clf,
                               input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
+                              hidden_dim=hd, backbone_dim=1280,
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
@@ -6760,7 +6928,7 @@ def main():
         elif wants_whisper:
             write_mlp_head_v2(path, clf,
                               input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
+                              hidden_dim=hd, backbone_dim=1280,
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used,
@@ -6768,7 +6936,7 @@ def main():
         else:
             write_mlp_head_v1(path, clf,
                               input_dim=mlp_prod_in_dim,
-                              hidden_dim=32, backbone_dim=1280,
+                              hidden_dim=hd, backbone_dim=1280,
                               n_logo=n_logo_used,
                               n_audio=n_audio_used,
                               n_channel=n_chan_used)
@@ -6847,6 +7015,15 @@ def main():
                     # einer Golden-Differenz ueberhaupt Signal sein kann.
                     "seed": prod_seed_used,
                     "seed_spread": prod_seed_spread,
+                    # Welche Regel den ausgelieferten Kopf bestimmt hat.
+                    # "median-seed" bis 2026-08-26, "ensembleN" ab 08-27.
+                    # golden_bestwert filtert darauf: eine neue Auswahlregel
+                    # ist eine neue Messung. Fehlt der Schluessel, ist die
+                    # Zeile aelter als 08-27 und zaehlt als "median-seed".
+                    "select_rule": prod_select_rule,
+                    # Die Spanne, die die Auswahl NICHT sehen konnte: sie
+                    # entscheidet auf dem Testsatz, gemessen wird auf Golden.
+                    "seed_golden_spread": prod_golden_spread,
                     # Golden je Seed. seed_golden["0"] ist die Zahl, die die
                     # Auswahlregel vor dem 2026-08-09 gemeldet haette — ohne
                     # sie bricht die Reihe an diesem Datum unsichtbar.
@@ -6879,7 +7056,8 @@ def main():
         train_archive=args.train_archive,
         cand_pr=(metrics_smooth or {}).get("per_rec_iou") or {},
         champ_pr=(deployed_test_metrics or {}).get("per_rec_iou") or {},
-        hls_root=args.hls_root, ts=ts)
+        hls_root=args.hls_root, ts=ts,
+        select_rule=prod_select_rule)
 
     if deploy:
         if is_mlp_write:

@@ -2482,3 +2482,81 @@ verhungert (kein `--ocr-marker` in der Kette, keine Menschen-Review seit
 zwei Tagen, `0 angefasste Kanten`) — wartet auf die Entscheidung vom 26.08.
 Keine Serie reif, kein Platz frei, nichts eingereiht. Nebenbei: `auto-anchor`
 scheiterte an `api.github.com` (Netz), ohne Folgen für den Deploy.
+
+### 2026-08-27 — Seed-Ensemble statt Seed-Auswahl
+
+**Befund.** Über sechs Nächte lagen die drei Produktions-Seeds auf dem
+**Testsatz** im Mittel 0.004 auseinander, auf dem **Golden-Satz** aber
+0.015. Dreimal war der ausgelieferte Seed der auf Golden schlechteste,
+zuletzt zweimal in Folge:
+
+| Nacht | ausgeliefert (Golden) | bester Seed | verschenkt |
+|---|---|---|---|
+| 08-22 | 0.956 | 0.962 | 0.006 |
+| 08-23 | 0.953 | 0.953 | — |
+| 08-24 | 0.941 | 0.959 | **0.018** |
+| 08-25 | 0.960 | 0.960 | — |
+| 08-26 | 0.936 *(abgelehnt)* | 0.953 | **0.017** |
+| 08-27 | 0.948 | 0.963 | **0.015** |
+
+Im Mittel ~0.009 Golden pro Nacht, und die Ablehnung am 08-26 (0.936 gegen
+Boden 0.956) liegt vollständig innerhalb dieser Spanne — sie war also mit
+hoher Wahrscheinlichkeit Seed-Pech, kein schlechteres Modell.
+
+**Zweiter Befund beim Nachlesen des Codes.** Was ausgeliefert wird, war
+ohnehin keiner der drei bewerteten Köpfe: nach der Auswahl lief ein
+*vierter* Fit auf dem gesamten Korpus (`refitting MLP on all data`), und
+nur dessen `random_state` kam vom gewählten Seed. Golden meldete damit den
+Train-only-Kopf, `head.bin` enthielt ein anderes Modell. Die gemeldete Zahl
+gehörte zu keinem ausgelieferten Gewicht.
+
+**Warum nicht einfach den auf Golden besten Seed nehmen.** Golden ist genau
+deshalb der ehrliche Trend, weil nichts darauf selektiert (Leitplanke aus
+`golden_satz_erodiert_und_ist_jetzt_gepinnt`). Wer darauf auswählt,
+verbrennt den einzigen unabhängigen Maßstab. Und der eigentliche Punkt ist
+ein anderer: der Testsatz **kann die Seeds nicht unterscheiden** (0.003),
+obwohl sie real 0.015 auseinanderliegen. Gegen Varianz, die die Auswahl
+nicht sieht, hilft keine bessere Auswahl, sondern Mitteln.
+
+**Umsetzung.** `merge_mlp_ensemble()` legt k einlagige ReLU-MLPs zu **einem**
+Kopf zusammen, der exakt ihren Logit-Mittelwert rechnet:
+
+```
+W1 = [W1_0 | W1_1 | …]  (d, k·h)      b1 = [b1_0 ; b1_1 ; …]
+W2 = [W2_0 ; W2_1 ; …]/k              b2 = mittel(b2_i)
+```
+
+Das Ergebnis ist ein ganz normaler MLP1-v1-Kopf mit `hidden_dim = k·32` —
+**kein neues Dateiformat, keine Go-Änderung.** `nn.go` liest `hidden_dim`
+durchweg aus dem Header (390/497/598/703), nichts war auf 32 verdrahtet.
+Verdrahtet war die 32 nur auf der Schreibseite in Python (fünf Aufrufe in
+`_write_head`); die leiten sie jetzt aus `clf.coefs_[0].shape[1]` ab.
+
+Ensembled wird an **beiden** Stellen — Kandidat und All-Data-Refit. Nur eine
+umzustellen hieße wieder, eine Zahl zu melden, die zu keinem ausgelieferten
+Modell gehört.
+
+**Paritätsnachweis.** `scripts/make_mlp1_ensemble_parity_fixture.py` +
+`internal/signals/mlp1_ensemble_parity_test.go`: Fixture aus dem echten
+`merge_mlp_ensemble` + dem echten `write_mlp_head_v1`, Erwartungswerte aus
+den **Einzelköpfen** gerechnet (nicht aus dem Merge — sonst prüfte der Test
+seine eigene Abschrift), geladen über den Produktions-Loader. Prüft in einem
+Zug: Merge-Mathematik, Writer akzeptiert hidden 96, Go liest die Breite aus
+dem Header. Grün.
+
+**⚠️ Der Golden-Boden baut sich neu auf.** Das ändert, *was* `golden_median`
+misst — dieselbe Sorte stiller Neudefinition wie 08-09 (Seed 0 → mittlerer
+Seed) und 08-05 (form → hsmm), die beide Male die Reihe unsichtbar brachen.
+Deshalb steht `select_rule` jetzt in `golden-trend.jsonl` und
+`golden_bestwert()` filtert darauf, parallel zu `decoder`. Folge: in der
+ersten Ensemble-Nacht meldet der Boden „noch kein Bestwert" und schützt
+**nur noch das paarweise Head-to-head**. Gewollt, aber nicht gratis — die
+Latte ist nach ~3 Nächten wieder da.
+
+**Rückweg:** `--prod-select median` stellt das Verhalten vom 08-09..08-26
+her; der alte Boden liegt unter `select_rule: "median-seed"` unberührt
+daneben.
+
+**Offen:** ob 3 Seeds reichen. Die Ensemble-Varianz sinkt mit ~1/√k, aber
+jeder Seed kostet einen All-Data-Refit. Erst messen, wie stabil die
+Golden-Reihe mit k=3 wird, dann über k=5 reden.

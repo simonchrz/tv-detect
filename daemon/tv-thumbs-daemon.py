@@ -1995,8 +1995,18 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
             # cold-start shows. Run detect without speaker.
             return None
         if r.returncode != 0:
+            # ⚠️ TAIL, nicht Kopf. update-show-centroid.py loggt seinen
+            # Fortschritt nach stderr und faellt am ENDE um — die ersten 300
+            # Zeichen zeigten deshalb "discovering episodes of show='…'" und
+            # verschluckten den Traceback. Der Fehler stand ueber einen Monat
+            # lang 2166 Mal im Log und sah aus wie ein Slug-Problem, waehrend
+            # die Sprecher-Kennung still ausgefallen war. Fuer den
+            # Embedding-Zweig oben war genau diese Truncation schon einmal
+            # repariert worden; dieser Zweig blieb stehen. Wer eine
+            # Fehlerausgabe kuerzt, kuerzt das Ende weg, nicht den Anfang.
             print(f"  detect {uuid}: centroid build failed "
-                  f"(rc={r.returncode}): {r.stderr[:300]}", flush=True)
+                  f"(rc={r.returncode}):\n{(r.stderr or '')[-1500:]}",
+                  flush=True)
             return None
     except Exception as e:
         print(f"  detect {uuid}: centroid build err: {e}", flush=True)

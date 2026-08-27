@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import ssl
 import urllib.request
 from pathlib import Path
 
@@ -32,7 +33,31 @@ def slugify(s: str) -> str:
     return s.strip("-")
 
 
+# Das interne Gateway (Caddy) traegt ein selbstsigniertes Zertifikat. Ohne
+# eigenen Kontext scheitert JEDER Aufruf sofort an CERTIFICATE_VERIFY_FAILED
+# — und zwar an der allerersten Zeile von main(), also bevor irgendetwas
+# passiert.
+#
+# ⚠️ Genau daran ist die Sprecher-Kennung ueber einen Monat lang still
+# ausgefallen: der Aufrufer (tv-thumbs-daemon) uebergibt seit der
+# Caddy-Umstellung `--gateway https://raspberrypi5lan:8443`, dieses Skript
+# hatte aber nur den alten http-Vorgabewert im Kopf und keinen Kontext. Der
+# Daemon meldete `centroid build failed (rc=1): {stderr[:300]}` — und in den
+# ersten 300 Zeichen steht die FORTSCHRITTS-Zeile, nicht der Traceback. Der
+# Fehler stand da, jede Nacht, 2166 Mal, und sah aus wie ein Slug-Problem.
+# Dieselbe Kopf-statt-Ende-Truncation war fuer den Embedding-Zweig im Daemon
+# schon einmal repariert worden, fuer diesen Zweig nicht.
+_CTX = ssl.create_default_context()
+_CTX.check_hostname = False
+_CTX.verify_mode = ssl.CERT_NONE
+
+
 def http_json(url: str):
+    # context nur fuer https noetig; bei http ignoriert urlopen ihn ohnehin
+    # nicht — deshalb nur dort mitgeben.
+    if url.startswith("https://"):
+        with urllib.request.urlopen(url, timeout=15, context=_CTX) as r:
+            return json.loads(r.read())
     with urllib.request.urlopen(url, timeout=15) as r:
         return json.loads(r.read())
 

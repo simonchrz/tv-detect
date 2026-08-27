@@ -2793,3 +2793,93 @@ damit auch auf diesem Pfad weg.
    (= 10.2 min), das Gateway aber `duration_s=351.16` (= 5.9 min) bei
    324 MB Quelle. Faktor ~1.7 auseinander. Ob das eine Bedeutung hat, ist
    ungeprüft — als Notiz festgehalten, nicht als Befund.
+
+### 2026-08-27 — Sprecher-Kennung war über einen Monat tot (SSL + Truncation)
+
+Aufgefallen als Nebenbeobachtung beim Dump-Test, verfolgt auf Ansage.
+
+**Der Umlaut war ein Ablenkungsmanöver.** `abenteuer-leben-t-glich` ist kein
+Encoding-Fehler: `_slugify_show` macht `re.sub(r"[^a-z0-9]+", "-", …)`, das
+`ä` fällt raus — deterministisch, überall gleich, harmlos.
+
+**Der echte Fehler stand nie im Log, weil er abgeschnitten wurde:**
+
+```python
+print(f"… centroid build failed (rc={r.returncode}): {r.stderr[:300]}")
+```
+
+`update-show-centroid.py` loggt Fortschritt nach stderr und fällt am **Ende**
+um. Die ersten 300 Zeichen zeigen also die Fortschrittszeile und
+verschlucken den Traceback. Exakt dieselbe Kopf-statt-Ende-Kürzung war für
+den Embedding-Zweig zwei Funktionen höher schon einmal repariert worden —
+dieser Zweig blieb stehen.
+
+Direkt ausgeführt:
+
+```
+urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+  certificate verify failed: unable to get local issuer certificate>
+```
+
+`http_json()` ruft `urlopen(url, timeout=15)` **ohne SSL-Kontext**. Der
+Daemon übergibt seit der Caddy-Umstellung `--gateway
+https://raspberrypi5lan:8443` (selbstsigniert). Das Skript stirbt an der
+allerersten Zeile von `main()`.
+
+**Blast radius:**
+
+```
+centroid build failed        : 2166 Mal, ab 2026-07-26 durchgehend
+speaker fingerprint engaged  : letztes Mal VOR dem ersten Fehler
+```
+
+Jede Sendung betroffen, nicht eine: `das-perfekte-dinner` 144×,
+`the-big-bang-theory` 140×, `mein-lokal-dein-lokal` 112×, `galileo` 102×, …
+Ein Produktionssignal (`SPEAKER_WEIGHT=0.3`) war **über einen Monat still
+ausgefallen**, und das Log meldete es 2166 Mal — unlesbar.
+
+**Beide Hälften repariert:** SSL-Kontext in `update-show-centroid.py`,
+Truncation im Daemon auf `stderr[-1500:]`. AST-Sweep über **alle**
+`urlopen`-Aufrufe im Repo: 12 ohne Kontext, die übrigen 11 zeigen auf
+`http://`-Vorgabewerte und sind nicht betroffen.
+
+**Verifiziert, nicht behauptet:**
+
+```
+update-show-centroid.py … --gateway https://…  → rc=0
+  usable episodes: 4 · total: 9231 show windows · wrote …npz
+08-27 14:42:06  detect dvr-kabel-eins-…: speaker fingerprint engaged (weight=0.3)
+```
+
+Erste Aktivierung seit dem 26.07.
+
+**Lehre (die dritte dieser Art in zwei Tagen):** wer eine Fehlerausgabe
+kürzt, kürzt das **Ende** weg, nicht den Anfang. Und ein Fehler, der 2166
+Mal im Log steht, ist nicht deshalb gesehen worden.
+
+### 2026-08-27 — Punkt 2 (Dauer-Diskrepanz): Fehlalarm, aufgelöst
+
+Der von mir gemeldete Faktor ~1.7 zwischen Dump und Gateway ist **kein**
+systemisches Problem.
+
+```
+ffprobe   : duration = 351.4 s            ← Gateway hat recht
+PTS-Spanne: 351.0 s, 17542 Pakete = 50.0 fps
+Dump      : fps=25, frame_count=15353  → 614 s
+Grid      : duration = 4302 s (GEPLANT, nicht aufgenommen)
+```
+
+Über **alle 133** Dumps mit bekannter Ist-Dauer: **132 mit Faktor 1.00**,
+genau einer bei 1.75 — diese Aufnahme. Sie ist schlicht defekt: ffprobe
+wirft durchgehend `non-existing PPS 0 referenced` / `no frame!`, der Decoder
+verliert ~12 % der Pakete, Bild-Buchhaltung und Container-Dauer laufen
+auseinander. Sie hat 8 % ihrer geplanten Länge und liefert 0 Blöcke. Als
+Testkandidat gewählt, *weil* sie klein war — klein war sie, weil sie kaputt
+ist.
+
+**Und die naheliegende Alarmmeldung wäre falsch gewesen:** 90 von 286
+Quellen sind kürzer als ihr geplantes Fenster, aber das ist keine
+Truncation. `duration` im Grid ist die geplante Aufnahmezeit inkl. adaptivem
+Padding. Wo der Pi die Quelle noch hat, stimmen lokale und Pi-Größe
+**byteweise** (97084704 = 97084704, 139232612 = 139232612). Der Cache
+spiegelt den Pi korrekt; die Differenz liegt zwischen Plan und Aufnahme.

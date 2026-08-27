@@ -2722,3 +2722,74 @@ Agent-Review), und die trifft nicht nur diese zwei Registrierungen, sondern
 
 Bis dahin: **O14 = NICHT ERFÜLLT, geschlossen.** Der Schattenlauf läuft für
 O13 weiter, sammelt aber nachweislich nur Agenten-Kanten.
+
+### 2026-08-27 — Kette geschlossen: Signal-Dump bei JEDEM Detect
+
+Entscheidung Simon: Weg 1 aus dem Eintrag oben. Umgesetzt in
+`daemon/tv-thumbs-daemon.py`.
+
+**Die vorgeschlagene „schlanke Form" war nicht baubar.** Der Dump lässt sich
+nicht am Review-Zeitpunkt nachziehen: erzeugen kann ihn nur der Detect, der
+auch die `ads.json` schreibt. Ein nachträglicher Redetect schriebe die
+`ads.json` **unter dem Reviewer** neu — genau die Falle, vor der
+`_dumps_besorgen` in `agent-review.py` selbst warnt. Also immer dumpen.
+
+**Die alte Kostenrechnung war zwei Größenordnungen veraltet.** „301 MB/Tag"
+stammt aus einer Zeit mit ~107 Detects täglich. Gemessen 08-24/25/26:
+**6 / 6 / 8** Detects. Bei 6.2 MB Schnitt sind das **~50 MB/Tag**; das
+Verzeichnis steht bei 1.0 GB, die Platte hat 403 GB frei. Eine Zahl, die
+eine Entscheidung trägt, muss neu gemessen werden, bevor sie sie noch einmal
+trägt.
+
+Umgesetzt:
+
+* `--emit-signals-json` bei **jedem** Detect. `.want` bleibt gültig und
+  **pinnt** den Dump jetzt gegen den Verfall.
+* `_maybe_gc_signal_dumps()` alle 6 h — Verfall 30 d, Deckel 20 GB (beides
+  per Env). Der Deckel ist keine Sparmaßnahme, sondern eine Bremse für eine
+  erneute Massen-Redetect-Kampagne.
+* Drei Schutzregeln, alle aus vorhandenen Unfällen abgeleitet: `.want`-Pin;
+  **nie ein reviewtes Paar** (über `/recording/<uuid>/ads` → `edited`, nicht
+  über `cat` auf den Cache); **bei stummem Gateway Zyklus abbrechen** statt
+  weiterlöschen (Regel des orphan-GC; ihr Fehlen kostete einmal 230 Labels).
+
+Simulation vor dem Scharfschalten: **0 Löschungen** (1.0 GB von 20 GB, zwei
+Dumps älter als 30 d, beide gepinnt).
+
+**Nachweis, nicht Behauptung.** Redetect auf `dvr-kabel-eins-1780066320`
+(unreviewt, nicht im Golden-Satz, **ohne** `.want`):
+
+```
+emit-signals/dvr-kabel-eins-1780066320.json   1 100 200 B
+  nn_confs   list len=15353
+  logo_confs list len=15353
+  ocr_funde  None      (= --ocr-marker nicht gesetzt, O13-Hälfte offen)
+```
+
+Genau das, was O14 braucht, ohne jeden Marker. Kette geschlossen. Der
+Cutlist-Ausgang war identisch zum Lauf vom 31.07. (0 Blöcke) — die Flag
+schreibt nur eine Seitendatei, wie dokumentiert.
+
+`kanten-schatten.py` bleibt unverändert: sein Filter ließ Menschen-Labels
+immer zu, sie kamen nur nie bis dorthin. `AKTIVIERUNG` bleibt ebenfalls
+stehen — die Prospektivität ist der Wert der Registrierung.
+
+Nebeneffekt: `agent-review.py` stößt einen Redetect nur an, wenn ein Dump
+**fehlt**. Da nun immer einer existiert, entfällt der Redetect bei
+Agent-Reviews — die „ads.json verschiebt sich unter dem Review"-Gefahr ist
+damit auch auf diesem Pfad weg.
+
+**Offen für O13:** `--ocr-marker` läuft weiterhin nicht im regulären Detect,
+`ocr_funde` bleibt also leer. Die O13-Hälfte der Kette ist nicht geschlossen.
+
+**Zwei Beobachtungen am Rande, nicht verfolgt:**
+
+1. `centroid build failed (rc=1): discovering episodes of
+   show='abenteuer-leben-t-glich'` — der Umlaut in „Abenteuer Leben
+   täglich" ist zu `t-glich` verstümmelt. Tritt seit mindestens 31.07. bei
+   jedem Detect dieser Sendung auf und lässt die Sprecher-Kennung still
+   ausfallen. Riecht nach `pi_python_encoding_trap`.
+2. Für dieselbe Aufnahme meldet der Dump `fps=25, frame_count=15353`
+   (= 10.2 min), das Gateway aber `duration_s=351.16` (= 5.9 min) bei
+   324 MB Quelle. Faktor ~1.7 auseinander. Ob das eine Bedeutung hat, ist
+   ungeprüft — als Notiz festgehalten, nicht als Befund.

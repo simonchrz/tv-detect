@@ -522,6 +522,110 @@ def _maybe_evict_source_cache():
         except Exception: pass
 
 
+# ── Signal-Dumps: seit 2026-08-27 IMMER, mit Verfall ────────────────────
+# Der Dump (`--emit-signals-json`) war opt-in per `<uuid>.want`, und nur
+# `agent-review.py` setzt diesen Marker. Folge: der Kanten-Schattenlauf
+# konnte NUR Agenten-Labels sehen — in 11 Tagen kamen 22 Agent-Reviews
+# hinein und die eine Menschen-Review wurde mechanisch ausgesperrt, weil
+# fuer sie nie ein Dump entstand. Damit mass jedes Kanten-Experiment gegen
+# eine Label-Quelle, die laut Memory `agenten_review_frage_entscheidet`
+# genau bei GRENZEN unzuverlaessig ist (Bilder 4/4 richtig, Grenzen 3/3
+# falsch). O13 und O14 sind beide daran gestorben.
+#
+# ⚠️ Nachtraeglich geht es nicht: einen Dump kann nur der Detect erzeugen,
+# der auch die ads.json schreibt. Ihn spaeter per Redetect nachzuziehen
+# wuerde die ads.json neu schreiben — der Reviewer haette dann gegen
+# Bloecke geurteilt, die es danach nicht mehr gibt (dieselbe Falle, vor der
+# `_dumps_besorgen` in agent-review.py warnt). Also: immer dumpen.
+#
+# Die historische Begruendung fuer opt-in ("301 MB am Tag") gilt nicht mehr.
+# Sie stammt aus einer Zeit mit ~107 Detects taeglich; gemessen am
+# 2026-08-24..26 sind es **6-8**. Bei 6.2 MB Schnitt sind das ~50 MB/Tag.
+# Der Deckel unten ist deshalb kein Sparzwang, sondern eine Bremse fuer den
+# Fall, dass wieder eine Massen-Redetect-Kampagne laeuft.
+SIGNAL_DUMP_MAX_GB = int(os.environ.get("SIGNAL_DUMP_MAX_GB", "20"))
+SIGNAL_DUMP_KEEP_DAYS = int(os.environ.get("SIGNAL_DUMP_KEEP_DAYS", "30"))
+SIGNAL_DUMP_GC_INTERVAL_S = 6 * 3600
+_last_signal_dump_gc = 0.0
+
+
+def _dump_ist_reviewt(uuid):
+    """Hat diese Aufnahme ein Nutzer-Label? None = nicht feststellbar.
+
+    ⚠️ Ueber den Endpunkt, nicht ueber eine Datei — ein `cat` auf die
+    Gateway-Caches liefert veraltete Staende (Memory
+    `never_cat_gateway_caches`). None (Gateway stumm) heisst NICHT
+    "unreviewt": in dem Fall wird nichts geloescht.
+    """
+    try:
+        with urllib.request.urlopen(
+                f"{GATEWAY}/recording/{uuid}/ads", timeout=6, context=CTX) as r:
+            return bool(json.loads(r.read().decode()).get("edited"))
+    except urllib.error.HTTPError as e:
+        return False if e.code == 404 else None
+    except Exception:
+        return None
+
+
+def _maybe_gc_signal_dumps():
+    """Alte Signal-Dumps verfallen lassen — aber NIE ein reviewtes Paar.
+
+    Ein Dump ohne die zugehoerige ads_user.json ist ersetzbar (neu
+    detecten). Ein Dump MIT Review ist es nicht: die beiden zusammen sind
+    die einzige Kanten-Wahrheit, die der Schattenlauf je bekommt, und ein
+    Redetect wuerde die ads.json darunter veraendern. Das ist derselbe
+    Schutz, den `cleanup-orphans` ueber ads_user.json hat — und dessen
+    Fehlen 2026 schon einmal 230 Labels gekostet hat
+    (`migrator_uuid_format_mismatch_caused_gc_purge`).
+    """
+    global _last_signal_dump_gc
+    now = time.time()
+    if now - _last_signal_dump_gc < SIGNAL_DUMP_GC_INTERVAL_S:
+        return
+    _last_signal_dump_gc = now
+    d = MODEL_CACHE / "emit-signals"
+    if not d.is_dir():
+        return
+    try:
+        files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return
+    total = sum(f.stat().st_size for f in files)
+    cap = SIGNAL_DUMP_MAX_GB * 1024 ** 3
+    alt = now - SIGNAL_DUMP_KEEP_DAYS * 86400
+    weg = befreit = 0
+    for f in files:
+        zu_alt = f.stat().st_mtime < alt
+        ueber_deckel = total > cap
+        if not (zu_alt or ueber_deckel):
+            break            # nach mtime sortiert — ab hier ist alles jung
+        u = f.stem
+        if (d / f"{u}.want").is_file():
+            continue         # angepinnt (agent-review wartet evtl. darauf)
+        rev = _dump_ist_reviewt(u)
+        if rev is None:
+            # Gateway stumm — im Zweifel nichts loeschen. Dieselbe Regel
+            # wie beim orphan-GC: ein GC, der bei unerreichbarem Pi
+            # weitermacht, loescht irgendwann die letzte Kopie.
+            print("  signal-dump-gc: Gateway stumm — Zyklus abgebrochen",
+                  flush=True)
+            return
+        if rev:
+            continue         # reviewt = unersetzliches Paar
+        sz = f.stat().st_size
+        try:
+            f.unlink()
+            total -= sz
+            weg += 1
+            befreit += sz
+        except Exception:
+            pass
+    if weg:
+        print(f"  signal-dump-gc: {weg} Dump(s) verfallen "
+              f"({befreit / 1048576:.0f} MB), {total / 1073741824:.1f} GB bleiben",
+              flush=True)
+
+
 _last_orphan_gc = 0.0
 ORPHAN_GC_INTERVAL_S = 3600  # once per hour
 # Quarantine grace before deleting a cached .ts that's gone from the Pi's
@@ -2327,9 +2431,21 @@ def process_detect(uuid):
     # the directory alone, which meant every detect dumped ~2.8 MB — 301 MB in
     # a day and still growing, for a measurement that needed a dozen files.
     # The cutlist is identical either way; the flag only writes a side file.
-    emit_dir = Path.home() / ".cache" / "tv-detect-daemon" / "emit-signals"
-    if (emit_dir / f"{uuid}.want").is_file():
+    # 2026-08-27: IMMER dumpen, nicht mehr nur auf `.want`. Begruendung und
+    # Kostenrechnung bei SIGNAL_DUMP_MAX_GB oben. `.want` bleibt gueltig, hat
+    # jetzt aber eine andere Rolle: es PINNT den Dump gegen den Verfall
+    # (agent-review.py wartet darauf, dass die .json erscheint — das
+    # funktioniert unveraendert weiter, nur schneller, weil sie meist schon
+    # da ist).
+    emit_dir = MODEL_CACHE / "emit-signals"
+    try:
+        emit_dir.mkdir(parents=True, exist_ok=True)
         cmd += ["--emit-signals-json", str(emit_dir / f"{uuid}.json")]
+    except Exception as e:
+        # Ein nicht anlegbares Dump-Verzeichnis darf den Detect nicht
+        # aufhalten — die Cutlist ist mit und ohne Flag identisch.
+        print(f"  detect {uuid}: emit-signals dir nicht nutzbar: {e}",
+              flush=True)
 
     cmd += ["--output", "cutlist", src_url]
     # Run detect below an on-demand HLS remux in CPU priority (children
@@ -2638,6 +2754,7 @@ def main():
     while True:
         cycle += 1
         _maybe_gc_orphans()
+        _maybe_gc_signal_dumps()
         _maybe_reap_autosched()
         _gc_stuck_in_flight()
         thumbs = hls = detect = detect_low = []

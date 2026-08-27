@@ -2467,3 +2467,18 @@ Produktion und Kosten betrifft: `--ocr-marker` für alle Aufnahmen kostet
 einmal zurückgenommen. Entscheidung (Simon): Kette schließen (Marker +
 Dump gezielt für neue Menschen-Reviews) oder O13 als „nicht messbar"
 schließen. Bis dahin steht die Serie, nicht die Frage.
+
+### Nachtrag 2026-08-27 (Tagesdurchgang) — Wächter-Fix greift, sonst nichts
+
+Prüfpunkt für `81ba547`: `Merkmalsbreite: 22 → 10 Aufnahme(n) ohne
+Logo-Spalte`, `extracting 19 new recording(s)` — 12 der 22 sind neu
+extrahiert, exakt die Simulation von gestern. Die 10 übrigen (`.npy 1281 →
+gebaut 1281`) sind die ohne Template bzw. ohne `.ts`; für sie gibt es auf
+diesem Pfad nichts zu extrahieren, der Sentinel deckt sie. Erledigt.
+
+Sonst: Audit exit 0, Golden-Zeile mit `set_hash c8727e8266a8` / `hsmm`,
+Deploy per Head-to-Head (Δ −0.000 auf 108 Aufnahmen). O13 unverändert
+verhungert (kein `--ocr-marker` in der Kette, keine Menschen-Review seit
+zwei Tagen, `0 angefasste Kanten`) — wartet auf die Entscheidung vom 26.08.
+Keine Serie reif, kein Platz frei, nichts eingereiht. Nebenbei: `auto-anchor`
+scheiterte an `api.github.com` (Netz), ohne Folgen für den Deploy.

@@ -2618,3 +2618,107 @@ Quelle überhaupt noch existiert.)
 
 Der `⚠`-Zähler bleibt damit bei 9 — das ist der **Endzustand**, kein
 Rückstand. Der Sentinel deckt alle neun korrekt ab.
+
+### 2026-08-27 — O14: kein Hunger, ein Urteil. Und ein fauler Maßstab.
+
+Nachgesehen, weil die O14-Zahlen zwei Nächte in Folge identisch waren.
+**Die Diagnose „O14 verhungert" war falsch.** O14 hat 120 Kanten aus 32
+Aufnahmen — das **Doppelte** der registrierten Mindestmenge (60/20). Es ist
+auswertbar, ausgewertet, und das Urteil steht:
+
+```
+[1] Median 1.0s -> 1.5s (-0.5s)      VERFEHLT (>= 0.5s)
+[2] <=2s 57% -> 54% (-2 Punkte)      VERFEHLT (>= 3)
+[3] Gesamtfehler 933s -> 961s (+3 %) VERFEHLT (<= 0 %)
+gewaehlt: {'nn': 38, 'logo': 81, 'keine': 1}
+==> O14 NICHT ERFUELLT
+```
+
+Schlechter als die Vorhersage („NICHT ERFÜLLT, **knapp**" — Bedingung 1
+sollte halten). Tatsächlich gehen [1] und [2] in die **falsche** Richtung.
+**O14 ist damit erledigt und gehört auf den Friedhof.**
+
+#### Warum die Zahlen still stehen
+
+Von 286 Aufnahmen im Snapshot fallen sie so heraus:
+
+| Filter | n |
+|---|---|
+| schon im Ledger | 21 |
+| kein `ads_user.json` | 28 |
+| Label-Quelle `auto` | 88 |
+| **vor der Aktivierung reviewt** | **147** |
+| kein Signal-Dump | 2 |
+| **würde aufgenommen** | **0** |
+
+Die 147 sind der Preis der Prospektivität und unverrückbar. Der Rest ist
+Durchsatz: seit Aktivierung gab es **23 Reviews in 11 Tagen (2.1/Tag)**.
+Kein Defekt — die Quelle ist einfach dünn.
+
+#### ⚠️ Der eigentliche Fund: der Maßstab taugt nicht für Kanten
+
+`Label-Herkunft: {'agent': 120}` — **alle** 120 Kanten stammen aus
+Agenten-Reviews, keine einzige von einem Menschen. Das ist kein Zufall,
+sondern **mechanisch erzwungen**:
+
+* Der Signal-Dump ist Aufnahmebedingung.
+* `.want` (= der Dump) setzt **nur `agent-review.py`**.
+* Seit Aktivierung: 22 Agent-Reviews (21 mit Dump), **1 Menschen-Review
+  (0 mit Dump)**.
+
+Die einzige Label-Quelle, der man bei Kanten trauen würde, ist also
+strukturell ausgeschlossen — und Memory `agenten_review_frage_entscheidet`
+sagt genau dazu: Agenten klassifizieren Bilder zuverlässig (4/4), **Grenzen
+bekommen sie falsch (3/3)**.
+
+Dazu kommt ein Echo-Effekt in den Daten selbst:
+
+```
+Basisfehler der Produktion gegen die "Wahrheit":
+   p25   0.00s    exakt 0.00s : 54 von 120  (45 %)
+   p50   1.00s    <= 2.0s     : 68  (57 %)
+   p75  10.00s    >  10s      : 29  (24 %)
+   p90  30.00s
+```
+
+**45 % der Kanten haben exakt 0.00 s Fehler** — der Agent hat die
+Produktionsgrenze unverändert übernommen. Der Median von 1.0 s ist damit
+kein Maß für die Kantenqualität, sondern ein Artefakt dieser Null-Wolke.
+Bedingung [1] („Median sinkt um ≥0.5 s") ist auf so einer Verteilung
+praktisch unerreichbar: der Median sitzt in der Null-Wolke, jede Regel, die
+Kanten überhaupt bewegt, kann ihn nur heben.
+
+#### Was die post-hoc-Aufteilung zeigt — und was sie NICHT umstößt
+
+Auf den 66 Kanten, die der Agent tatsächlich verschoben hat:
+Median 6.50 s → **4.71 s**, Summe 933 s → **894 s (−4 %)**, 46 besser gegen
+20 schlechter. Auf den 54 unberührten: 0 s → 68 s, reiner Verlust.
+
+**Das kippt O14 nicht, und es darf es nicht.** Zwei Lesarten sind möglich,
+und die konservative ist genauso plausibel: entweder sind die 54 Nullen
+Kontamination — oder die Produktion hat diese Kanten wirklich getroffen,
+und eine Regel, die 54 richtige Kanten beschädigt, um 66 falsche zu
+verbessern, ist genau das, was Bedingung [3] abfangen soll. Im Betrieb
+liefe die Regel über **alle** Kanten, nicht über die vorsortierten. Ohne ein
+unabhängiges Signal für „diese Kante ist verdächtig" ist der Gewinn nicht
+abrufbar. Eine gegatete Variante wäre eine **andere Regel** und bräuchte
+eine eigene Registrierung — nicht eine Neulesung dieser hier. §3ad-Muster:
+genau so sind O9–O12 gestorben.
+
+#### Konsequenz — Entscheidung offen (Simon)
+
+O13 und O14 hängen an **derselben** kaputten Kette (Dump nur bei
+Agent-Review), und die trifft nicht nur diese zwei Registrierungen, sondern
+**jedes künftige Kanten-Experiment**. Drei Wege:
+
+1. **Kette schließen** — Marker + Dump auch bei Menschen-Reviews. Erst
+   danach hat ein Kanten-Experiment einen belastbaren Maßstab. Kosten:
+   Produktionspfad + Speicher (Dumps für alle waren wegen 301 MB/Tag schon
+   einmal zurückgenommen).
+2. **Kanten-Experimente als „nicht messbar" schließen**, solange der
+   Maßstab Agenten-Labels sind. Ehrlich, kostet nichts, verzichtet aber auf
+   die Frage.
+3. Nur O13/O14 schließen und die Kette später angehen.
+
+Bis dahin: **O14 = NICHT ERFÜLLT, geschlossen.** Der Schattenlauf läuft für
+O13 weiter, sammelt aber nachweislich nur Agenten-Kanten.

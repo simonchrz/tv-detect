@@ -2557,6 +2557,19 @@ Latte ist nach ~3 Nächten wieder da.
 her; der alte Boden liegt unter `select_rule: "median-seed"` unberührt
 daneben.
 
+**⚠️ Einschränkung, gefunden im Probelauf derselben Stunde.** Die
+Begründung oben — „der Testsatz kann die Seeds nicht unterscheiden (0.003),
+Golden schon (0.015)" — hält **nicht** als stabile Eigenschaft. Im
+isolierten Lauf standen die Spannen genau umgekehrt: Testsatz 0.022, Golden
+0.003. Stabil ist nur, dass **beide** Maße streuen; welches gerade stärker
+streut, ist selbst Zufall. Das Ensemble bleibt richtig, aber mit der
+bescheideneren Begründung: es schlägt nicht die glücklichste Ziehung
+(Golden 0.949 gegen den besten Seed 0.951), es entfernt die unglückliche —
+gegen die bisherige Median-Regel stand es auf beiden Maßen besser
+(0.951/0.949 statt 0.942/0.948). Wer die Sechs-Nächte-Tabelle als Beleg für
+„Testsatz blind, Golden scharf" liest, liest zu viel hinein; sie belegt nur
+die Streuung selbst.
+
 **Offen:** ob 3 Seeds reichen. Die Ensemble-Varianz sinkt mit ~1/√k, aber
 jeder Seed kostet einen All-Data-Refit. Erst messen, wie stabil die
 Golden-Reihe mit k=3 wird, dann über k=5 reden.

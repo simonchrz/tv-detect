@@ -2573,3 +2573,48 @@ die Streuung selbst.
 **Offen:** ob 3 Seeds reichen. Die Ensemble-Varianz sinkt mit ~1/√k, aber
 jeder Seed kostet einen All-Data-Refit. Erst messen, wie stabil die
 Golden-Reihe mit k=3 wird, dann über k=5 reden.
+
+### 2026-08-27 — die restlichen 9 `⚠`-Aufnahmen: abgeschlossen, nicht offen
+
+Nach dem Wächter-Fix (`81ba547`) blieben 9 Aufnahmen mit `.npy 1281 →
+gebaut 1281`. Vollständig durchgezählt, statt weiter „Restposten" zu heißen:
+
+| uuid | Slug-Template | `.ts` | per-uuid-Template | Ergebnis |
+|---|---|---|---|---|
+| dvr-anixe-1780806600 | — | ja | **139x62 = 2.1 %** | **rettbar** |
+| dvr-anixe-1781518500 | — | nein | — | doppelt blockiert |
+| dvr-deluxe-music-1781470800 | — | nein | — | doppelt blockiert |
+| dvr-disney-channel-1780856100 | ja | nein | — | **dauerhaft weg** |
+| dvr-one-hd-1781285100 | — | ja | 1186x719 = 92 % | entartet |
+| dvr-prosieben-maxx-1778620892 | — | nein | — | doppelt blockiert |
+| dvr-prosieben-maxx-1778622221 | — | ja | 710x575 = 98 % | entartet |
+| dvr-sat-1-gold-1778649242 | ja | nein | — | **dauerhaft weg** |
+| dvr-vox-1780263600 | ja | nein | — | **dauerhaft weg** |
+
+**Die drei „dauerhaft weg" sind in allen drei Speichern fort** — Pi-`/source`
+404, kein Mac-Cache, kein `_rec_`-Verzeichnis. Alle drei stehen nicht mehr
+im DVR-Grid: **Serien-Retention** hat sie planmäßig geräumt (5 neueste +
+>14 d), danach `cleanup-orphans` das Verzeichnis und orphan-GC den Cache.
+Kein Vorfall, ein Entwurfsergebnis — dasselbe Muster wie in
+`tv_detect_cohort_trust_archive_gap`. Übrig sind nur die eingefrorenen
+Merkmale. `/api/integrity` meldet `status: ok`, `dual_copy_at_risk: 0` —
+kein laufendes Risiko.
+
+**⚠️ Messfehler unterwegs, der fast eine falsche Antwort ergeben hätte:**
+`/recording/<uuid>/hls/index.m3u8` antwortet mit „404 page not found" — das
+ist ein *falscher Pfad*, kein fehlendes VOD. Erst die Gegenprobe mit einer
+Aufnahme, die nachweislich ein VOD hat (`dvr-one-hd-1781285100`, 551
+Segmente), hat es aufgedeckt; die belastbare Prüfung lief per ssh gegen
+`/mnt/nvme/tv/hls/_rec_*`. Regel: eine Verfügbarkeitsprüfung ohne
+Positiv-Kontrolle misst den Endpunkt, nicht den Bestand.
+
+**Konsequenz für die per-uuid-Templates (Punkt „Offen" vom 26.08.):
+geschlossen, wird nicht gebaut.** Die Kreuzung von Template-Verfügbarkeit
+mit Quell-Verfügbarkeit lässt genau **eine** Aufnahme von 663 übrig. Eine
+Flächenschranke plus Ladepfad für einen einzigen Datensatz ist die
+Mechanik nicht wert. (Die Zahl „rettet 4 von 7", die ich vorher genannt
+hatte, war falsch: sie zählte Templates, ohne zu prüfen, ob die zugehörige
+Quelle überhaupt noch existiert.)
+
+Der `⚠`-Zähler bleibt damit bei 9 — das ist der **Endzustand**, kein
+Rückstand. Der Sentinel deckt alle neun korrekt ab.

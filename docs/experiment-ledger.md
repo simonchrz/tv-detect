@@ -2342,6 +2342,7 @@ Grund, der DIESE Serie entwertet, nicht nur die alte.
 | Deinterlace als Detect-Fix für comedy-central | **falsche Spur** | 2026-08 | NN-Signal ist dort gut (Trennung 0.646); 0.30 heilt das nicht. |
 | Decoder-Sweeps, per-Show-Config, Label-Korrekturen als Hebel auf 0.915 | **ausgereizt** | 2026-08 | Einzelmessungen stehen, die Kanal-These dahinter ist widerlegt. |
 | Detect-Fallback auf dem Pi | **per Design aus** | — | Pi5 ist always-on-Transport, CPU/ML läuft auf dem Mac. |
+| Flankenauswahl nach Signal (nn/logo je Kante) als Kanten-Nachbearbeitung | **NICHT ERFÜLLT** | 2026-08-27 (O14) | 120 Kanten / 32 Aufnahmen, alle drei Bedingungen verfehlt, [1] und [2] in die falsche Richtung. Maßstab war zu 100 % Agenten-Label mit 45 % Null-Echo — eine gegatete Variante wäre eine ANDERE Regel und braucht erst einen Maßstab mit Menschen-Kanten (Kette: Dump seit 08-27 bei jedem Detect, `--ocr-marker` fehlt noch). Details: `o14-flankenauswahl-preregistration.md`, §3ak, Nachtrag 2026-08-27. |
 | Kontextspalten (voller MLP5-Kopf) als Hebel auf den Kantenschwanz | **NICHT ERFÜLLT** | 2026-08-18 (O16) | Eine Nacht voller Kopf, registriert: Anteil >10 s unverändert (Ziel −5 pp), gepaarte Replikation identisch. Der Kopf sieht an den schlechten Kanten etwas mehr NN-Amplitude (0.56→0.68), der Decoder macht daraus keine bessere Kante. Wiedervorlage nur über **Bildinhalt** (Auflösung, Logo-Kanal, OCR), eigens registriert — nicht erneut über Kontextspalten. Details: `o16-voller-kopf-preregistration.md`. |
 
 ## 5. Leitplanken
@@ -2883,3 +2884,26 @@ Truncation. `duration` im Grid ist die geplante Aufnahmezeit inkl. adaptivem
 Padding. Wo der Pi die Quelle noch hat, stimmen lokale und Pi-Größe
 **byteweise** (97084704 = 97084704, 139232612 = 139232612). Der Cache
 spiegelt den Pi korrekt; die Differenz liegt zwischen Plan und Aufnahme.
+
+### Nachtrag 2026-08-28 (Tagesdurchgang) — erste Ensemble-Nacht, Sensor nachgezogen
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`select_rule ensemble3`). Deploy per Head-to-Head (Δ +0.000 auf 108, 12/3),
+Kopf `hidden 96` lokal wie auf dem Pi (493 096 B, `head.gate.bin` ebenfalls
+Ensemble → beide Seiten des Head-to-Head ehrlich). Golden 0.959 gegen
+Einzel-Seeds 0.961/0.950/0.955 — das Ensemble entfernt die unglückliche
+Ziehung, schlägt die glücklichste nicht, wie am 27.08. vorhergesagt. Der
+Boden ist wie angekündigt leer und baut sich neu auf; **kein** Vergleich
+mit den Werten bis 08-27 (andere Auswahlregel, R1).
+
+**Defekt im Sensor, nicht im Gate:** `loop-status.py` filterte den Boden
+nicht nach `select_rule` und meldete deshalb „Boden 0.9557, ⚠ über dem
+Champion (O3)", während das Gate „noch kein Bestwert" sagte — genau die
+Abweichung, vor der der Kommentar an der Stelle warnt. Filter ergänzt,
+Sensor meldet jetzt dasselbe wie das Gate.
+
+O14 in die Friedhofs-Tabelle nachgetragen (Urteil vom 27.08.). O13
+unverändert verhungert (`0 angefasste Kanten`; `--ocr-marker` weiterhin
+nicht in der Kette, Entscheidung Simon vom 26.08. offen). Keine Serie mit
+Regelblock läuft, kein Platz frei, nichts eingereiht — Warteschlange §3a
+ist leer, §3b nennt keinen registrierbaren Kandidaten.

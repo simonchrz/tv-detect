@@ -145,11 +145,22 @@ def main():
             # geschrieben, sonst ist der Boden bei einer frischen Epoche der
             # heutige Wert selbst ("zweitbester von 1 Tagen").
             ts_jetzt = gt[-1].get("ts")
+            # select_rule gehoert ebenfalls in den Filter (Seed-Ensemble seit
+            # 2026-08-27): golden_bestwert() im Nightly filtert darauf, und
+            # ohne den Filter meldete dieser Sensor am 2026-08-28 einen Boden
+            # (0.9557, alte Regel) samt O3-Sperre, waehrend das Gate "noch
+            # kein Bestwert" sagte.
+            regel_jetzt = gt[-1].get("select_rule") or "median-seed"
             passend = [e for e in deployt
                        if e.get("set_hash") == hash_jetzt
                        and e.get("decoder") == dec_jetzt
                        and e.get("label_hash") == lab_jetzt
+                       and (e.get("select_rule") or "median-seed") == regel_jetzt
                        and e.get("ts") != ts_jetzt]
+            if not passend:
+                print(f"  Boden: noch kein Bestwert fuer diesen Satz/Decoder "
+                      f"unter Auswahl {regel_jetzt} — baut sich neu auf, "
+                      f"bis dahin schuetzt nur das Head-to-Head.")
             if passend:
                 # MUSS dieselbe Rechnung sein wie golden_bestwert() in
                 # train-head.py: hoechster Wert, der mindestens zweimal
@@ -165,7 +176,8 @@ def main():
                 best = sortiert[1] if len(sortiert) >= 3 else sortiert[0]
                 champ = passend[-1]
                 print(f"  Boden {best['golden_median']} ({best['ts'][:8]}, "
-                      f"zweitbester von {len(sortiert)} Tagen), "
+                      f"zweitbester von {len(sortiert)} Tagen, "
+                      f"Auswahl {regel_jetzt}), "
                       f"Champion {champ['golden_median']} "
                       f"({champ['ts'][:8]})")
                 if champ["golden_median"] < best["golden_median"]:

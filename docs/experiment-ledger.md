@@ -2907,3 +2907,74 @@ unverändert verhungert (`0 angefasste Kanten`; `--ocr-marker` weiterhin
 nicht in der Kette, Entscheidung Simon vom 26.08. offen). Keine Serie mit
 Regelblock läuft, kein Platz frei, nichts eingereiht — Warteschlange §3a
 ist leer, §3b nennt keinen registrierbaren Kandidaten.
+
+### 2026-08-28 — Erste scharfe Ensemble-Nacht + Sprecher-Kennung: zweiter Halt
+
+**Ensemble, Lauf 1 scharf.** Alles wie im Probelauf:
+
+```
+ENSEMBLE der 3 Koepfe (Logit-Mittel, hidden 32 → 96)
+DEPLOYED → head.bin (493096 B, MLP1 v1)
+Golden-Boden: noch kein Bestwert (… Auswahl ensemble3) — 0.959 wird der erste
+head-to-head PAIRED on 108 recs: 12 besser / 3 schlechter → deploy
+Refits einzeln 94.5 / 94.4 / 94.1 %  →  Ensemble 94.8 %
+```
+
+**Golden median 0.959, mean 0.9234 — Mittelwert ist Allzeit-Bestwert**
+(vorher 0.9204 am 25.08.). Der Mittelwert ist hier die aussagekräftigere
+Zahl: er hängt am Schwanz, also an den schweren Aufnahmen. Steigender
+Mittelwert bei gleichem Median heißt, die schlechten Fälle wurden besser —
+genau das, was ein Ensemble tun soll. Die alte Median-Regel hätte Seed 1
+geliefert (Golden 0.950); das Ensemble liefert 0.959, **+0.009**, exakt der
+geschätzte Durchschnittsverlust.
+
+⚠️ Gegenbuchung: auf dem **Testsatz** ist das Ensemble mit 0.949 der
+schlechteste der vier Köpfe (Seeds 0.957/0.951/0.949). Auf der Größe, die
+das paarweise Gate benutzt, hat es nicht geholfen — nur auf Golden. Ein Lauf
+ist kein Beleg, aber wenn das bleibt, sagt es etwas über den Testsatz.
+
+---
+
+**Sprecher-Kennung: der SSL-Fix war nötig, aber nicht hinreichend.** Meine
+Aussage vom 27.08. („wieder am Leben") war zu früh.
+
+Befund: seit **16.08.** entstand kein einziges neues Embedding — ohne
+Fehlermeldung. `_ensure_speaker_artifacts` hatte **drei stumme
+`return None`** (`SPEAKER_ENABLE`, leerer `show_slug`, `rc==2`). Alle drei
+loggen jetzt. Ein Signal, das sich lautlos abschaltet, sieht im Log genauso
+aus wie eines, das nicht gebraucht wurde — das ist der eigentliche Defekt.
+
+Testlauf auf `dvr-rtl-1787482800` (unreviewt, ohne Embedding — die fünf
+frischen Aufnahmen sind alle `edited=true` und wurden bewusst nicht
+angefasst, ein Redetect hätte deren `ads.json` unter dem Review neu
+geschrieben):
+
+```
+extracting speaker embeddings…
+embeddings extracted in 61s
+speaker uebersprungen — zu wenig Episoden fuer show='die-beet-br-der'
+                        (rc=2, cold start)
+```
+
+Also: **Extraktion funktioniert**, und der zweite Halt ist gar kein Defekt,
+sondern der legitime Cold-Start-Zweig. Er war nur unsichtbar.
+
+Nebenbefund: die Schätzung „~10-15min wallclock für 30min Aufnahme" war um
+eine **Größenordnung** daneben (61 s für ~50 min). Eine zehnfach zu hohe
+Zahl lädt dazu ein, einen Ausfall für Normalbetrieb zu halten — Schätzung
+raus, Ist-Zeit steht ohnehin in der Folgezeile.
+
+**Was das für die Sprecher-Kennung heißt:** der begrenzende Faktor ist die
+Embedding-Abdeckung. Die 58 Centroids stammen bis auf einen aus **April/Mai**;
+für `abenteuer-leben-täglich` waren von 17 passenden Episoden nur 4 nutzbar
+(2 nicht reviewt, **11 ohne Embedding**). Das füllt sich jetzt von selbst
+wieder auf — ein Embedding je Detect, 61 s.
+
+**Offen, ehrlich:** warum die fünf echten Detects vom 27.08. abends **gar
+keine** Sprecher-Zeile erzeugt haben, konnte ich nicht rekonstruieren.
+`SPEAKER_ENABLE=1` stand nachweislich im Environment des laufenden Prozesses
+(`ps eww`, nicht aus der plist abgeleitet), `show_title` liefert der Pi für
+alle fünf, nichts löscht Embeddings, der Code an der Stelle war unverändert.
+Ich habe mehrere Erklärungen gebildet und alle widerlegt und ersetze sie
+nicht durch eine weitere Vermutung — die neuen Logzeilen beantworten es beim
+nächsten natürlichen Detect.

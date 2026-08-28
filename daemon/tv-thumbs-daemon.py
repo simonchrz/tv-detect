@@ -1942,10 +1942,19 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
     embeddings exist) so newly user-edited episodes are picked up
     without explicit invalidation.
     """
+    # ⚠️ Diese beiden Ausstiege waren stumm. Zusammen mit dem rc==2-Zweig
+    # weiter unten sind das drei Wege, auf denen die Sprecher-Kennung
+    # abschaltet, ohne eine Zeile zu hinterlassen — und genau deshalb ist
+    # nicht aufgefallen, dass seit dem 2026-08-16 kein einziges Embedding
+    # mehr entstanden ist. Ein Signal, das sich lautlos abschaltet, sieht im
+    # Log genauso aus wie eines, das nicht gebraucht wurde.
     if not SPEAKER_ENABLE:
+        print(f"  detect {uuid}: speaker aus (SPEAKER_ENABLE=0)", flush=True)
         return None
     show_slug = _slugify_show(show_title)
     if not show_slug:
+        print(f"  detect {uuid}: speaker uebersprungen — kein show_title "
+              f"in der detect-config (roh: {show_title!r})", flush=True)
         return None
     emb_path = EMB_CACHE / f"{uuid}.npz"
     centroid_path = CENTROID_CACHE / f"{show_slug}.npz"
@@ -1953,8 +1962,13 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
 
     # 1) Extract embeddings (once per recording)
     if not emb_path.exists():
-        print(f"  detect {uuid}: extracting speaker embeddings "
-              f"(~10-15min wallclock for 30min recording)", flush=True)
+        # Die alte Schaetzung "~10-15min fuer 30min Aufnahme" war um eine
+        # Groessenordnung daneben: gemessen 2026-08-28 sind es 61 s fuer eine
+        # ~50-min-Aufnahme. Eine Zahl, die zehnmal zu hoch steht, laedt dazu
+        # ein, einen Ausfall fuer Normalbetrieb zu halten — deshalb keine
+        # Schaetzung mehr, sondern die Ist-Zeit in der Folgezeile.
+        print(f"  detect {uuid}: extracting speaker embeddings…",
+              flush=True)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -1993,6 +2007,14 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
         if r.returncode == 2:
             # Insufficient data (no edited episodes yet) — expected for
             # cold-start shows. Run detect without speaker.
+            #
+            # ⚠️ Erwartet heisst nicht unsichtbar: dieser Zweig und die zwei
+            # oben sind zusammen der Grund, warum ein monatelanger Ausfall
+            # wie Normalbetrieb aussah. Die Zeile ist billig, das Schweigen
+            # war teuer.
+            print(f"  detect {uuid}: speaker uebersprungen — zu wenig "
+                  f"Episoden fuer show='{show_slug}' (rc=2, cold start)",
+                  flush=True)
             return None
         if r.returncode != 0:
             # ⚠️ TAIL, nicht Kopf. update-show-centroid.py loggt seinen

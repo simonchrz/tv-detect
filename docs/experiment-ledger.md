@@ -2978,3 +2978,62 @@ alle fünf, nichts löscht Embeddings, der Code an der Stelle war unverändert.
 Ich habe mehrere Erklärungen gebildet und alle widerlegt und ersetze sie
 nicht durch eine weitere Vermutung — die neuen Logzeilen beantworten es beim
 nächsten natürlichen Detect.
+
+### 2026-08-29 — Sprecher-Kennung: die Wurzel war ein Henne-Ei-Problem
+
+Die gestern eingebauten Diagnosezeilen haben beim ersten Durchlauf geliefert,
+was drei Runden Archäologie nicht konnten:
+
+```
+08-28 18:01  speaker uebersprungen — kein show_title in der detect-config (roh: '')
+08-28 18:58  … (roh: '')      08-28 19:07  … (roh: '')
+08-28 20:19  … (roh: '')  ×2
+```
+
+Alle fünf frischen Aufnahmen: `show_title` **leer**. Derselbe Endpunkt liefert
+Stunden später `'Galileo'`, `'Abenteuer Leben täglich'`, `'First Dates …'`.
+
+**Ursache** (`cmd/tv-recorder/whisper.go:64`): `showTitleForRec()` leitet den
+Titel aus dem **Dateinamen der Cutlist** ab — und die Cutlist ist das
+*Ergebnis* des Detects. Beim **ersten** Detect existiert sie nicht, also ist
+`show_title` leer. Die meisten Aufnahmen bekommen nie einen zweiten Detect,
+also war das der Dauerzustand.
+
+Betroffen war nicht nur die Sprecher-Kennung, sondern **alles Per-Show**:
+`.channel-config.json shows[…]`, `.detection_learning_by_show.json`,
+`.block_length_prior_by_show.json`. Sie liefen nur für Aufnahmen, die
+zufällig ein zweites Mal detektiert wurden.
+
+**Fix** (tv-receiver `3e415f5`): `showTitleFromDispTitle()` baut den Schlüssel
+aus dem `disp_title` des DVR-Eintrags — den `recInfo()` ohnehin zurückgibt und
+den der Aufrufer bisher wegwarf (`slug, _ :=`).
+
+⚠️ Der Schlüssel benennt den Sprecher-**Centroid** und gruppiert die
+Show-Kohorte. Zwei Schreibweisen = zwei Kohorten, beide dauerhaft unter der
+Mindestmenge — also genau der Cold Start, den man loswerden will. Der
+Rückfall durchläuft deshalb exakt dieselbe Kette wie der Cutlist-Weg
+(`dvrSanitizeName` gespiegelt + TrimSpace + 200er-Kappung +
+`showDashReplacer`). `showtitle_test.go` hält **beide Wege gegeneinander**
+über acht Titel (Umlaute, EN DASH, `:`, `?`, `/`) und prüft, dass ein leerer
+`disp_title` keinen Sammel-Schlüssel erfindet.
+
+**Auf dem Pi verifiziert**, nicht behauptet — Aufnahme ohne Cutlist auf der
+Platte:
+
+```
+dvr-das-erste-hd-1783135800   →  show_title='Dancing Queen'   ✓ (im Grid)
+dvr-kabel-eins-1786377300     →  show_title=''                ✓ (NICHT im Grid)
+```
+
+Der zweite Fall ist kein Rest-Defekt: die Serien-Retention hat den Eintrag
+geräumt, es existiert nirgends mehr ein Titel — und "" ist dann die ehrliche
+Antwort, genau die der zweite Test festhält.
+
+**Die Kette der drei Runden, als Muster:** (1) SSL-Fehler, versteckt hinter
+einer Kopf-Truncation der Fehlerausgabe. (2) Danach immer noch tot, weil drei
+stumme `return None` nichts meldeten. (3) Erst als die stummen Ausstiege eine
+Zeile bekamen, zeigte sich die eigentliche Ursache — und die lag in einem
+**anderen Repo**. Jede Runde sah aus wie „jetzt ist es behoben". Die Lehre
+ist nicht der einzelne Bug, sondern: **ein Signal, das sich lautlos
+abschaltet, ist von einem, das nicht gebraucht wird, nicht unterscheidbar —
+und deshalb beliebig lange unsichtbar.**

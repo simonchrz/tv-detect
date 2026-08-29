@@ -3037,3 +3037,18 @@ Zeile bekamen, zeigte sich die eigentliche Ursache — und die lag in einem
 ist nicht der einzelne Bug, sondern: **ein Signal, das sich lautlos
 abschaltet, ist von einem, das nicht gebraucht wird, nicht unterscheidbar —
 und deshalb beliebig lange unsichtbar.**
+
+### Nachtrag 2026-08-29 (Tagesdurchgang) — zweite Ensemble-Nacht, nichts zu tun
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`select_rule ensemble3`, `label_hash 8b23298b1371` wie gestern). Deploy per
+Head-to-Head gegen `head.gate.bin` (Δ +0.000 auf 109, 1/6), Golden-Boden
+0.950 gegen Bestwert 0.959 (−0.009, innerhalb der Toleranz). Einzel-Seeds
+0.950/0.958/0.959 — heute liegt das Ensemble auf dem **schlechtesten** Seed,
+gestern nahe dem besten. Zwei Nächte, kein Befund; nur festgehalten, damit
+die Reihe später lesbar ist. Bekannte Dauer-Warnungen unverändert (9 ohne
+Logo-Spalte → Sentinel, 1 Zeitachsen-Versatz).
+
+O13 unverändert verhungert (`0 angefasste Kanten`, kein `--ocr-marker` in
+der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 25/~30.
+Keine Serie mit Regelblock läuft, kein Platz frei, nichts eingereiht.

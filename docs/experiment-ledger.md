@@ -3052,3 +3052,26 @@ Logo-Spalte → Sentinel, 1 Zeitachsen-Versatz).
 O13 unverändert verhungert (`0 angefasste Kanten`, kein `--ocr-marker` in
 der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 25/~30.
 Keine Serie mit Regelblock läuft, kein Platz frei, nichts eingereiht.
+
+### Nachtrag 2026-08-30 (Tagesdurchgang) — dritte Ensemble-Nacht, nichts zu tun
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`select_rule ensemble3`, `label_hash 8b23298b1371` wie an beiden Vortagen).
+Deploy per Head-to-Head gegen `head.gate.bin` (Δ +0.000 auf 109, 9/2),
+Golden 0.957 gegen Bestwert 0.959 (−0.002, passiert). Einzel-Seeds
+0.957/0.957/0.962 — das Ensemble liegt auf den zwei schwächeren; nach drei
+Nächten steht es einmal nahe dem besten, einmal auf dem schlechtesten, einmal
+dazwischen. Kein Befund, nur die Reihe fortgeschrieben (R3).
+
+Bekannte Dauer-Warnungen: Zeitachsen-Versatz unverändert (1); Logo-Sentinel
+9 → **10** (neu `dvr-kabel-eins-doku-1780972500`, Sentinel greift wie
+vorgesehen, kein Defekt).
+
+**Sprecher-Kennung: der Fix vom 29.08. greift.** Seit dem Abend des 29.08.
+zeigt jeder Detect `speaker fingerprint engaged (weight=0.3)` (10× Disney
+Channel am 29.08., 2× RTL am 30.08. früh) — erstmals seit dem 16.08. ohne
+zweiten Detect. Der Faden ist damit geschlossen.
+
+O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
+in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 26/~30.
+Keine Serie mit Regelblock läuft, kein Platz frei, nichts eingereiht.

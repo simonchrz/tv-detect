@@ -3075,3 +3075,18 @@ zweiten Detect. Der Faden ist damit geschlossen.
 O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
 in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 26/~30.
 Keine Serie mit Regelblock läuft, kein Platz frei, nichts eingereiht.
+
+### Nachtrag 2026-08-31 (Tagesdurchgang) — vierte Ensemble-Nacht, nichts zu tun
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`select_rule ensemble3`, `label_hash 8b23298b1371` unverändert). Deploy per
+Head-to-Head (Δ +0.000 auf 110, 4/8), Golden 0.963 gegen Bestwert 0.957
+(+0.006, passiert) — erster neuer Bestwert-Kandidat der Ensemble-Epoche.
+Einzel-Seeds 0.963/0.963/0.958 — heute liegt das Ensemble erstmals **auf**
+dem besten Seed. Nach vier Nächten: 1× bester, 1× schlechtester, 2×
+dazwischen/nahe — weiter kein Befund, Reihe nur fortgeschrieben (R3).
+
+O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
+in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 28/~30
+— bald reif, aber noch nicht öffnen (O5). Keine Serie mit Regelblock läuft,
+kein Platz frei, nichts eingereiht.

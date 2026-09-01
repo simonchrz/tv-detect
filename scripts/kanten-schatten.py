@@ -312,6 +312,84 @@ def auswerten():
     return 0
 
 
+STILLSTAND_TAGE = 3  # ab wann eine stehengebliebene Erhebung gemeldet wird
+
+
+def stillstand_tage(dump_ts, ocr_ts):
+    """Wie lange steht die OCR-Erhebung? None = kein Stillstand/nicht pruefbar.
+
+    ⚠️ Gemessen wird der Abstand des neuesten OCR-Dumps zum neuesten Dump
+    UEBERHAUPT — nicht zu "jetzt". Sonst meldete jede Pause im Detect-Betrieb
+    einen Stillstand, den es nicht gibt: wenn gar nichts laeuft, faellt auch
+    nichts aus.
+    """
+    if not dump_ts or not ocr_ts:
+        return None
+    tage = (max(dump_ts) - max(ocr_ts)) / 86400.0
+    return tage if tage > STILLSTAND_TAGE else None
+
+
+def _datum(ts):
+    import time
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def _blockaden(alle_mit_quelle):
+    """Warum kommt nichts zusammen? Nur STRUKTURELLE Gruende, keine Vermutungen.
+
+    Unterscheidet "die Quelle sprudelt noch nicht genug" von "es gibt keine
+    Quelle". Nur der zweite Fall rechtfertigt, etwas zu aendern; der erste
+    verlangt Geduld. Beide sahen bisher gleich aus.
+    """
+    aus = []
+
+    # ⚠️ Drei verschiedene Fragen, die leicht zu einer verschmelzen:
+    #   "gibt es je OCR-Dumps?"  — am 2026-09-01 ja: 58 von 199.
+    #   "seit dem Schnitt?"      — auch ja: alle 58 liegen 27 Minuten danach.
+    #   "NOCH?"                  — nein: der neueste ist 16 Tage alt, waehrend
+    #                              taeglich neue Dumps OHNE OCR entstehen.
+    # Nur die dritte Frage deckt einen Sammler auf, der einmal lief und dann
+    # aufhoerte. Die ersten beiden bestehen er muehelos.
+    dumps, mit_ocr = [], []
+    for d in sorted(DUMPS.glob("*.json")):
+        try:
+            hat = "ocr_funde" in json.loads(d.read_text())
+        except Exception:
+            continue
+        t = d.stat().st_mtime
+        dumps.append(t)
+        if hat:
+            mit_ocr.append(t)
+    if not dumps:
+        aus.append(f"Keine Dumps unter {DUMPS} — die Erhebung laeuft gar nicht.")
+    elif not mit_ocr:
+        aus.append(f"KEINER der {len(dumps)} Dumps traegt ein ocr_funde-Feld — "
+                   f"tv-detect laeuft ohne --ocr-marker (Daemon setzt nur "
+                   f"--emit-signals-json). Warten hilft hier nie.")
+    else:
+        steht = stillstand_tage(dumps, mit_ocr)
+        if steht is not None:
+            seither = sum(1 for t in dumps if t > max(mit_ocr))
+            aus.append(f"OCR-Erhebung steht seit {steht:.0f} Tagen "
+                       f"({_datum(max(mit_ocr))}): seither {seither} Dumps ohne "
+                       f"ocr_funde, keiner mit. Der Schalter --ocr-marker wird "
+                       f"nicht mehr gesetzt. Die {len(mit_ocr)} vorhandenen "
+                       f"OCR-Aufnahmen reichen fuer O13 AUS — aber nur, wenn "
+                       f"sie menschlich reviewt werden; neue kommen keine dazu.")
+
+    herkunft = {}
+    for _, _, q in alle_mit_quelle:
+        herkunft[q] = herkunft.get(q, 0) + 1
+    menschen = herkunft.get("mensch", 0)
+    if alle_mit_quelle and menschen == 0:
+        aus.append(f"Keine einzige Kante aus MENSCHEN-Labels "
+                   f"({dict(sorted(herkunft.items()))}) — O13 wertet nur diese "
+                   f"aus, weil Agent-Labels denselben Bildschirmtext lesen wie "
+                   f"die Regel (zirkulaer). Ohne menschlich reviewte Aufnahmen "
+                   f"ab dem Schnitt bleibt die Menge bei 0.")
+    return aus
+
+
 def _auswerten_o13(alle_mit_quelle):
     # ⚠️ NUR Menschen-Labels. Gegen Agent-Labels waere die Frage zirkulaer
     # (s. label_quelle): der Agent liest denselben Bildschirm-Text, an den
@@ -326,6 +404,15 @@ def _auswerten_o13(alle_mit_quelle):
     if len(ang) < MIN_KANTEN or n_auf < MIN_AUFNAHMEN:
         print(f"  Noch nicht auswertbar (verlangt {MIN_KANTEN} Kanten aus "
               f"{MIN_AUFNAHMEN} Aufnahmen). Kein Zwischenstand.")
+        # ⚠️ "Noch nicht" legt nahe, dass Warten hilft. Wenn die QUELLE fehlt,
+        # hilft Warten nie — und die Zeile stuende Nacht fuer Nacht identisch
+        # da, waehrend nichts zulaeuft. Am 2026-09-01 war genau das der Fall:
+        # 199 Dumps, kein einziger mit OCR-Feld (der Daemon reicht
+        # --ocr-marker nicht durch), und 122 Kanten, alle vom Agenten — O13
+        # wertet aber nur Menschen-Labels aus. Zwei Blockaden, beide
+        # strukturell, beide als "noch nicht" getarnt.
+        for zeile in _blockaden(alle_mit_quelle):
+            print(f"  ⚠ {zeile}")
         return
     v = sum(k["fehler_ist"] for _, k in ang)
     n = sum(k["fehler_ocr"] for _, k in ang)

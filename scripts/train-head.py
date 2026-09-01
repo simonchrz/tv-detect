@@ -2365,6 +2365,31 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
     return deploy, reason
 
 
+def nachtraegliche_bloecke(ueberlebende, auto_beim_abschluss):
+    """Welche Auto-Bloecke kamen NACH dem Abschluss des Labels dazu?
+
+    ⚠️ Ein abgeschlossenes Label ist gegen spaetere Maschinenausgabe nicht
+    geschuetzt: ein Config-Fingerprint-Re-Detect erzeugt Wochen danach neue
+    Cutlists. Bloecke, die es beim Abschluss noch nicht gab, haben kein
+    Gegenstueck in `deleted` und ueberleben deshalb jede Pruefung — obwohl sie
+    nie jemand geprueft hat, weder Mensch noch Auto-Bestaetigung.
+
+    Verglichen wird per UEBERLAPPUNG, nicht per Gleichheit: ein Re-Detect
+    verschiebt Kanten um Sekunden, und ein um 2 s verschobener Block ist
+    derselbe Block, kein neuer. Wer auf Gleichheit prueft, verwirft die ganze
+    Liste.
+
+    auto_beim_abschluss=None heisst "kein Schnappschuss vorhanden" — dann wird
+    NICHT geraten, sondern nichts verworfen.
+    """
+    if auto_beim_abschluss is None:
+        return []
+    def _ueberlappt(a, b):
+        return a[0] < b[1] and b[0] < a[1]
+    return [a for a in ueberlebende
+            if not any(_ueberlappt(a, b) for b in auto_beim_abschluss)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     # Defaults are the post-SMB-migration locations: backbone +
@@ -2919,6 +2944,8 @@ def main():
     corpus_no_ts = 0       # recovered from feature cache because the .ts was dedup'd
     resurrect_seen = []    # (uuid, n) — auto blocks kept alongside a user list
     resurrect_vetoed = []  # (uuid, n) — of those, dropped by confirmed_show
+    nachtraeglich = []     # (uuid, n) — nach dem Abschluss dazugekommen, verworfen
+    nachtraeglich_blind = []  # (uuid,) — dasselbe vermutet, aber nicht belegbar
     versetzte = []
     _zeit_quarantaene = zeitachsen_quarantaene(args.train_archive)
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
@@ -2957,6 +2984,7 @@ def main():
         # these from training (treated as "no labels"), losing ~150
         # recordings of negative-class signal per cron run.
         auto_confirmed_no_ads = False
+        auto_at_review, abschluss_ts = None, 0
         if isinstance(user_raw, list):
             user_ads, deleted = user_raw, []
         elif isinstance(user_raw, dict):
@@ -2966,6 +2994,16 @@ def main():
                               user_raw.get("confirmed_show", []) or []]
             confirmed_ad_skips = [float(x) for x in
                                    user_raw.get("confirmed_ad_skips", []) or []]
+            # Was die Maschine vorschlug, als das Label abgeschlossen wurde,
+            # und wann das war. Beides fehlt bei Aufnahmen von vor 08-2026.
+            auto_at_review = user_raw.get("auto_at_review")
+            if not isinstance(auto_at_review, list):
+                auto_at_review = None
+            abschluss_ts = 0
+            for feld in ("auto_at_review_at", "reviewed_at", "auto_confirmed_at"):
+                v = user_raw.get(feld)
+                if isinstance(v, (int, float)) and v > 0:
+                    abschluss_ts = max(abschluss_ts, int(v))
             if (user_raw.get("auto_confirmed_at")
                     and (user_raw.get("auto_confirm_n_blocks") or 0) == 0
                     and (user_raw.get("auto_confirm_score") or 0) >= 0.9):
@@ -2995,6 +3033,32 @@ def main():
             # explicit confirmed_show inside a surviving block is proof on its
             # own — dvr-rtl-1781909700 scored IoU 0.000 on both heads because
             # the model correctly followed the review and the label did not.
+            # ⚠️ Ein abgeschlossenes Label ist gegen SPAETERE Maschinenausgabe
+            # nicht geschuetzt. Ein Config-Fingerprint-Re-Detect erzeugt Wochen
+            # nach dem Abschluss neue Cutlists; Bloecke, die es beim Abschluss
+            # noch gar nicht gab, haben kein Gegenstueck in `deleted` und
+            # ueberleben jede Pruefung — geprueft hat sie nie jemand, weder
+            # Mensch noch Auto-Bestaetigung.
+            #
+            # Belegt an dvr-rtl-1780683300 (Let's Dance, 2026-09-01): Label am
+            # 31.07. abgeschlossen mit 7 Bloecken, ads.json am 17.08. neu
+            # geschrieben mit 13. Von den 6 neuen zeigen mindestens zwei
+            # nachweislich die Sendung (RTL-Live-Logo im Bild), und der Kopf
+            # widerspricht ihnen mit p<0.13.
+            #
+            # `auto_at_review` haelt seit 08-2026 den Schnappschuss. Wo er da
+            # ist, wird exakt entschieden; wo nicht, wird NICHT geraten —
+            # sondern gezaehlt und gemeldet.
+            if auto_at_review is not None and surviving:
+                neu_dazu = nachtraegliche_bloecke(surviving, auto_at_review)
+                if neu_dazu:
+                    surviving = [a for a in surviving if a not in neu_dazu]
+                    nachtraeglich.append((uuid, len(neu_dazu)))
+            elif surviving and abschluss_ts and auto.exists():
+                # Kein Schnappschuss, aber die Auto-Datei ist juenger als der
+                # Abschluss: derselbe Verdacht, nur nicht aufloesbar.
+                if auto.stat().st_mtime > abschluss_ts + 3600:
+                    nachtraeglich_blind.append(uuid)
             if confirmed_show and surviving:
                 vetoed = [a for a in surviving
                           if any(a[0] <= t <= a[1] for t in confirmed_show)]
@@ -3180,6 +3244,21 @@ def main():
               f"omitted the 'deleted' entry)")
         for u, k in resurrect_vetoed[:10]:
             print(f"    {u}  ({k})")
+    if nachtraeglich:
+        n = sum(k for _, k in nachtraeglich)
+        print(f"label-merge: {n} auto block(s) across {len(nachtraeglich)} "
+              f"recording(s) DROPPED — added by a re-detect AFTER the label was "
+              f"settled, so nobody ever reviewed them (auto_at_review proves it)")
+        for u, k in nachtraeglich[:10]:
+            print(f"    {u}  ({k})")
+    if nachtraeglich_blind:
+        print(f"label-merge: {len(nachtraeglich_blind)} recording(s) have auto "
+              f"labels NEWER than their settled label but no auto_at_review "
+              f"snapshot — same suspicion, not provable, left in the corpus. "
+              f"Only recordings settled before 08-2026 can be in this state; "
+              f"the count must SHRINK over time, never grow.")
+        for u in nachtraeglich_blind[:10]:
+            print(f"    {u}")
     if resurrect_seen:
         n = sum(k for _, k in resurrect_seen)
         print(f"label-merge: {n} auto block(s) across {len(resurrect_seen)} "

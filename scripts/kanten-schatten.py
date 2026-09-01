@@ -373,9 +373,20 @@ def _blockaden(alle_mit_quelle):
             aus.append(f"OCR-Erhebung steht seit {steht:.0f} Tagen "
                        f"({_datum(max(mit_ocr))}): seither {seither} Dumps ohne "
                        f"ocr_funde, keiner mit. Der Schalter --ocr-marker wird "
-                       f"nicht mehr gesetzt. Die {len(mit_ocr)} vorhandenen "
-                       f"OCR-Aufnahmen reichen fuer O13 AUS — aber nur, wenn "
-                       f"sie menschlich reviewt werden; neue kommen keine dazu.")
+                       f"nicht mehr gesetzt.")
+            # ⚠️ Und der Altbestand rettet das NICHT. Nachgemessen 2026-09-01:
+            # von den 58 OCR-Aufnahmen sind 54 menschlich reviewt — aber 48
+            # davon VOR dem Schnitt, 0 danach. Sie sind damit genau die Labels,
+            # die der Schnitt ausschliesst (potentiell dieselben, an denen
+            # O9-O12 gemessen haben). O13 braucht OCR-Dumps auf Aufnahmen, die
+            # NACH dem Schnitt menschlich reviewt werden — und solange
+            # --ocr-marker aus ist, kann es die nicht geben.
+            aus.append("Damit ist O13 blockiert, nicht langsam: der vorhandene "
+                       "OCR-Altbestand liegt VOR dem Schnitt und ist per "
+                       "Registrierung ausgeschlossen. Entweder --ocr-marker "
+                       "wieder setzen (kostet kanten-lokal ~+17 % Detect-"
+                       "Laufzeit) und neue Reviews abwarten — oder O13 im "
+                       "Ledger parken wie O14.")
 
     herkunft = {}
     for _, _, q in alle_mit_quelle:

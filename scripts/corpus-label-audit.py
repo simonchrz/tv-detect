@@ -251,6 +251,10 @@ def main():
     ap.add_argument("--min-run", type=int, default=90)
     ap.add_argument("--smooth", type=int, default=15)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--zeige-eingefrorene", action="store_true",
+                    dest="zeige_eingefrorene",
+                    help="eingefrorene Archiveintraege einzeln auflisten "
+                         "(normalerweise nur als Zahl, weil nicht handhabbar)")
     args = ap.parse_args()
 
     idim, params, felder = load_head(os.path.join(MODELS, "head.bin"))
@@ -412,9 +416,10 @@ def main():
             # exists anywhere but in that stale file. Seen on
             # dvr-nick-1778954400 and dvr-rtl-1781909700, the latter of which
             # also silently shortened the golden median for two nights.
-            frozen = (newest_npz - os.path.getmtime(f)) > 36 * 3600
+            alter_h = (newest_npz - os.path.getmtime(f)) / 3600.0
+            frozen = alter_h > 36
             flagged.append((u, m.get("which", "?"), str(m.get("title"))[:26],
-                            n, hole, phan, frozen))
+                            n, hole, phan, frozen, alter_h))
     print(f"  geprueft {checked}, uebersprungen "
           f"{len(ohne_features) + len(falsche_breite)}")
     if ohne_features:
@@ -430,16 +435,75 @@ def main():
               f"(Kopf erwartet {idim}) — im Training ebenfalls verdaechtig:")
         for u, roh, gebaut in falsche_breite[:8]:
             print(f"        {u:32} .npy {roh}  →  gebaut {gebaut}")
-    print(f"\n{len(flagged)} Aufnahmen widersprechen ihrem eigenen Signal:")
-    print(f"  {'uuid':30} {'which':>7} {'dauer':>6} {'hole':>6} {'phantom':>8}"
-          f"  Titel")
-    for u, w, t, n, hole, phan, frozen in sorted(flagged,
-                                                 key=lambda r: -(r[4] + r[5])):
-        tag = "  [ARCHIV EINGEFROREN — Labels evtl. schon leer]" if frozen else ""
-        print(f"  {u:30} {w:>7} {n:6d} {hole:6d} {phan:8d}  {t}{tag}")
-    if flagged:
-        json.dump([r[0] for r in flagged], open("/tmp/label-audit-flagged.json", "w"))
-        print("\n  uuids -> /tmp/label-audit-flagged.json")
+    # ⚠️ Eingefrorene Eintraege NICHT in dieselbe Liste. Ein eingefrorener
+    # Eintrag wurde vom letzten Trainingslauf nicht neu geschrieben, war also
+    # nicht im Korpus — sein Widerspruch existiert nur noch in dieser alten
+    # Datei und ist NICHT handhabbar. Am 01.09.2026 standen 7 von 10 Zeilen
+    # so da: die drei echten gingen darin unter, und ein Bericht, der Nacht
+    # fuer Nacht dieselben nicht handhabbaren Zeilen zeigt, wird ueberblaettert.
+    # Deshalb getrennt — laut bleibt, was man anfassen kann.
+    handhabbar = [r for r in flagged if not r[6]]
+    eingefroren = [r for r in flagged if r[6]]
+
+    print(f"\n{len(handhabbar)} Aufnahmen widersprechen ihrem eigenen Signal:")
+    if handhabbar:
+        print(f"  {'uuid':30} {'which':>7} {'dauer':>6} {'hole':>6} {'phantom':>8}"
+              f"  Titel")
+    for u, w, t, n, hole, phan, _, _alter in sorted(handhabbar,
+                                                    key=lambda r: -(r[4] + r[5])):
+        print(f"  {u:30} {w:>7} {n:6d} {hole:6d} {phan:8d}  {t}")
+
+    if eingefroren:
+        aeltest = max(r[7] for r in eingefroren)
+        # ⚠️ Die ZAHL bleibt sichtbar, auch wenn die Zeilen es nicht sind:
+        # waechst sie, fallen Aufnahmen aus dem Korpus, und DAS waere ein
+        # echtes Signal. Dieselbe Vorsichtsmassnahme wie bei der
+        # label-merge-Zeile ("Watch this count: it should not grow").
+        print(f"\n  + {len(eingefroren)} eingefrorene Archiveintraege uebersprungen "
+              f"(aeltester {aeltest/24:.0f} Tage) — vom letzten Lauf nicht neu "
+              f"geschrieben, also nicht im Korpus: ihr Widerspruch ist nicht "
+              f"mehr handhabbar.")
+        # ⚠️ "Diese Zahl beobachten" reicht NICHT. Genau so ist der
+        # Golden-Satz von 60 auf 23 Mitglieder verfallen, ohne dass es jemand
+        # bemerkt hat: niemand vergleicht Nacht fuer Nacht Zahlen aus einem
+        # Logbericht. Also vergleicht das Skript selbst — eine Eigenschaft,
+        # kein Ereignis, wie es der Orchestrator fuer diesen Lauf begruendet.
+        stand = os.path.expanduser("~/.cache/tvd-audit-stand.json")
+        vorher = None
+        try:
+            with open(stand) as fh:
+                vorher = json.load(fh).get("eingefroren")
+        except Exception:
+            pass
+        if vorher is not None and len(eingefroren) > vorher:
+            print(f"    ⚠ GEWACHSEN: {vorher} → {len(eingefroren)} "
+                  f"(+{len(eingefroren)-vorher}). Es sind Aufnahmen aus dem "
+                  f"Korpus gefallen — das ist ein echtes Signal, kein Altbestand.")
+        elif vorher is not None:
+            print(f"    (vorige Nacht: {vorher} — nicht gewachsen)")
+        try:
+            with open(stand, "w") as fh:
+                json.dump({"eingefroren": len(eingefroren)}, fh)
+        except Exception as e:
+            print(f"    Stand nicht schreibbar ({e}) — Wachstumspruefung "
+                  f"faellt naechste Nacht aus")
+        print(f"    Mit --zeige-eingefrorene einzeln auflisten.")
+        if args.zeige_eingefrorene:
+            for u, w, t, n, hole, phan, _, alter in sorted(
+                    eingefroren, key=lambda r: -r[7]):
+                print(f"    {u:30} {w:>7} {n:6d} {hole:6d} {phan:8d} "
+                      f" seit {alter/24:5.1f}d  {t}")
+
+    # ⚠️ Nur die HANDHABBAREN in die Datei. Wer sie zur Review benutzt, lief
+    # sonst in 7 von 10 Faellen ins Leere. Die eingefrorenen daneben, damit
+    # sie nicht verloren gehen — nur eben nicht in derselben Liste.
+    if handhabbar:
+        json.dump([r[0] for r in handhabbar],
+                  open("/tmp/label-audit-flagged.json", "w"))
+        print("\n  handhabbare uuids -> /tmp/label-audit-flagged.json")
+    if eingefroren:
+        json.dump([r[0] for r in eingefroren],
+                  open("/tmp/label-audit-eingefroren.json", "w"))
     return 0
 
 

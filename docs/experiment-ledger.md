@@ -3090,3 +3090,20 @@ O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
 in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 28/~30
 — bald reif, aber noch nicht öffnen (O5). Keine Serie mit Regelblock läuft,
 kein Platz frei, nichts eingereiht.
+
+### Nachtrag 2026-09-01 (Tagesdurchgang) — fünfte Ensemble-Nacht, nichts zu tun
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`select_rule ensemble3`, `label_hash 8b23298b1371` unverändert). Deploy per
+Head-to-Head (Δ +0.000 auf 111, 8/12 — Beträge heben sich auf, KI-Lesart,
+nicht Vorzeichen zählen). Golden 0.958 gegen Bestwert 0.959 (−0.001,
+passiert); der Boden steht mit 0.9587 (20260828, zweitbester) wieder — die
+Ensemble-Epoche hat ihre Latte zurück. Einzel-Seeds 0.9664/0.9583/0.9516 —
+das Ensemble liegt heute in der Mitte, unter dem besten Seed. Nach fünf
+Nächten: 1× bester, 1× schlechtester, 3× dazwischen — kein Befund, Reihe
+nur fortgeschrieben (R3).
+
+O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
+in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 28/~30
+— noch nicht öffnen (O5). Keine Serie mit Regelblock läuft, kein Platz frei,
+nichts eingereiht.

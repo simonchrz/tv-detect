@@ -179,6 +179,11 @@ SPAWN_ENV = {**os.environ, "PATH": (
 # restart. Keyed by remote ETag/size; head.bin is small (~5 KB),
 # backbone.onnx is ~9 MB.
 MODEL_CACHE = Path.home() / ".cache" / "tv-detect-daemon"
+
+# OCR-Marker an/aus, ohne Codeaenderung umschaltbar (TVD_OCR_MARKER=0).
+# ⚠️ launchd laedt EnvironmentVariables NICHT bei `kickstart -k` neu — zum
+# Umschalten bootout + bootstrap, siehe Memory launchd_kickstart_no_env_reload.
+OCR_MARKER = os.environ.get("TVD_OCR_MARKER", "1") not in ("0", "false", "no")
 MODEL_CACHE.mkdir(parents=True, exist_ok=True)
 
 # Decode-resolution downscale (2026-07-12, A/B-validated: ProSieben
@@ -2473,6 +2478,27 @@ def process_detect(uuid):
     try:
         emit_dir.mkdir(parents=True, exist_ok=True)
         cmd += ["--emit-signals-json", str(emit_dir / f"{uuid}.json")]
+        # OCR-Marker: Bildschirm-Text an den Blockgrenzen (Programmhinweis
+        # "Freitag 20:15", Werbe-Kennzeichnung "Werbung"). Der 224x224-
+        # Backbone verwirft diese Information physisch, OCR ist also eine
+        # ZUSAETZLICHE Quelle, kein besseres Modell derselben Daten.
+        #
+        # Ohne diesen Schalter kann O13 nie zu einem Ergebnis kommen: die
+        # Registrierung misst prospektiv, und der vorhandene OCR-Altbestand
+        # (58 Aufnahmen, alle vom 15.08.) liegt VOR dem Schnitt und ist
+        # ausgeschlossen. Vom 16.08. bis 01.09. lief die Erhebung nicht.
+        #
+        # ⚠️ KOSTEN, selbst gemessen 2026-09-02 (der Hilfetext nennt +17 %,
+        # die Registrierung +7 % — beide zu niedrig):
+        #     2000 s / 8 Kanten   50 s -> 74..100 s   (+49..101 %)
+        #     4105 s / 6 Kanten  107 s -> 131 s       (+22 %)
+        # Die OCR-Kosten haengen an der Zahl der KANTEN (festes Fenster je
+        # Kante, ~4-6 s), die Grundkosten an der DAUER. Kurze werbereiche
+        # Aufnahmen sind daher teuer, lange mit wenigen Bloecken billig.
+        # Die Cutlist ist mit und ohne Schalter identisch (auf zwei
+        # Aufnahmen verifiziert) — er erhebt nur.
+        if OCR_MARKER:
+            cmd += ["--ocr-marker"]
     except Exception as e:
         # Ein nicht anlegbares Dump-Verzeichnis darf den Detect nicht
         # aufhalten — die Cutlist ist mit und ohne Flag identisch.

@@ -38,9 +38,35 @@ import AppKit
 // Abtastdichte von 2 s ist in der O13-Registrierung festgeschrieben, sie zu
 // aendern wuerde das Experiment beschaedigen, fuer das die Erhebung laeuft.
 //
+// 5. minimumTextHeight — DAS FUNKTIONIERT, seit 2026-09-02 aktiv (0.08).
+//    Vision durchsucht sonst das Bild bis hinunter zu winziger Schrift. Die
+//    Marker, auf die es hier ankommt, sind grosse Einblendungen — die
+//    Feinsuche ist also reine Verschwendung. Gemessen:
+//
+//        Aufnahme          minh=0     minh=0.08     Treffer
+//        kabel-eins       20,1 s      12,9 s        83 -> 80
+//        GZSZ (Fenster)    4,3 s       2,7 s        14 -> 14
+//
+//    Die drei fehlenden Bilder liegen INNERHALB ihrer Ereignisse: der
+//    aeusserste Treffer je Kantenfenster ist bei jeder Stufe identisch, und
+//    genau der bestimmt, wohin die Regel die Kante setzt. Kein Ereignis geht
+//    verloren.
+//
+//    Abstand nach oben ist reichlich: bis minh=0.20 aendert sich nichts mehr
+//    (getestet 0.04/0.05/0.07/0.08/0.10/0.14/0.20). 0.08 liegt also weit im
+//    flachen Bereich, nicht an der Kante. TVOCR_MINHEIGHT=0 schaltet ab.
+//
 // TVOCR_LEVEL=fast bleibt als Messwerkzeug erhalten, NICHT fuer den Betrieb.
 let stufe: VNRequestTextRecognitionLevel =
     (ProcessInfo.processInfo.environment["TVOCR_LEVEL"] == "fast") ? .fast : .accurate
+
+// Mindest-Texthoehe als Anteil der Bildhoehe. 0 = Vorgabe von Vision (sucht
+// bis zur kleinsten Schrift).
+let minHoehe: Float = {
+    if let s = ProcessInfo.processInfo.environment["TVOCR_MINHEIGHT"],
+       let v = Float(s) { return v }
+    return 0.08
+}()
 
 for pfad in CommandLine.arguments.dropFirst() {
     guard let bild = NSImage(contentsOfFile: pfad),
@@ -51,6 +77,7 @@ for pfad in CommandLine.arguments.dropFirst() {
     anfrage.recognitionLevel = stufe
     anfrage.recognitionLanguages = ["de-DE", "en-US"]
     anfrage.usesLanguageCorrection = false
+    if minHoehe > 0 { anfrage.minimumTextHeight = minHoehe }
     let handler = VNImageRequestHandler(cgImage: cg, options: [:])
     var texte: [String] = []
     do {

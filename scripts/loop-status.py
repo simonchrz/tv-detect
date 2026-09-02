@@ -40,6 +40,92 @@ def zeilen(pfad, n=None):
     return out[-n:] if n else out
 
 
+# Produktions-Standard, wenn die Sendung keine eigene Blocklaenge hat
+# (detect-config min_block_s). Kuerzere Label-Bloecke kann der Decoder nie
+# bilden — sie koennen nur verfehlt werden.
+MIN_BLOCK_S = 60
+SCHWANZ_N = 5
+
+
+def golden_schwanz(eintraege, golden, meta_von, naechte=None,
+                   min_block_s=MIN_BLOCK_S, n=SCHWANZ_N):
+    """Die schlechtesten Golden-Aufnahmen der letzten Nacht und warum.
+
+    Warum das ueberhaupt: Golden-Median 0.96 bei Mittelwert 0.92 heisst,
+    ein paar Aufnahmen tragen den ganzen Verlust — und bis 2026-09-02 war
+    nicht zu sehen, welche. Die Nightly schreibt je Aufnahme nur den
+    Testsatz-Wert (per-rec-iou.jsonl); Golden ist aber eine Teilmenge des
+    Testsatzes, also steht alles schon da.
+
+    Was die Zahl misst (block_iou in train-head.py): Mittel ueber die
+    LABEL-Bloecke, jeder mit seinem bestueberlappenden Vorhersageblock.
+    Zwei Folgen, die man kennen muss, bevor man an den Kopf denkt:
+      * ein Label-Block unter min_block_s ist UNERREICHBAR — der Decoder
+        bildet ihn nie, er zaehlt trotzdem 1/n der Note (kabel eins
+        Mein Lokal: 32 s am Aufnahmeende = 0.64 statt 0.96);
+      * Vorhersageblocke ohne Label-Gegenstueck kosten NICHTS.
+    Und ein Mitglied mit which=auto misst den Abstand zum Kopf von damals,
+    nicht zur Wahrheit.
+
+    eintraege: per-rec-iou.jsonl-Zeilen (aelteste zuerst). Gezaehlt wird
+    der Wert, den die PRODUKTION traegt: candidate bei deploy, sonst
+    champion. meta_von(uuid) -> dict(title, which, ads) oder None.
+    Liefert dict(nacht, schlechteste, beharrlich, n_naechte) oder None."""
+    def prod(e):
+        quelle = e.get("candidate") if e.get("deploy") else e.get("champion")
+        return {u: v for u, v in (quelle or {}).items() if u in golden}
+
+    reihe = [prod(e) for e in eintraege]
+    reihe = [r for r in reihe if len(r) >= max(1, len(golden) // 2)]
+    if naechte:
+        reihe = reihe[-naechte:]
+    if not reihe:
+        return None
+    heute = reihe[-1]
+    im_schwanz = defaultdict(int)
+    for r in reihe:
+        for u, _ in sorted(r.items(), key=lambda kv: kv[1])[:n]:
+            im_schwanz[u] += 1
+
+    schlechteste = []
+    for u, v in sorted(heute.items(), key=lambda kv: kv[1])[:n]:
+        m = meta_von(u) or {}
+        ads = m.get("ads") or []
+        kurz = [(a, b) for a, b in ads if (b - a) < min_block_s]
+        # Was die Note hoechstens erreichen kann, wenn jeder erreichbare
+        # Block perfekt sitzt: die kurzen zaehlen als 0.
+        decke = (len(ads) - len(kurz)) / len(ads) if ads else 1.0
+        schlechteste.append({
+            "uuid": u, "iou": v, "title": m.get("title") or "",
+            "echo": m.get("which") == "auto",
+            "unerreichbar": kurz, "n_bloecke": len(ads), "decke": decke,
+            "im_schwanz": im_schwanz.get(u, 0)})
+    beharrlich = sorted(((u, k) for u, k in im_schwanz.items()
+                         if k >= max(2, len(reihe) // 2)),
+                        key=lambda t: -t[1])
+    return {"nacht": eintraege[-1].get("ts", "")[:8] if eintraege else "",
+            "schlechteste": schlechteste, "beharrlich": beharrlich,
+            "n_naechte": len(reihe)}
+
+
+def archiv_meta(archiv):
+    """meta_von() ueber das Trainingsarchiv; ohne numpy leer, nicht tot."""
+    try:
+        import numpy as np
+    except ImportError:
+        return lambda u: None
+
+    def lies(u):
+        p = archiv / f"{u}.npz"
+        if not p.exists():
+            return None
+        try:
+            return json.loads(str(np.load(p, allow_pickle=True)["meta"]))
+        except Exception:
+            return None
+    return lies
+
+
 def letzter_lauf(log_pfad):
     """Ausgang der letzten Nacht: DEPLOYED oder REJECTED, plus Begründung.
 
@@ -183,6 +269,36 @@ def main():
                 if champ["golden_median"] < best["golden_median"]:
                     print("  ⚠ Der Boden liegt ÜBER dem Champion — es kommt "
                           "nur noch durch, wer den Champion schlägt (O3).")
+
+    # ── Golden-Schwanz: wer traegt den Verlust, und war er erreichbar? ──
+    gpfad = args.archiv / "golden-eval-set.json"
+    if gpfad.exists():
+        golden = set(json.loads(gpfad.read_text()).get("uuids", []))
+        sch = golden_schwanz(zeilen(args.archiv / "per-rec-iou.jsonl"),
+                             golden, archiv_meta(args.archiv),
+                             naechte=max(args.naechte, 14))
+        if sch:
+            print(f"\nGolden-Schwanz ({sch['nacht']}, die {SCHWANZ_N} "
+                  f"schlechtesten von {len(golden)}):")
+            for r in sch["schlechteste"]:
+                grund = []
+                if r["echo"]:
+                    grund.append("which=auto: misst Echo, nicht Wahrheit")
+                if r["unerreichbar"]:
+                    kurz = ", ".join(f"{b - a:.0f}s@{a:.0f}"
+                                     for a, b in r["unerreichbar"])
+                    grund.append(f"Decke {r['decke']:.2f}: "
+                                 f"{len(r['unerreichbar'])} Label-Block "
+                                 f"unter {MIN_BLOCK_S}s ({kurz})")
+                print(f"  {r['iou']:.3f}  {r['uuid']:32} "
+                      f"{r['title'][:26]:26}  "
+                      f"{r['im_schwanz']:2d}/{sch['n_naechte']} Naechte"
+                      + (f"\n         {'; '.join(grund)}" if grund else ""))
+            if sch["beharrlich"]:
+                print(f"  beharrlich (>= halbe Serie im Schwanz): "
+                      + ", ".join(f"{u} ({k})" for u, k in sch["beharrlich"]))
+                print("  → dieselben Aufnahmen jede Nacht = Sendungs- oder "
+                      "Label-Sache, nicht der Kopf.")
 
     # ── Schatten-Serie je Variante ───────────────────────────────────
     st = zeilen(args.archiv / "shadow-trend.jsonl")

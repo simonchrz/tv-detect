@@ -54,6 +54,28 @@ type OCROpts struct {
 	FensterS float64 // Halbfenster um jede Kante
 	SchrittS float64 // Abstand zwischen zwei Abtastpunkten
 	Breite   int     // Skalierungsbreite der Frames (Text muss lesbar bleiben)
+	// UnteresTeilbild: nur dieser Anteil vom unteren Bildrand wird an Vision
+	// gegeben (0 oder >=1 = ganzes Bild).
+	//
+	// ⚠️ Gemessen 2026-09-02, weil OCR 78 % der Kosten traegt (ffmpeg 1,27 s
+	// gegen Vision 4,47 s je Fenster). Vision haengt an der PIXELMENGE, nicht
+	// an fixem Aufwand — deshalb wirkt ein Zuschnitt. Ueber 495 Frames einer
+	// Aufnahme mit BEIDEN Markertypen:
+	//
+	//     Vollbild        19,9 s   39 Hinweis + 44 Werbung   —
+	//     unteres 50 %    13,4 s   39 + 44                   0 verloren, 0 zusaetzlich
+	//     unteres 40 %    13,0 s   39 + 44                   0 verloren, 0 zusaetzlich
+	//     unteres 25 %    11,4 s   33 + 44                   6 VERLOREN
+	//
+	// 25 % ist zu wenig: die Programmhinweis-Karte traegt "Montag und
+	// kostenlos streamen" bei ~83 % Hoehe, die zugehoerige Uhrzeit "20:15"
+	// aber bei ~68 % — und die Regel verlangt BEIDES. Der Zuschnitt behielt
+	// den Wochentag und verlor die Uhrzeit, also den ganzen Treffer.
+	//
+	// 50 % statt 40 %: der Unterschied kostet 3 %, verdoppelt aber den
+	// Abstand zur beobachteten Grenze. Unterhalb von 40 % flacht der Gewinn
+	// ohnehin ab, weil ein fixer Aufwand je Bild bleibt (~20 ms).
+	UnteresTeilbild float64
 }
 
 func (o *OCROpts) setzeVorgaben() {
@@ -68,6 +90,16 @@ func (o *OCROpts) setzeVorgaben() {
 	// ist nicht ratsam — bei 640 fielen in der Handprobe Countdown-Ziffern aus.
 	if o.Breite <= 0 {
 		o.Breite = 960
+	}
+	// ⚠️ Vorgabe 1 = GANZES Bild. Ein Zuschnitt nach unten waere verlockend
+	// (Vision haengt an der Pixelmenge, 50 % sparen 33 %), ist aber FALSCH:
+	// die Marker sitzen in ZWEI Regionen. Auf dvr-kabel-eins-1780856070
+	// verlor ein 50-%-Zuschnitt nichts, auf dvr-rtl-1783926000 dagegen 15
+	// von 63 Treffern — dort steht der Programmhinweis "UNDERCOVER BOSS /
+	// Heute 20:15" OBEN RECHTS, bei ~8-25 % Hoehe. Wer nur eine Aufnahme
+	// misst, haelt den Zuschnitt fuer kostenlos.
+	if o.UnteresTeilbild <= 0 || o.UnteresTeilbild > 1 {
+		o.UnteresTeilbild = 1
 	}
 }
 
@@ -129,7 +161,10 @@ func OCRUmKanten(quelle string, kanten []float64, dauerS float64, o OCROpts) ([]
 			"-ss", strconv.FormatFloat(f.von, 'f', 2, 64),
 			"-t", strconv.FormatFloat(f.bis-f.von, 'f', 2, 64),
 			"-i", quelle,
-			"-vf", fmt.Sprintf("fps=1/%g,scale=%d:-1", o.SchrittS, o.Breite),
+			// Zuerst zuschneiden, dann skalieren: was ohnehin verworfen
+			// wird, muss nicht skaliert werden.
+			"-vf", fmt.Sprintf("fps=1/%g,crop=iw:ih*%g:0:ih*%g,scale=%d:-1",
+				o.SchrittS, o.UnteresTeilbild, 1-o.UnteresTeilbild, o.Breite),
 			"-q:v", "4", muster)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			// Ein kaputtes Fenster darf den Lauf nicht kosten — der Rest

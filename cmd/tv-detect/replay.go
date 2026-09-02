@@ -212,7 +212,7 @@ func writeReplaySummary(fps float64, frameCount int, bl []blocks.Block, agree fl
 // Sweep gelesen werden kann.
 func anreicherOCR(signalsPath, quelle, decoder string,
 	buildOpts func(fps float64) blocks.Opts,
-	helfer string, fensterS, schrittS float64) {
+	helfer string, fensterS, schrittS, crop float64) {
 
 	b, err := os.ReadFile(signalsPath)
 	if err != nil {
@@ -233,7 +233,7 @@ func anreicherOCR(signalsPath, quelle, decoder string,
 		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox,
 		d.IFrames, d.FrameCount)
 	res := &pipeline.Result{FPS: d.FPS, FrameCount: d.FrameCount}
-	funde := leseBildschirmText(quelle, bl, res, helfer, fensterS, schrittS)
+	funde := leseBildschirmText(quelle, bl, res, helfer, fensterS, schrittS, crop)
 	d.OCRFunde, d.OCRFenster = funde, fensterS
 
 	neu, err := json.Marshal(d)

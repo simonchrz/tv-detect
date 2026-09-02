@@ -240,7 +240,7 @@ func secondOpinion(decoder string, opts blocks.Opts, produced []blocks.Block,
 // Zusatzsignal darf keinen Cutlist-Lauf kosten — dieselbe Regel wie beim
 // decoder-fallback oben.
 func leseBildschirmText(quelle string, bl []blocks.Block, res *pipeline.Result,
-	helfer string, fensterS, schrittS float64) []signals.OCRFund {
+	helfer string, fensterS, schrittS, crop float64) []signals.OCRFund {
 
 	if quelle == "" || len(bl) == 0 {
 		return nil
@@ -261,7 +261,8 @@ func leseBildschirmText(quelle string, bl []blocks.Block, res *pipeline.Result,
 		dauerS = float64(res.FrameCount) / res.FPS
 	}
 	funde, err := signals.OCRUmKanten(quelle, kanten, dauerS, signals.OCROpts{
-		Helfer: helfer, FensterS: fensterS, SchrittS: schrittS})
+		Helfer: helfer, FensterS: fensterS, SchrittS: schrittS,
+		UnteresTeilbild: crop})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ocr uebersprungen:", err)
 		return nil

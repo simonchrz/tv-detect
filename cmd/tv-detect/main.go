@@ -90,6 +90,7 @@ func main() {
 		ocrHelfer   = flag.String("ocr-helper", "", "Pfad zum tv-ocr-Binary. Leer = neben der tv-detect-Binaerdatei suchen.")
 		ocrFensterS = flag.Float64("ocr-window", 90, "Halbfenster in Sekunden um jede Blockgrenze, das abgetastet wird.")
 		ocrSchrittS = flag.Float64("ocr-step", 2, "Abstand zwischen zwei Abtastpunkten in Sekunden.")
+		ocrCrop     = flag.Float64("ocr-crop", 1, "Nur dieser Anteil vom UNTEREN Bildrand geht an Vision (1 = ganzes Bild, Vorgabe). Vision haengt an der Pixelmenge, ein Zuschnitt spart also — aber die Marker sitzen in ZWEI Regionen: Werbe-Kennzeichnung unten, Programmhinweis auch OBEN RECHTS. Gemessen: 0.5 verlor auf einer Aufnahme nichts und auf einer zweiten 15 von 63 Treffern. Nur setzen, wenn fuer den konkreten Sender nachgemessen.")
 
 		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
 		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
@@ -151,7 +152,7 @@ func main() {
 		// frisch gelesenen Marker im Dump.
 		if *ocrMarker {
 			anreicherOCR(*replaySignals, flag.Arg(0), *decoderName, buildOpts,
-				*ocrHelfer, *ocrFensterS, *ocrSchrittS)
+				*ocrHelfer, *ocrFensterS, *ocrSchrittS, *ocrCrop)
 		}
 		runReplay(*replaySignals, *replayNNCSV, *speakerCSV, *output, *decoderName, buildOpts)
 		return
@@ -430,7 +431,7 @@ func main() {
 	var ocrFunde []signals.OCRFund
 	if *ocrMarker {
 		ocrFunde = leseBildschirmText(flag.Arg(0), blockList, res,
-			*ocrHelfer, *ocrFensterS, *ocrSchrittS)
+			*ocrHelfer, *ocrFensterS, *ocrSchrittS, *ocrCrop)
 	}
 
 	// Optional raw-signals dump — everything Form() consumes, plus die

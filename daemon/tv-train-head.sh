@@ -234,8 +234,6 @@ done
     --train-archive "$HOME/.cache/tvd-train-archive" \
     --head-arch mlp32-channel-whisper-temporal-mp-wm \
     $TVH_HEAD_ARCH_OVERRIDE \
-    --shadow-eval \
-    --ablate-minute-prior \
     --prod-seeds 3 \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
@@ -281,6 +279,15 @@ done
 # head-to-head skippt, Floor-Gate greift; head.minute-prior.json wird
 # ab dann mit dem Bundle deployt (Go nn.go v4 + Daemon --start-ts in
 # tandem deployt).
+# 2026-09-02: --shadow-eval und --ablate-minute-prior RAUS. Alle Spalten-
+# Fragen sind entschieden (O1, O2, O6, O7, O8/O8b, O16 — Ledger §3/§4), keine
+# offene Registrierung liest shadow-trend.jsonl, und die Produktion faehrt
+# seit 14.08. den nackten Kopf. Die Ablation war seitdem inert (mlp32 hat
+# keine Minute-Prior-Spalte; letzter Ablations-Block im Log vor 08-14).
+# Acht Schatten-Fits + acht Held-out-Auswertungen pro Nacht fielen damit
+# nur noch als Rechenzeit an. Wieder an = beide Flags oben einfuegen; die
+# Tagesserie (tv-tagesserie.sh) traegt ihr eigenes --shadow-eval und ist
+# davon unberuehrt. Laufzeit-Referenz vorher: 03:30 -> 05:13 (02.09.).
 # --shadow-eval WIEDER AN seit 2026-07-15 für die minute-prior-Probe
 # (cwt-Produktions-Replikat vs +P(ad|minute)-Spalte; Ziel: die 77%
 # intra-show-FP-Fehlerklasse). Entscheidung nach einigen Nächten wie

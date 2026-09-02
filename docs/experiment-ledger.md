@@ -3133,3 +3133,40 @@ wird, bevor irgendjemand hineinschaut.
 
 Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
 eingereiht.
+
+### 2026-09-02 — Schattenreihe abgeschaltet, Feature-Cache aufgeräumt
+
+**Schattenreihe.** `--shadow-eval` und `--ablate-minute-prior` sind aus
+`tv-train-head.sh` heraus. Begründung, nachgeprüft statt angenommen:
+
+* Jede Spalten-Frage ist entschieden und im Friedhof (O1, O2, O6, O7,
+  O8/O8b, O16). Die Reihe war laut §3a „Kandidatensuche, Tagesserie =
+  Urteil" — und es gibt keinen Kandidaten mehr, der nicht schon gemessen
+  wurde. Keine offene Registrierung liest `shadow-trend.jsonl`.
+* Die Produktion fährt seit 14.08. den nackten Kopf (1282 = Backbone +
+  Logo + Audio). Die Zusatzspalten liefen NUR noch in den acht Schatten-
+  Fits, also acht Fits + acht Held-out-Auswertungen pro Nacht ohne Leser.
+* Die Ablation war seit dem Wechsel inert: `mlp32` hat keine Minute-Prior-
+  Spalte, der Block „minute-prior ABLATION" steht im Log zuletzt VOR dem
+  14.08. Das Flag stand nur noch da.
+* Der Golden-Schreiber und `per-rec-iou.jsonl` hängen nicht am Flag
+  (eigene Berechnung, train-head.py ~7081); statisch geprüft, dass keine
+  Variable aus dem Schatten-Block (Zeilen 5173–5836) danach ohne ihn
+  gebraucht wird.
+
+Was bleibt: `tv-tagesserie.sh` trägt sein eigenes `--shadow-eval` für
+gepaarte Urteile — der Weg für eine NEUE Spalten-Frage ist also weiter da,
+nur nicht mehr als Dauerlauf. `loop-status` zeigt die Reihe bis 02.09.
+Messung: Laufzeit der Nightly vorher 03:30 → 05:13 (Deploy-Stempel);
+morgen dagegen halten. Wieder an = zwei Zeilen im Wrapper.
+
+**Feature-Cache.** 1704 alte Stände (27.5 GB, 43 → 18 GB) gelöscht —
+`scripts/features-aufraeumen.py`, jetzt nächtlich statt des
+`find -atime +60`, das nie griff. ⚠️ Das berührt L6 dem Wortlaut nach
+(„Cache-Einträge löschen"). Abgrenzung: L6 meint Kopien einer AUFNAHME
+(Dual-Copy); Feature-Stände sind aus der Quelle ableitbar. Die eine Stelle,
+an der ein Stand doch die letzte Kopie ist — das Archiv-npz hält nur
+Labels, die Features liegen im per `feature_npy` referenzierten `.npy`,
+und ein fehlender fällt STILL aus dem Training — ist genau die, die die
+Prune ausnimmt (5 referenzierte ältere Stände bleiben; 795/795 Referenzen
+nachher vorhanden).

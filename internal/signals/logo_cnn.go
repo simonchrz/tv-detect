@@ -28,11 +28,11 @@ import (
 // edge-template on hard channels.
 //
 // Per-frame flow:
-//   1. Crop frame to (bbox + margin) region — same crop as training
-//   2. Bilinear-resize to 64x64
-//   3. Convert RGB-uint8 → CHW float32, normalise (x-0.5)/0.25
-//   4. ONNX forward → 1 logit
-//   5. Sigmoid → probability of "logo present" in [0, 1]
+//  1. Crop frame to (bbox + margin) region — same crop as training
+//  2. Bilinear-resize to 64x64
+//  3. Convert RGB-uint8 → CHW float32, normalise (x-0.5)/0.25
+//  4. ONNX forward → 1 logit
+//  5. Sigmoid → probability of "logo present" in [0, 1]
 type LogoCNNDetector struct {
 	session   *ort.AdvancedSession
 	inTensor  *ort.Tensor[float32]
@@ -100,7 +100,8 @@ func NewLogoCNNDetector(onnxPath string, frameW, frameH int,
 	}
 	opts, err := ort.NewSessionOptions()
 	if err != nil {
-		in.Destroy(); out.Destroy()
+		in.Destroy()
+		out.Destroy()
 		return nil, fmt.Errorf("logo-cnn: session opts: %w", err)
 	}
 	defer opts.Destroy()
@@ -108,7 +109,8 @@ func NewLogoCNNDetector(onnxPath string, frameW, frameH int,
 		[]string{"frame"}, []string{"logit"},
 		[]ort.Value{in}, []ort.Value{out}, opts)
 	if err != nil {
-		in.Destroy(); out.Destroy()
+		in.Destroy()
+		out.Destroy()
 		return nil, fmt.Errorf("logo-cnn: load %s: %w", onnxPath, err)
 	}
 	return &LogoCNNDetector{
@@ -205,4 +207,3 @@ func (d *LogoCNNDetector) fillInput(pixels []byte) {
 		}
 	}
 }
-

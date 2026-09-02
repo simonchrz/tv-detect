@@ -17,22 +17,22 @@ package signals
 //
 // TimeS is the timestamp of that transition frame.
 type LetterboxEvent struct {
-	Frame  int
-	TimeS  float64
-	Onset  bool // true = bars appeared, false = bars disappeared
+	Frame int
+	TimeS float64
+	Onset bool // true = bars appeared, false = bars disappeared
 }
 
 // LetterboxDetector tracks the per-frame "are top+bottom rows mostly
 // black" boolean, with hysteresis to suppress single-frame flickers
 // caused by encoder noise on dark scenes.
 type LetterboxDetector struct {
-	fps       float64
-	width     int
-	height    int
-	barRows   int     // rows at top/bottom to inspect
-	lumaTh    int     // row pixel counts as black if luma <= this
-	rowFill   float64 // fraction of row pixels that must be black to count the row as a black bar (default 0.95)
-	hysteresis int    // frames of consistent state before flipping (default = ~0.5s @ fps)
+	fps        float64
+	width      int
+	height     int
+	barRows    int     // rows at top/bottom to inspect
+	lumaTh     int     // row pixel counts as black if luma <= this
+	rowFill    float64 // fraction of row pixels that must be black to count the row as a black bar (default 0.95)
+	hysteresis int     // frames of consistent state before flipping (default = ~0.5s @ fps)
 
 	pendingState  bool // candidate new state
 	pendingFrames int  // consecutive frames in candidate state

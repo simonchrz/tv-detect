@@ -11,10 +11,10 @@ import (
 // resampler needs are decoded; the bulk transcription text is ignored at
 // load time.
 type whisperJSON struct {
-	DurationS float64           `json:"duration_s"`
-	WindowS   int               `json:"window_s"`
-	StrideS   int               `json:"stride_s"`
-	Windows   []whisperWindow   `json:"windows"`
+	DurationS float64         `json:"duration_s"`
+	WindowS   int             `json:"window_s"`
+	StrideS   int             `json:"stride_s"`
+	Windows   []whisperWindow `json:"windows"`
 }
 
 type whisperWindow struct {

@@ -49,7 +49,7 @@ func DetectSilence(ctx context.Context, opts SilenceOpts) ([]SilenceEvent, error
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-nostdin",
 		"-i", opts.Input,
-		"-vn",                 // discard video — we only want the audio analyser
+		"-vn", // discard video — we only want the audio analyser
 		"-af", filter,
 		"-f", "null", "-")
 	stderr, err := cmd.StderrPipe()

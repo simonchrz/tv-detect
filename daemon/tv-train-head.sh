@@ -378,17 +378,15 @@ if [ -f "$TRAIN_OUT/head.history.json" ]; then
         "$GATEWAY/api/internal/training-attempt" >/dev/null 2>&1 || true
 fi
 
-# Cache hygiene: every recording experiment (different --with-* flags)
-# leaves orphan .npy files in tvd-features/ — bumped cache key, old
-# files unused but still on disk. Each is ~1-3 MB; over months of
-# experiments the directory grows several GB. Prune anything that
-# hasn't been read in 60 days. The current production flag set
-# (--with-logo) is touched every nightly run so its caches stay
-# alive; only stale experiment caches get reaped.
-deleted=$(find "$HOME/.cache/tvd-features" -name "*.npy" -atime +60 -print -delete 2>/dev/null | wc -l)
-if [ "$deleted" -gt 0 ]; then
-  echo "cache cleanup: pruned $deleted stale .npy file(s)"
-fi
+# Cache hygiene: every source invalidation (re-filter, recovery, chase-play)
+# bumps the source mtime and leaves the previous feature stand
+# <uuid>-<old_mtime>-….npy behind — nobody reads it, it just sits there
+# (09-2026: 27 GB across 375 recordings). Keep per uuid only the newest
+# stand plus whatever the train-archive references via feature_npy (a
+# missing reference silently drops that recording from training). The
+# earlier `find -atime +60` is gone: atime is reset by any scan, so it
+# never reaped a thing while the cache doubled.
+"$VENV_PY" "$HOME/src/tv-detect/scripts/features-aufraeumen.py" --loeschen 2>&1 | sed 's/^/cache cleanup: /'
 # Per-show IoU snapshot. The new head.bin invalidates all auto-cutlists
 # so the post-train daemon bulk-redetect must drain BEFORE the snapshot
 # is meaningful (stale ads.json → IoU=0). Earlier this script tried to

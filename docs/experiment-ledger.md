@@ -3107,3 +3107,29 @@ O13 unverändert verhungert (`ocr-schatten.jsonl` leer, kein `--ocr-marker`
 in der Kette, Entscheidung Simon vom 26.08. offen). Versiegelter Satz 28/~30
 — noch nicht öffnen (O5). Keine Serie mit Regelblock läuft, kein Platz frei,
 nichts eingereiht.
+
+### Nachtrag 2026-09-02 (Tagesdurchgang) — sechste Ensemble-Nacht; OCR-Erhebung seit heute früh scharf
+
+Audit exit 0, Golden-Zeile vollständig. Deploy per Head-to-Head (Δ +0.000
+auf 113, 11/2 — keine belastbare Regression). Golden 0.9615 gegen Boden
+0.9587 (+0.003, passiert); der Boden liegt weiter über dem Champion (O3,
+bekannt). Kein Befund, Reihe fortgeschrieben (R3).
+
+**O13 verhungert nicht mehr:** seit heute 07:19 ist `--ocr-marker` in der
+Detect-Kette (774191e — Binary-Tausch vorher A/B-geprüft, Cutlists
+identisch; Daemon 07:19:40 MIT dem neuen Code gestartet, Script-Save
+07:19:19). `ocr-schatten.jsonl` ist noch leer — erwartbar, seit dem
+Einschalten lief kein Detect. Morgen prüfen, ob die ersten prospektiven
+Marker ankommen; erst dann beginnt die O13-Uhr real zu laufen.
+⚠️ Kosten laut Messung im Commit +22 bis +100 % je nach Kantenzahl, nicht
+die dokumentierten +7/+17 % — falls das im Betrieb drückt, ist
+`TVD_OCR_MARKER=0` der Schalter (bootout + bootstrap, nicht kickstart).
+
+**Versiegelter Satz 31/~30 — Schwelle erstmals erreicht (O5).** Nicht
+geöffnet: Öffnen ist laut O5 selten, nie zur Kandidatenwahl, und braucht
+eine VORAB geschriebene Prüfregel (R4) plus Simons Entscheidung. Nächster
+Schritt, wenn gewollt: Registrierung anlegen, die festhält, WAS geprüft
+wird, bevor irgendjemand hineinschaut.
+
+Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
+eingereiht.

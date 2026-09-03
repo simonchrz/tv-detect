@@ -3170,3 +3170,27 @@ Labels, die Features liegen im per `feature_npy` referenzierten `.npy`,
 und ein fehlender fällt STILL aus dem Training — ist genau die, die die
 Prune ausnimmt (5 referenzierte ältere Stände bleiben; 795/795 Referenzen
 nachher vorhanden).
+
+### Nachtrag 2026-09-03 (Tagesdurchgang) — siebte Ensemble-Nacht, erste Nacht ohne Schattenreihe
+
+Audit exit 0, Golden-Zeile vollständig (n=38, Seed-Spalte da). Deploy per
+Head-to-Head (Δ +0.000 auf 117, 3/14 — keine belastbare Regression). Golden
+0.957 gegen Boden 0.9615 (−0.004, innerhalb der Toleranz, passiert);
+Champion bleibt 0.9615 vom 09-02. Kein Befund, Reihe fortgeschrieben (R3).
+
+**Laufzeit ohne Schattenreihe:** 03:30:05 → 04:45:19 (Log-Ende), vorher
+05:13 — rund 28 Minuten kürzer. Golden-Schreiber, Schwanz und
+`per-rec-iou.jsonl` liefern unverändert; der Abschaltung von gestern fehlt
+nichts.
+
+**O13 läuft jetzt real:** der Schattenlauf hat die erste prospektive
+Aufnahme MIT OCR-Dump aufgenommen (`dvr-kabel-eins-1788274676`,
+Menschen-Label 09-02 08:00, 0 OCR-Funde → keine angefasste Kante). Kein
+Stillstands-Hinweis vom Skript, die `--ocr-marker`-Kette trägt also. Stand
+0/40 Kanten aus 0/20 Aufnahmen — kein Zwischenstand, nur die Zählung.
+
+Versiegelter Satz 33 — nicht geöffnet (O5: erst Prüfregel registrieren,
+Simons Entscheidung). Korrekturaufwand 2026-09 n=2, kein Befund bei dem n.
+
+Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
+eingereiht.

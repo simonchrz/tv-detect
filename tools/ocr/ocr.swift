@@ -62,6 +62,15 @@ let stufe: VNRequestTextRecognitionLevel =
 
 // Mindest-Texthoehe als Anteil der Bildhoehe. 0 = Vorgabe von Vision (sucht
 // bis zur kleinsten Schrift).
+// TVOCR_BOXEN=1 haengt eine DRITTE Spalte an: die Textrahmen, normiert
+// (x,y,w,h; Ursprung unten links), mit ";" getrennt und in derselben
+// Reihenfolge wie die Texte. Fuer das Schwaerzen der Einblendung, bevor ein
+// Review-Agent den Frame sieht — er soll die Kante aus dem Bild ableiten,
+// nicht den Programmhinweis mitlesen, an den die OCR-Regel sie zieht.
+// Aus by default: die dritte Spalte wuerde sonst jeden bestehenden Leser
+// ueberraschen (internal/signals/ocr.go teilt an "\t").
+let mitRahmen = ProcessInfo.processInfo.environment["TVOCR_BOXEN"] == "1"
+
 let minHoehe: Float = {
     if let s = ProcessInfo.processInfo.environment["TVOCR_MINHEIGHT"],
        let v = Float(s) { return v }
@@ -80,13 +89,27 @@ for pfad in CommandLine.arguments.dropFirst() {
     if minHoehe > 0 { anfrage.minimumTextHeight = minHoehe }
     let handler = VNImageRequestHandler(cgImage: cg, options: [:])
     var texte: [String] = []
+    var rahmen: [String] = []
     do {
         try handler.perform([anfrage])
         for r in (anfrage.results ?? []) {
             if let t = r.topCandidates(1).first, t.confidence > 0.3 {
                 texte.append(t.string)
+                if mitRahmen {
+                    // Vision liefert normiert mit Ursprung UNTEN links.
+                    // Unveraendert weitergeben — wer maskiert, rechnet um;
+                    // hier zu drehen wuerde die Konvention verstecken.
+                    let b = r.boundingBox
+                    rahmen.append(String(format: "%.4f,%.4f,%.4f,%.4f",
+                                         b.origin.x, b.origin.y,
+                                         b.size.width, b.size.height))
+                }
             }
         }
     } catch { }
-    print("\(pfad)\t\(texte.joined(separator: " | "))")
+    if mitRahmen {
+        print("\(pfad)\t\(texte.joined(separator: " | "))\t\(rahmen.joined(separator: ";"))")
+    } else {
+        print("\(pfad)\t\(texte.joined(separator: " | "))")
+    }
 }

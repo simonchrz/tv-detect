@@ -51,3 +51,54 @@ Nur ein **Kandidatenbericht** an Simon. Es wird kein Label geschrieben —
 L2 (Labels sind Eingabe, nicht Stellschraube). Ab einer Rate von ~25 %
 wäre der Kanten-Maßstab selbst betroffen und der Befund gehört vor jede
 weitere Kanten-Messung.
+
+---
+
+## Ergebnis 2026-09-03
+
+20 Blockanfänge, 10 Sender, 300 Bilder, 10 Agenten. Auswertung nach der
+Regel oben (`scripts/vorlauf_auswerten.py`, 7 Tests).
+
+**5 zu spät · 12 sauber · 3 unklar → Rate 5/17 = 29 %.**
+Damit über der Schwelle, ab der laut Registrierung der Kanten-Maßstab
+selbst betroffen ist.
+
+| Aufnahme | Kanal | Anfang | zu spät um | was davor liegt |
+|---|---|---|---|---|
+| dvr-vox-1779292500 | vox | 2891.0 | 6 s | Ident + Show-Logo-Trenner |
+| dvr-prosieben-1782743457 | prosieben | 690.0 | ≥24 s | Gewinnspiel (GewinnArena, Rufnummer) |
+| dvr-kabel-eins-1783924200 | kabel-eins | 924.0 | 10 s | Joyn-Ident + Filmtrailer mit Sendetermin |
+| dvr-comedy-central-1778617500 | comedy-central | 839.0 | ≥24 s | „Ghosts"-Trailer + Sender-Idents |
+| dvr-disney-channel-1781554200 | disney-channel | 1087.1 | 12 s | Disney-Trailer „Freitag 20:15" |
+
+**Die 29 % sind aber kein Qualitätsmaß, sondern ein Datum-Maß.** Vier der
+fünf sind Trailer/Ident-Fälle, also §3y („Rand-Trailer gehören ZUR
+WERBUNG", bindend seit 13.08.), einer ist Gewinnspiel (§3am, seit 17.08.
+wieder Werbung). Nach dem Label-Datum:
+
+* **3 stammen von VOR der Konvention** (23.05., 05.06., 30.06.) — sie sind
+  nicht falsch gesetzt, sie folgen einer anderen Regel.
+* **2 stammen von danach** (13.08., 14.08.) — das sind echte Fehlstellen
+  unter einer Konvention, die zum Zeitpunkt galt.
+
+⚠️ **Das ist wörtlich der Fall, vor dem §3am warnt:** „Wer eine Konvention
+ändert, muss im selben Zug sagen, wer die Labels nachzieht — sonst misst ein
+späterer Lauf die Lücke als Qualität." Der Nachzieh-Lauf vom 17.08. hat
+gespeicherte BILD-Urteile neu abgeleitet und deshalb nur Aufnahmen erreicht,
+für die es solche gab (5 kabel-eins). Menschlich gelabelte Aufnahmen von
+Mai bis Juli hat er nie berührt.
+
+**Folge für jede Kanten-Messung:** der Korpus wird gegen einen gemischten
+Maßstab gemessen. Ein Modell, das Blockanfänge früh setzt (Trailer
+mitnimmt), wird auf den alten Labels bestraft und auf den neuen belohnt.
+Das erklärt einen Teil von O14 („Blockstarts zu spät", §3al) als
+Label-Artefakt, ohne ihn ganz zu erklären.
+
+**Nicht getan:** kein Label geschrieben (L2). Die fünf oben sind
+Kandidaten.
+
+**Nächster sinnvoller Schritt, falls gewünscht:** nicht mehr stichprobenhaft
+messen, sondern die Frage „liegt vor diesem Blockanfang ein Trailer/Ident?"
+über alle Menschen-Labels VOR dem 13.08. laufen lassen — das ist die
+Menge, die der Nachzieh-Lauf ausgelassen hat. Kosten: ~1 Agentenlauf je 2
+Blockanfänge.

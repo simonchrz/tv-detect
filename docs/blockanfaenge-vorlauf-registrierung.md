@@ -168,8 +168,20 @@ Einzeln:
 Die sieben 4-s-Fälle stehen im Werkzeug-Bericht
 (`scripts/vorlauf_bericht.py`), sind aber als Kandidaten zu schwach.
 
-### Lücke
+### Nachtrag: vollständig, 14 von 89 = 16 %
 
-`e0103`–`e0106` fehlen: der Agent lief in ein Sitzungslimit (429). Die
-Kanten sind geschnitten und liegen bereit; ein Nachlauf kostet einen
-Agenten. Die Rate oben steht auf 102 von 106.
+`e0103`–`e0106` sind nachgeholt (zwei davon 6 s zu spät). Endstand über
+alle 106:
+
+```
+zu spät: 14   sauber: 75   unklar: 17      Rate 14/89 = 16 %
+```
+
+Die Aussage ändert sich nicht: **unter der registrierten Schwelle von
+~25 %**, belastbar sind weiterhin die drei Aufnahmen mit ≥10 s Versatz.
+
+⚠️ **Kostennotiz für die nächste Runde:** die 36 Agenten liefen alle auf
+dem großen Modell — rund 3 Mio. Token für reine Einzelbild-Klassifikation.
+Der Nachlauf über Sonnet lieferte dieselbe Aufgabe ohne erkennbaren
+Qualitätsunterschied. Für Klassifikations-Sweeps gehört `model: sonnet` in
+den Agenten-Aufruf; das große Modell nur dort, wo abgewogen wird.

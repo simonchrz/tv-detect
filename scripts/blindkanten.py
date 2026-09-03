@@ -108,6 +108,17 @@ def hauptteil(argv=None):
     ap.add_argument("--breite", type=int, default=640)
     ap.add_argument("--rand", type=float, default=0.03,
                     help="Sicherheitsrand um jeden Textrahmen (normiert)")
+    ap.add_argument("--ohne-blendung", action="store_true",
+                    help="NICHT schwaerzen. Nur erlaubt, wenn die Frage nichts "
+                         "mit der OCR-Regel zu tun hat — etwa: liegt vor einem "
+                         "gelabelten Blockanfang schon Werbung? Ein Mensch "
+                         "laese die Einblendung dort auch. ⚠️ So gewonnene "
+                         "Urteile duerfen NIE als O13-Referenz dienen, sonst "
+                         "ist die Zirkularitaet durch die Hintertuer zurueck.")
+    ap.add_argument("--vorlauf", type=float, default=None,
+                    help="statt eines symmetrischen Fensters: von kante-VORLAUF "
+                         "bis kante+nachlauf")
+    ap.add_argument("--nachlauf", type=float, default=4.0)
     args = ap.parse_args(argv)
 
     quelle = QUELLEN / f"{args.uuid}.ts"
@@ -116,8 +127,12 @@ def hauptteil(argv=None):
         return 1
     args.ziel.mkdir(parents=True, exist_ok=True)
 
-    start = args.kante - args.fenster
-    n = int(2 * args.fenster / args.schritt) + 1
+    if args.vorlauf is not None:
+        start = args.kante - args.vorlauf
+        n = int((args.vorlauf + args.nachlauf) / args.schritt) + 1
+    else:
+        start = args.kante - args.fenster
+        n = int(2 * args.fenster / args.schritt) + 1
     roh = args.ziel / "roh"
     roh.mkdir(exist_ok=True)
     subprocess.run(
@@ -127,7 +142,7 @@ def hauptteil(argv=None):
         check=True)
 
     bilder = sorted(roh.glob("f*.png"))
-    kaesten = rahmen_lesen(bilder)
+    kaesten = {} if args.ohne_blendung else rahmen_lesen(bilder)
     from PIL import Image, ImageDraw
     zeilen = []
     for i, b in enumerate(bilder):
@@ -146,6 +161,12 @@ def hauptteil(argv=None):
     # Vision. Was jetzt noch lesbar ist, hat das Schwaerzen uebersehen — ein
     # halb stehengebliebener Programmhinweis reicht dem Agenten. "Es wurden
     # N Kaesten gemalt" ist KEIN Beleg dafuer, dass nichts mehr dasteht.
+    if args.ohne_blendung:
+        for sek, name, n_k, _ in zeilen:
+            print(f"{sek:8.1f}  {name}")
+        print(f"\nUNGEBLENDET ({len(zeilen)} Bilder) — nur fuer Fragen "
+              f"ausserhalb der OCR-Regel zulaessig.")
+        return 0
     nach = rahmen_lesen([args.ziel / n for _, n, _, _ in zeilen])
     n_leck = n_neu = 0
     for sek, name, n_k, roh_name in zeilen:

@@ -57,3 +57,58 @@ O13 geparkt wie O14, und das Ergebnis steht trotzdem im Ledger.
 ⚠️ Die Stichprobe ist mit 8 Kanten klein. Sie kann eine grobe Untauglichkeit
 zeigen, aber keine Feinheit belegen — fällt sie knapp aus, ist das ein
 "nochmal mit mehr", kein Freibrief.
+
+---
+
+## Ergebnis 2026-09-03: NICHT ERFÜLLT
+
+| Kante | Kanal | Art | Wahrheit | abgeleitet | Abstand | Fehlurteile |
+|---|---|---|---|---|---|---|
+| 1 | rtlzwei | start | 1317.9 | 1316.4 | 1.5 s | 0/13 |
+| 2 | rtlzwei | ende | 2046.0 | 2046.5 | 0.5 s | 0/13 |
+| 3 | prosieben | start | 2590.6 | 2590.1 | 0.5 s | 0/13 |
+| 4 | sat-1 | start | 2691.1 | — | — | 0/13 |
+| 5 | super-rtl | start | 844.0 | — | — | 0/13 |
+| 6 | sixx | start | 1857.7 | — | — | 0/13 |
+| 7 | prosieben | ende | 1290.0 | 1288.5 | 1.5 s | 0/13 |
+| 8 | nick | ende | 1062.6 | 1062.1 | 0.5 s | 0/13 |
+
+Bedingung 1: ≤2 s in **5 von 8** (verlangt 6) — VERFEHLT.
+Bedingung 2: **3** Ausreißer (verlangt 0) — VERFEHLT.
+
+**Das Urteil steht. Es wird nicht umgedeutet.**
+
+## Beobachtung (NICHT Teil des Urteils)
+
+Die acht Kanten zerfallen in zwei saubere Gruppen, nicht in einen Verlauf:
+
+* **5 Treffer, alle ≤1,5 s, alle mit 0 Fehlurteilen über 13 Bilder.** Wo der
+  geblendete Agent einen Übergang sieht, sitzt er sehr genau — genauer als
+  der Produktions-Decoder (Median 2,0 s, Ledger O14).
+* **3 Fehlschläge, alle derselben Bauart:** durchgehend WERBUNG über das
+  ganze Fenster, kein Übergang, ausschließlich `start`-Kanten. Der Agent hat
+  also nicht danebengegriffen, er hat 6 s VOR der Label-Kante schon Werbung
+  gesehen (Joyn-Trailer „Promi taste"; Dickie-Toys-Spot; sixx-Ident +
+  Autospot).
+
+Damit stehen zwei Erklärungen offen, die sich ausschließen:
+
+* **(A) Der Agent taugt nicht** — er hält Sendungsmaterial für Werbung.
+* **(B) Das Label ist zu spät** — der Werbeblock beginnt früher, als der
+  Mensch ihn gesetzt hat. Dafür spricht die Konvention aus §3y (Rand-Trailer
+  gehören ZUR WERBUNG) und der Befund aus §3al (Blockstarts zu spät). Bei
+  Kante 4 ist das sichtbar ein Trailer vor der Label-Kante.
+
+## Zusatzfrage (registriert 2026-09-03, VOR dem Lauf)
+
+Dieselben drei Kanten, Fenster ±20 s statt ±6 s, Abstand 2 s, gleiche
+Blendung, gleiche Frageform.
+
+* Findet der Agent dort einen Übergang **vor** der Label-Kante, ist (B)
+  belegt — dann ist der Befund einer über LABEL, nicht über Agenten, und die
+  Kalibrierung ist mit korrigierten Labels zu wiederholen.
+* Bleibt es über ±20 s durchgehend WERBUNG oder liegt der Übergang **nach**
+  der Label-Kante, ist (A) belegt und O13 wird geparkt wie O14.
+
+⚠️ Auch ein Ausgang (B) macht die Kalibrierung oben NICHT nachträglich
+erfüllt. Er sagt nur, woran der nächste Versuch ansetzen müsste.

@@ -112,3 +112,46 @@ Blendung, gleiche Frageform.
 
 ⚠️ Auch ein Ausgang (B) macht die Kalibrierung oben NICHT nachträglich
 erfüllt. Er sagt nur, woran der nächste Versuch ansetzen müsste.
+
+## Zusatzfrage: Ergebnis — die Dichotomie war zu grob
+
+Drei Kanten, ±20 s, 2 s Abstand. Drei verschiedene Ursachen, keine davon
+sauber (A) oder (B):
+
+| Kante | Übergang laut Agent | Label | Befund |
+|---|---|---|---|
+| 4 (sat-1) | 2690.1 | 2691.1 | **1,0 s daneben — das Label stimmt.** Im engen Fenster lagen nur 2 Bilder Sendung vor der Kante, im weiten 10. |
+| 5 (super-rtl) | Werbung ab ≤824.0 | 844.0 | Label-Start ~20 s zu spät: Mattel-Packshot mit Copyright-Zeile, Dickie-Toys-Spots. Aber der Agent nennt 864.0 (mitten im Label-Block) SENDUNG — Paw-Patrol-Bild ohne Senderlogo, mutmaßlich ein Trailer. |
+| 6 (sixx) | 1852.7 | 1857.7 | Label-Start 5,0 s zu spät: davor ein sixx-Eigenpromo, das nach §3y ZUR WERBUNG gehört. |
+
+**Damit ist die Zusatzfrage nicht beantwortet, sondern widerlegt.** Sie
+unterstellte, es gebe EINE Ursache. Tatsächlich:
+
+1. **Ein Fehlschlag war mein Aufbau.** Fenster ±6 s mit Versatz bis ±4 s
+   lässt im schlimmsten Fall 2 Bilder auf einer Seite — zu wenig, damit ein
+   Klassifikator die zweite Klasse überhaupt als Klasse sieht. Kante 4
+   sitzt im weiten Fenster auf 1,0 s. Der Agent war nie das Problem.
+2. **Zwei Labels sind zu spät**, beide am Blockanfang, beide um ein
+   Eigenpromo bzw. eine Spot-Strecke, die davor lag.
+3. **Und der Agent scheitert an Trailern** (Kante 5, Bild bei 864 s). Das
+   ist keine Randnotiz: §3ap sagt, der Kantenschwanz besteht aus genau
+   dieser Klasse (8 von 8). Wo O13 am meisten gebraucht würde, ist der
+   Agent am schwächsten — und Trailer sind Programmmaterial, das kann auch
+   Blendung nicht heilen.
+
+## Konsequenz
+
+**Agenten ersetzen die menschliche Kanten-Referenz für O13 NICHT.** Nicht
+weil sie ungenau wären — mit genug Kontext sitzen sie auf ≤1,5 s bei null
+Fehlurteilen —, sondern weil sie genau die eine Klasse nicht können, aus der
+der Kantenschwanz besteht. Ein Maßstab, der bei den schweren Fällen
+systematisch kippt, ist als Maßstab wertlos, auch wenn er im Mittel gut
+aussieht.
+
+**Was Agenten hier sehr wohl können:** Blockanfänge auf ein davorliegendes
+Eigenpromo prüfen — das ist Klassifikation, nicht Grenzziehung, und traf in
+2 von 3 Fällen einen echten Label-Fehler. Das ist ein eigener Vorschlag,
+keine Fortsetzung dieser Registrierung.
+
+⚠️ Stichprobe: 8 Kanten, davon 3 nachuntersucht. Zwei zu späte Labels sind
+ein Verdacht, keine Rate.

@@ -102,3 +102,74 @@ messen, sondern die Frage „liegt vor diesem Blockanfang ein Trailer/Ident?"
 über alle Menschen-Labels VOR dem 13.08. laufen lassen — das ist die
 Menge, die der Nachzieh-Lauf ausgelassen hat. Kosten: ~1 Agentenlauf je 2
 Blockanfänge.
+
+---
+
+## Vollständiger Lauf 2026-09-03: 12 von 85 = 14 % — Schwelle NICHT erreicht
+
+106 Blockanfänge aus 64 Aufnahmen, 1590 Bilder, 36 Agenten.
+102 ausgewertet (4 fielen einem Sitzungslimit zum Opfer, s.u.).
+
+```
+zu spät: 12   sauber: 73   unklar: 17      Rate 12/85 = 14 %
+```
+
+⚠️ **Das korrigiert die Stichprobe von heute Vormittag nach unten.** Dort
+waren es 5/17 = 29 %, und ich hatte gemeldet, die vorab gesetzte Schwelle
+von ~25 % sei überschritten. **Auf der vollen Menge ist sie es nicht.** 17
+Kanten sind zu wenig, um eine Rate zu schätzen — genau der Fehler, vor dem
+der eigene Vorbehalt („ein Verdacht, keine Rate") gewarnt hat, und ich habe
+ihn trotzdem als Schwellenüberschreitung gemeldet.
+
+### Die 12 zerfallen in zwei sehr ungleiche Gruppen
+
+| | Kanten | Aufnahmen | Label-Datum |
+|---|---|---|---|
+| erheblich (≥10 s) | 5 | **3** | 4× Mai, 1× Juni |
+| grenzwertig (genau 4 s) | 7 | 7 | 4× Mai, 2× Juni, 1× Juli |
+
+Die 4-s-Fälle sind das Minimum, das die Regel überhaupt meldet (zwei
+Bilder) — typischerweise ein einzelnes Ident/Bumper unmittelbar vor der
+Kante. Ob das ein Fehler ist, hängt daran, wie streng man §3y liest.
+**Die belastbare Menge sind die drei Aufnahmen mit ≥10 s.**
+
+### Konventions-Drift bestätigt sich in der Richtung, nicht in der Größe
+
+Alle 5 erheblichen Fälle tragen Labels aus Mai/Juni, keiner aus Juli — bei
+einer Grundmenge von 49 Mai / 29 Juni / 28 Juli. Die Richtung passt also zur
+These (ältere Labels folgen der alten Regel), aber die Menge ist klein
+genug, dass sie auch Zufall sein kann. **Kein Beleg für eine flächige
+Drift.** Der Nachzieh-Lauf vom 17.08. hat weniger liegen lassen, als die
+Stichprobe nahelegte.
+
+### Die 17 „unklar" sind kein Rauschen, sondern ein eigener Befund
+
+Sieben davon stammen aus EINER Aufnahme: `dvr-rtl-1780078500` (Let's Dance,
+RTL live, 3,7 h). Dort zeigt der Frame am gelabelten Blockanfang die
+laufende Tanzdarbietung mit Voting-Einblendung — **der Block fängt zu FRÜH
+an, es wird in die Sendung hineingeschnitten.** Das ist die Gegenrichtung
+zu dieser Frage; die Regel gibt korrekt „unklar" zurück, statt eine Zahl zu
+erfinden. Braucht eine eigene Messung mit Nachlauf.
+
+### Kandidaten (nichts geschrieben, L2)
+
+Durchgehend betroffen — jeder geprüfte Anfang zu spät, also eher eine
+Aufnahme nach anderer Regel als ein Ausrutscher:
+
+* `dvr-kabel-eins-1779119815` (23.05.) — 1526.2 → ab ~1504.2 (22 s);
+  2902.2 → ab ~2882.2 (20 s)
+* `dvr-prosieben-1778778286` (16.05.) — 2390.5 → ab ~2366.5 (≥24 s);
+  3312.7 → ab ~3288.7 (≥24 s)
+
+Einzeln:
+
+* `dvr-comedy-central-1778617500` (05.06.) — 839.0 → ab ~815.0 (≥24 s)
+
+Die sieben 4-s-Fälle stehen im Werkzeug-Bericht
+(`scripts/vorlauf_bericht.py`), sind aber als Kandidaten zu schwach.
+
+### Lücke
+
+`e0103`–`e0106` fehlen: der Agent lief in ein Sitzungslimit (429). Die
+Kanten sind geschnitten und liegen bereit; ein Nachlauf kostet einen
+Agenten. Die Rate oben steht auf 102 von 106.

@@ -3194,3 +3194,57 @@ Simons Entscheidung). Korrekturaufwand 2026-09 n=2, kein Befund bei dem n.
 
 Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
 eingereiht.
+
+### 2026-09-03 — Die zwei „Menschen" im O13-Ledger waren Maschinen
+
+⚠️ **Gefunden beim Nachsehen, wie schnell O13 zuläuft — nicht gesucht.** Die
+beiden Aufnahmen, die der Schattenlauf als `mensch` führte, waren
+`auto_confirmed_via_fingerprint`. Beide „Reviews" standen auf exakt 08:00,
+an aufeinanderfolgenden Tagen; das war der Anlass hinzusehen.
+
+**Was die Fingerprint-Bestätigung schreibt** (tv-receiver
+`cmd/tv-recorder/learning.go:824`): `"ads": autoBlocks` — die AUTO-Blöcke
+unverändert, plus frisches `reviewed_at`. Kein `reviewed_by`, kein
+`auto_confirmed_at`. `label_quelle()` prüfte nur diese beiden Felder und
+fiel in den Mensch-Zweig („alles andere = Mensch").
+
+**Warum das O13 zerstört hätte:** die Wahrheit IST dort die Modellausgabe.
+`fehler_ist` ist per Konstruktion 0, jede Kantenverschiebung kann nur
+verlieren. O13 hätte bei 40 Kanten auf einer Stichprobe ohne ein einziges
+menschliches Urteil ausgewertet — und die Registrierung schließt Agent-
+Labels gerade deshalb aus. Die Blockade-Meldung „Keine einzige Kante aus
+MENSCHEN-Labels" war da, wurde aber von den 8 Schein-Menschen-Kanten
+unterdrückt.
+
+⚠️ **Die Go-Seite kannte den Fall längst:** `learning.go:82` überspringt
+genau diese Dateien beim Prior-Lernen. Ein Leser wusste es, der andere
+nicht — dieselbe Bauart wie die drei Format-Leser in
+§(Format-Leser fallen still zurück).
+
+**Behoben:** `auto_confirmed_via_fingerprint` → `"auto"`
+(`scripts/test_label_quelle.py`, 7 Tests, 4/4 Mutationen erkannt). Die zwei
+Ledger-Zeilen sind auf `auto` korrigiert (Sicherung im Scratchpad), und
+`"auto"` fliegt jetzt auch aus O14 — dort zählen Agent-Labels
+ausdrücklich weiter, eine Kopie der Modellausgabe ist aber keine zweite
+Meinung.
+
+**Wirkung, ehrlich:** O14 bleibt NICHT ERFÜLLT in allen drei Bedingungen —
+das Urteil vom 27.08. steht und wird hiermit NICHT neu aufgemacht. Sichtbar
+wird nur die Verzerrung: der Referenz-Median springt von 1.0 s auf 2.0 s,
+sobald die 8 Null-Fehler-Kanten draußen sind. Genau die einseitige
+Verschiebung, die zu erwarten war.
+
+**Korpusweit:** 14 von 149 `ads_user.json` im Snapshot sind
+Fingerprint-Bestätigungen. Sie gehen in `train-head.py` als
+`which="user"` → `has_user=True` → **`--user-weight` 2.0×** ein, also als
+wären sie menschlich geprüft (train-head.py:3536, 4407). Das ist kein
+eindeutiger Fehler — `checkFingerprintMatch` ist eine unabhängige Prüfung
+gegen die bekannte Werbestruktur der Show, nur eben kein Mensch. **Offene
+Frage für Simon**, nicht eigenmächtig geändert: eigenes Gewicht zwischen
+`auto` (1.0) und `user` (2.0)?
+
+**Und die Lehre über O13s Tempo:** die Erhebung läuft seit gestern
+(bewiesen), aber O13 hängt nicht an ihr — es hängt an menschlichen Reviews
+von Aufnahmen MIT OCR-Dumps, also an Aufnahmen ab dem 02.09. abends. Davon
+gibt es bisher null. Ohne Reviews bleibt die Zahl bei 0, egal wie viele
+Nächte vergehen.

@@ -113,15 +113,29 @@ def label_quelle(pfad):
     O14 (Flankenauswahl aus NN und Logo) ist davon NICHT betroffen — diese
     Signale sieht kein Agent, sein Urteil ist dazu unabhaengig.
 
-    Erkennung: auto_confirmed_at = Maschine. reviewed_by gesetzt = von
-    einem Review-Agenten. Alles andere = Mensch (der Zustand aller
-    Altbestaende — die App schickt kein reviewed_by).
+    Erkennung: auto_confirmed_at ODER auto_confirmed_via_fingerprint =
+    Maschine. reviewed_by gesetzt = von einem Review-Agenten. Alles andere
+    = Mensch (der Zustand aller Altbestaende — die App schickt kein
+    reviewed_by).
+
+    ⚠️ `auto_confirmed_via_fingerprint` sah wie ein Mensch aus und war der
+    gefaehrlichste Fall: die Spot-FP-Bestaetigung schreibt in
+    `ads_user.json` die AUTO-BLOECKE UNVERAENDERT (`"ads": autoBlocks`,
+    tv-receiver cmd/tv-recorder/learning.go:824) plus ein frisches
+    `reviewed_at` — kein `reviewed_by`, kein `auto_confirmed_at`. Damit
+    fiel sie in den Mensch-Zweig, obwohl keine Kante von einem Menschen
+    beruehrt wurde. Die Wahrheit IST dort die Modellausgabe: `fehler_ist`
+    ist per Konstruktion 0, jede Alternative kann nur schlechter sein.
+    Die Go-Seite schliesst dieselben Dateien beim Prior-Lernen laengst aus
+    (learning.go:82) — nur hier fehlte es. Gefunden 2026-09-03: beide
+    "Menschen"-Aufnahmen des O13-Ledgers waren genau das, O13 haette bei
+    40 Kanten auf einer Stichprobe OHNE menschliches Urteil ausgewertet.
     """
     try:
         d = json.loads(Path(pfad).read_text())
     except Exception:
         return None
-    if d.get("auto_confirmed_at"):
+    if d.get("auto_confirmed_at") or d.get("auto_confirmed_via_fingerprint"):
         return "auto"
     if d.get("reviewed_by"):
         # ⚠️ Auch "zurueckgenommen" faellt hierunter, und das ist Absicht:
@@ -302,7 +316,12 @@ def auswerten():
     eintraege = [json.loads(z) for z in LEDGER.read_text().splitlines() if z.strip()]
     mit_q = [(e["uuid"], k, e.get("label_quelle", "mensch"))
              for e in eintraege for k in e["kanten"]]
-    alle = [(u, k) for u, k, _ in mit_q]
+    # ⚠️ "auto" fliegt auch aus O14 — anders als Agent-Labels, die dort
+    # ausdruecklich zaehlen duerfen (der Agent sieht NN und Logo nicht).
+    # Eine Fingerprint-Bestaetigung ist keine zweite Meinung, sondern eine
+    # Kopie der Modellausgabe: dort ist `fehler_ist` per Konstruktion 0,
+    # jede Alternative kann nur verlieren. Das verzerrt einseitig.
+    alle = [(u, k) for u, k, q in mit_q if q != "auto"]
     import collections
     print(f"{len(eintraege)} Aufnahmen im Ledger, {len(alle)} Kanten "
           f"(Label-Herkunft: {dict(collections.Counter(q for _,_,q in mit_q))})\n")

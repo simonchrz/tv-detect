@@ -51,11 +51,24 @@ SPIEGEL = Path.home() / "tv-labels-backup"
 
 
 def auto_bestaetigte(spiegel):
-    """uuids, deren ads_user.json von Auto-Confirm stammt, nicht vom Menschen."""
+    """uuids, deren ads_user.json von Auto-Confirm stammt, nicht vom Menschen.
+
+    Zwei Maschinen-Schreiber, zwei Markierungen (gleiche Bauart wie in
+    kanten-schatten.label_quelle, Befund 2026-09-03):
+      * `auto_confirmed_at`  — Auto-Confirm des Recorders.
+      * `auto_confirmed_via_fingerprint` — Fingerprint-Bestaetigung
+        (tv-receiver learning.go): schreibt die Auto-Bloecke unveraendert
+        plus `reviewed_at`, OHNE `auto_confirmed_at`. Sah hier wie ein
+        Mensch mit 0 s/h aus und hat fuer 2026-09 "n=2, 100 % exakt"
+        gemeldet — beide Aufnahmen waren Fingerprint-Bestaetigungen.
+    """
     out = set()
     for p in spiegel.glob("_rec_*/ads_user.json"):
         try:
-            if json.loads(p.read_text()).get("auto_confirmed_at"):
+            d = json.loads(p.read_text())
+            if not isinstance(d, dict):
+                continue
+            if d.get("auto_confirmed_at") or d.get("auto_confirmed_via_fingerprint"):
                 out.add(p.parent.name[len("_rec_"):])
         except Exception:
             continue

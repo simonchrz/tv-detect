@@ -3248,3 +3248,41 @@ Frage für Simon**, nicht eigenmächtig geändert: eigenes Gewicht zwischen
 von Aufnahmen MIT OCR-Dumps, also an Aufnahmen ab dem 02.09. abends. Davon
 gibt es bisher null. Ohne Reviews bleibt die Zahl bei 0, egal wie viele
 Nächte vergehen.
+
+### Nachtrag 2026-09-04 (Tagesdurchgang) — achte Ensemble-Nacht, ein Leser nachgezogen
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `label_hash
+8b23298b1371` unverändert, `hsmm`, `ensemble3`, n=38, Seeds 0.960/0.964/
+0.964, Spread 0.0044). Deploy per Head-to-Head (Δ +0.000 auf 117, 11/4 —
+keine belastbare Regression). Golden **0.9638**, neuer Bestwert, gegen Boden
+0.9615 (+0.002, passiert). Kein Befund, Reihe fortgeschrieben (R3). Laufzeit
+03:30 → 04:54 (Log-Ende), gestern 04:45 — im Rahmen.
+
+Schwanz unverändert dieselben vier (Mein Lokal 14/14, Galileo 14/14, Galileo
+360° 12/14, Galileo 10/14) — Sendungs-/Label-Sache, nicht der Kopf (§3ap).
+
+**Defekt im Ergebnismaß, gleiche Bauart wie gestern:** `review-effort.py`
+filterte nur `auto_confirmed_at`. Die 15 Fingerprint-Bestätigungen
+(`auto_confirmed_via_fingerprint`, kein `auto_confirmed_at`) gingen als
+Mensch mit 0 s/h ein — und die zwei „September-Reviews" (n=2, Median 0.0,
+100 % exakt) waren genau `dvr-kabel-eins-1788274676` und
+`dvr-vox-1788368400`, beide Fingerprint. Der vierte Leser, der den Fall
+nicht kannte (nach `learning.go`, `label_quelle`, O14). Behoben, nachgemessen:
+
+```
+  vorher   174 Mensch / 82 ausgeschlossen   nicht im Training n=28  Median  8.4  exakt 18 %
+  nachher  159 Mensch / 97 ausgeschlossen   nicht im Training n=26  Median 12.0  exakt 12 %
+  2026-09  vorher n=2 Median 0.0 exakt 100 %  →  nachher: keine Zeile
+```
+
+O4 hat für September damit noch **keinen** Messwert; die Mai–Juli-Zeilen
+sind unverändert. Nicht angefasst, als Frage für Simon notiert: 8 Dateien
+mit `reviewed_by: agent-review.py` und eine `claude-code` zählen hier
+weiterhin als Mensch — sie sind es nicht, aber ihr Fehler ist auch nicht
+per Konstruktion 0.
+
+O13 wartet weiter (Log: `{'agent': 136, 'auto': 8}`, kein Mensch seit dem
+Schnitt; Ledger ist `kanten-schatten.jsonl`, die leere
+`ocr-schatten.jsonl` vom 15.08. ist ein Stummel ohne Leser). Versiegelter
+Satz 35 — nicht geöffnet (O5). Keine Serie mit Regelblock läuft,
+Warteschlange §3a leer, nichts eingereiht.

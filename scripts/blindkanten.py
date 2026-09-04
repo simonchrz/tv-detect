@@ -135,18 +135,29 @@ def hauptteil(argv=None):
         n = int(2 * args.fenster / args.schritt) + 1
     roh = args.ziel / "roh"
     roh.mkdir(exist_ok=True)
-    subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-ss", str(start), "-i", str(quelle),
-         "-vf", f"fps=1/{args.schritt},scale={args.breite}:-2",
-         "-frames:v", str(n), "-y", str(roh / "f%02d.png")],
-        check=True)
+    # ⚠️ JEDES Bild mit EIGENER direkter Suche — NICHT ein Aufruf mit
+    # fps-Filter. Der fps-Filter richtet seine Phase an der absoluten
+    # Zeitachse der Quelle aus, nicht am Suchpunkt: zwei Fenster um
+    # dieselbe Kante liefern dann fuer dieselbe Sekunde VERSCHIEDENE
+    # Bilder (gemessen 2026-09-04: mittlere Abweichung 56-70 von 255,
+    # also andere Szenen). `setpts=PTS-STARTPTS` davor heilt es nicht.
+    # Die Einzelsuche ist dagegen exakt reproduzierbar (Abweichung 0.00
+    # zwischen zwei Laeufen) und kostet nichts: 15 Bilder in 1 s auf
+    # gecachter Quelle.
+    for i in range(n):
+        sek = start + i * args.schritt
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-ss", "%.3f" % sek, "-i", str(quelle),
+             "-vf", f"scale={args.breite}:-2", "-frames:v", "1",
+             "-y", str(roh / ("f%02d.png" % i))],
+            capture_output=True)
 
     bilder = sorted(roh.glob("f*.png"))
     kaesten = {} if args.ohne_blendung else rahmen_lesen(bilder)
     from PIL import Image, ImageDraw
     zeilen = []
     for i, b in enumerate(bilder):
-        sek = start + i * args.schritt
+        sek = start + i * args.schritt   # gilt jetzt: eigene Suche je Bild
         im = Image.open(b).convert("RGB")
         d = ImageDraw.Draw(im)
         n_k = 0

@@ -46,23 +46,30 @@ def main():
     ap.add_argument("--je-kante", type=int, default=15)
     args = ap.parse_args()
 
-    verdaechtig, geprueft = [], 0
-    for prot in sorted(args.protokolle.glob("a*.output")):
-        kopf = subprocess.run(["grep", "-o", args.marke + "/e[0-9]\\{4\\}",
-                               str(prot)], capture_output=True, text=True).stdout
-        ziele = sorted(set(re.findall(r"e\d{4}", kopf)))
-        if not ziele:
-            continue
-        geprueft += 1
-        n = bilder_gelesen(prot, args.bildmuster)
-        if n < args.je_kante * len(ziele):
-            verdaechtig.append((ziele, n, args.je_kante * len(ziele)))
+    # ⚠️ JE KANTE pruefen, nicht je Auftrag. Der erste Anlauf zog die
+    # Zielkanten aus dem ganzen Protokoll — dort stehen aber auch
+    # Fehlermeldungen und Dateilisten mit fremden Kantennamen, und ein
+    # wiederholter Auftrag machte den alten, verworfenen Lauf nicht
+    # ungueltig. Ergebnis waren 31 Falschmeldungen. Pro Kante das JUENGSTE
+    # Protokoll zu nehmen, das ihr Urteil geschrieben hat, kennt beide
+    # Probleme nicht.
+    prot_je_kante = {}
+    for prot in sorted(args.protokolle.glob("a*.output"),
+                       key=lambda p: p.stat().st_mtime):
+        geschrieben = subprocess.run(
+            ["grep", "-o", args.marke + "/e[0-9]\\{4\\}\\.txt",
+             str(prot)], capture_output=True, text=True).stdout
+        for k in set(re.findall(r"e\d{4}", geschrieben)):
+            prot_je_kante[k] = prot          # spaeteres Protokoll gewinnt
 
-    print("Auftraege geprueft: %d   mit Luecke: %d" % (geprueft, len(verdaechtig)))
-    weg = []
-    for ziele, n, soll in verdaechtig:
-        print("  %s … %s: %d von %d Bildern gelesen" % (ziele[0], ziele[-1], n, soll))
-        weg += ziele
+    weg, geprueft = [], 0
+    for kante, prot in sorted(prot_je_kante.items()):
+        geprueft += 1
+        n = bilder_gelesen(prot, r"sweep/%s/bild[0-9]\{2\}\.png" % kante)
+        if n < args.je_kante:
+            print("  %s: nur %d von %d Bildern gelesen" % (kante, n, args.je_kante))
+            weg.append(kante)
+    print("Kanten geprueft: %d   mit Luecke: %d" % (geprueft, len(weg)))
 
     formfehler = []
     for p in sorted(args.urteile.glob("e*.txt")):

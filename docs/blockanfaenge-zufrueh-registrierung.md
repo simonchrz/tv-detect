@@ -111,3 +111,77 @@ konsistent (ein Auftrag für alle 106), seine 16 % bleiben also intern
 gültig. Aber er hat Overlays als Werbung gezählt. Das verschiebt
 Übergänge nach vorn und kann „zu spät" überschätzt haben. Die Zahl ist
 eine Obergrenze, kein Punktwert.
+
+---
+
+## Nachtrag 2026-09-04, spät: die Ursache war NICHT die Konvention
+
+Der Screening-Neulauf mit der korrigierten Overlay-Regel ist durch
+(106 Kanten, Herkunft je Auftrag über die Harness-Aufrufzahl geprüft):
+
+```
+              zu spaet  sauber  unklar   Rate
+  v1 (alt)       14       75      17     16 %
+  v2 (korr.)     15       73      18     17 %      101 von 106 unveraendert
+```
+
+Die vorab festgehaltene Vorhersage („zu spät muss SINKEN") ist **nicht
+eingetroffen**. Nach der Registrierung heißt das: meine Erklärung war
+falsch. Sie war es.
+
+**Die wirkliche Ursache:** die Bilder beider Läufe sind nicht dieselben.
+
+| Kante | v1 (2 s) | v2 (2 s, neue Konvention) | zufrueh (4 s) |
+|---|---|---|---|
+| e0045 | `…SSWWW` | **identisch zu v1** | widerspricht |
+| e0059 | `…SSWWW` | **identisch zu v1** | widerspricht |
+| e0066 | `…SWWWW` | **identisch zu v1** | widerspricht |
+
+v1 und v2 stimmen zeichengleich überein — die Konvention ändert an diesen
+Kanten nichts. Nur der `zufrueh`-Lauf weicht ab, und ein Vergleich der
+PNG-Dateien zeigt warum: **bei identischer Sekundenangabe sind es
+verschiedene Bilder**, pixelweise über die ganze Fläche.
+
+⚠️ **Der Fehler steckt in `blindkanten.py`.** Es beschriftet das i-te
+Ausgabebild als `start + i·schritt`. Das stimmt nur, wenn ffmpeg genau bei
+`start` das erste Bild liefert. Tut es nicht: die Quellen sind
+MPEG-TS-Mitschnitte mit `start_time = 46036.97` (nicht 0), gesucht wird
+schlüsselbildnah, und das `fps`-Filter setzt seine Phase auf das erste
+dekodierte Bild. Wo das landet, hängt vom Suchpunkt ab — also von der
+Fenstergröße. Zwei Fenster um dieselbe Kante ergeben verschiedene Bilder
+mit gleicher Beschriftung.
+
+### Was das für die bisherigen Zahlen heißt
+
+* **Innerhalb EINES Auszugs** sind Reihenfolge und Abstand korrekt. Die
+  Struktur im Fenster (wo der Übergang relativ liegt) ist belastbar.
+* **Die Verankerung an der Label-Kante ist unbelegt.** Das Bild, das „0 s"
+  heißt, kann daneben liegen.
+* Damit gilt: die 16 % sind eine interne Größe, kein auf die Sekunde
+  verankerter Wert. Die fünf **erheblichen** Fälle (≥10 s) überstehen einen
+  Versatz von ein, zwei Bildern; die sieben **grenzwertigen** (genau 4 s)
+  nicht — sie sind zu verwerfen.
+* Jeder Vergleich ÜBER Auszüge hinweg ist wertlos, solange das nicht
+  behoben ist.
+
+### Was ich falsch gemacht habe
+
+Ich habe gestern den Widerspruch der Kontrollen gesehen, eine plausible
+Erklärung gegriffen (die Konvention, die ich selbst geändert hatte) und
+danach gehandelt — ein Screening-Neulauf über 106 Kanten und ~30 Agenten.
+Die Erklärung war falsch. Richtig gewesen wäre, zuerst zu prüfen, **ob
+beide Läufe überhaupt dieselben Bilder gesehen haben**; das ist ein
+Datei-Vergleich und kostet Sekunden.
+
+Der Neulauf ist nicht ganz umsonst: er belegt, dass die Overlay-Konvention
+im Aggregat fast nichts ändert (101/106 unverändert). Das ist ein
+brauchbares negatives Ergebnis — nur eben nicht das, wofür ich ihn
+bestellt habe.
+
+### Was zu tun ist, bevor hier weiter gemessen wird
+
+`blindkanten.py` muss jedes Bild mit seinem ECHTEN Quell-Zeitstempel
+beschriften (`-copyts` + `showinfo`, gegen `format=start_time` verrechnet)
+statt mit der erwarteten Sekunde — und die Beschriftung gegen den
+angeforderten Wert prüfen. Ohne das ist jede Sekundenangabe in diesen
+Messungen eine Annahme.

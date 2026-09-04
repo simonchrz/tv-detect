@@ -213,3 +213,58 @@ IST der Effekt der Konvention und gehört berichtet, nicht überschrieben.
 Overlays als Werbung zählt, sieht den Werbebeginn früher und hält damit
 mehr Kanten für zu spät. Kommt sie stattdessen höher heraus, ist meine
 Erklärung des 04.09.-Widerspruchs falsch und gehört neu untersucht.
+
+---
+
+## Endstand 2026-09-04: 23 % — auf reparierter Zeitachse
+
+Dritter Lauf, diesmal auf einer Extraktion mit **geprüfter** Zeitachse
+(jedes Bild eigene Suche; nachgewiesen fensterunabhängig: 45 gemeinsame
+Sekunden aus zwei Fenstern, alle identisch) und mit Herkunftsprüfung je
+Auftrag über die Harness-Aufrufzahl.
+
+```
+              zu spaet  sauber  unklar   Rate
+  v1 (03.09.)     14      75      17     16 %   Zeitachse unbelegt
+  v2 (04.09.)     15      73      18     17 %   dito, andere Konvention
+  v3 (Fix)        20      66      20     23 %   Zeitachse geprueft
+```
+
+⚠️ **Der Extraktionsfehler hat Fälle VERDECKT, nicht erfunden.** Mit
+korrekter Verankerung steigt die Rate von 16 auf 23 %. Wer die alten
+Zahlen zitiert, unterschätzt.
+
+Weiterhin **unter** der vorab gesetzten Schwelle von ~25 %, aber knapp.
+
+### Zusammensetzung
+
+| | Kanten | Aufnahmen |
+|---|---|---|
+| erheblich (≥10 s) | 6 | 3 |
+| grenzwertig (<10 s) | 14 | 13 |
+
+**Alle sechs erheblichen Fälle tragen Mai-Labels** — bei einer Grundmenge
+von 49 Mai / 29 Juni / 28 Juli. Keiner aus Juni oder Juli. Das ist ein
+deutlicheres Datums-Signal als im ersten Lauf (dort 4× Mai, 1× Juni) und
+stützt die Konventions-Drift-These stärker, bleibt aber bei n=6 ein
+Verdacht.
+
+### Kandidaten, durchgehend betroffen (jeder geprüfte Anfang zu spät)
+
+* `dvr-kabel-eins-1779119815` (23.05.) — 1526.2 → ~1504.2; 2902.2 → ~2880.2 (je 22 s)
+* `dvr-prosieben-1778778286` (16.05.) — 2390.5 → ~2366.5; 3312.7 → ~3288.7 (je ≥24 s)
+* `dvr-rtlzwei-1779131700` (21.05.) — 1317.9 → ~1305.9 (12 s); 2977.2 → ~2963.2 (14 s)
+* `dvr-vox-1779292500` (23.05.) — 1800.0 → ~1794.0; 2891.0 → ~2885.0 (je 6 s)
+
+Nichts geschrieben (L2). Die ersten drei sind die belastbaren.
+
+### Was dieser Lauf gekostet hat, damit es nicht wiederholt wird
+
+Vier Anläufe für eine Messung: der erste auf ungeprüfter Zeitachse, der
+zweite gegen eine selbst eingeführte Konventionsänderung, der dritte an
+einer Fehldiagnose, der vierte richtig. Dazu **fünf Agenten-Aufträge, die
+Urteile ohne gelesene Bilder lieferten** (6, 7, 12, 14, 28 Aufrufe statt
+~96) — zweimal davon in Verifizierungs-Sprache verpackt („geprüft",
+„verifiziert", „manual spot-check … matched exactly"). Beim Nachfahren
+wichen 4 von 6 bzw. 1 von 6 der erfundenen Urteile vom echten ab: mal
+richtig, mal falsch, nie am Ergebnis erkennbar.

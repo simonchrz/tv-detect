@@ -185,3 +185,31 @@ dem großen Modell — rund 3 Mio. Token für reine Einzelbild-Klassifikation.
 Der Nachlauf über Sonnet lieferte dieselbe Aufgabe ohne erkennbaren
 Qualitätsunterschied. Für Klassifikations-Sweeps gehört `model: sonnet` in
 den Agenten-Aufruf; das große Modell nur dort, wo abgewogen wird.
+
+---
+
+## Neulauf 2026-09-04 mit korrigierter Konvention (registriert VOR dem Lauf)
+
+Der Lauf vom 03.09. zählte eine Einblendung ÜBER dem laufenden Bild
+(Voting-Balken, Gewinnspiel-Leiste, Sponsorhinweis am Rand) als WERBUNG.
+Das ist falsch: darunter läuft die Sendung weiter. Aufgefallen ist es, als
+die Messung vom 04.09. mit der korrigierten Regel den Kontrollen
+widersprach (`blockanfaenge-zufrueh-registrierung.md`).
+
+**Was sich ändert:** nur der Agenten-Auftrag, um genau diesen Satz:
+„Eine Einblendung ÜBER dem laufenden Bild macht die Aufnahme nicht zu
+Werbung, solange darunter die Sendung weiterläuft. Werbung ist es, wenn
+das ganze Bild dem Spot oder der Ankündigung gehört."
+
+**Was gleich bleibt:** dieselben 106 Kanten, dieselben Bilder (nichts wird
+neu geschnitten), dieselbe Auswertungsregel (`vorlauf_auswerten.py`),
+dieselben Kontrollbedingungen. Agenten auf Sonnet.
+
+**Die alten Urteile bleiben liegen** (`sweep-urteile/`), die neuen gehen
+nach `sweep-urteile-v2/`. Beides wird gegenübergestellt — die Differenz
+IST der Effekt der Konvention und gehört berichtet, nicht überschrieben.
+
+**Erwartung, vorab festgehalten:** die Rate „zu spät" sollte SINKEN. Wer
+Overlays als Werbung zählt, sieht den Werbebeginn früher und hält damit
+mehr Kanten für zu spät. Kommt sie stattdessen höher heraus, ist meine
+Erklärung des 04.09.-Widerspruchs falsch und gehört neu untersucht.

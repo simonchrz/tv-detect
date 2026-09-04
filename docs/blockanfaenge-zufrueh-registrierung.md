@@ -52,3 +52,62 @@ Kontrollen 0 s ergeben.**
 ## Was daraus folgen darf
 
 Ein Kandidatenbericht an Simon. Kein Label wird geschrieben (L2).
+
+---
+
+## Ergebnis 2026-09-04: UNGÜLTIG — ich habe die Konvention mitten im
+## Versuch geändert
+
+Die Bedingung („alle 5 Kontrollen 0 s") ist **nicht erfüllt**. Über alle
+8 Kontrollen (5 gezogen + 3 Ersatz):
+
+```
+0 s: 4    unbrauchbar: 3    FALSCH POSITIV: 1  (f023, 16 s)
+```
+
+Ein falscher Positivbefund in der Kontrolle heißt: das Verfahren erzeugt
+„zu früh", wo keines ist. Damit sind die Kandidatenzahlen wertlos und
+werden hier **nicht** aufgeführt — sonst stünden sie im Ledger und würden
+später zitiert.
+
+### Die Ursache, und sie liegt bei mir
+
+Dieselbe Kante, beide Läufe, direkt gegenübergestellt:
+
+| Kante | 03.09. bei −4 s / 0 s | 04.09. bei −4 s / 0 s |
+|---|---|---|
+| `dvr-rtl-1780078500` @1460.0 | S / **W** | S / **S** |
+| `dvr-rtlzwei-1779128100` @2958.6 | **S** / **W** | **W** / **W** |
+| `dvr-rtl-1781545200` @1439.0 | S / W | S / W |
+
+Zwei von drei widersprechen sich auf **denselben Bildern**.
+
+⚠️ **Grund: ich habe den Agenten-Auftrag zwischen den Läufen geändert.**
+Der Sweep vom 03.09. enthielt keine Regel für Einblendungen. Heute stand
+darin: „eine Einblendung ÜBER dem laufenden Bild macht die Aufnahme nicht
+zu Werbung, solange darunter die Sendung weiterläuft." Das ist eine
+KONVENTIONSÄNDERUNG. `dvr-rtl-1780078500` ist Let's Dance — genau der
+Overlay-Fall.
+
+Das ist wörtlich der Fehler, den §3am beschreibt und den ich am 03.09.
+selbst ins Ledger geschrieben habe: *„Wer eine Konvention ändert, muss im
+selben Zug sagen, wer die Labels nachzieht — sonst misst ein späterer Lauf
+die Lücke als Qualität."* Einen Tag später habe ich Screening und Messung
+unter zwei verschiedenen Konventionen laufen lassen.
+
+**Was gut lief:** die Kontrollen haben es gefangen, bevor eine Zahl im
+Ledger stand. Genau dafür waren sie da.
+
+### Was ein gültiger Neulauf braucht
+
+Nicht einfach den alten Auftrag wiederherstellen — die neue Regel ist
+inhaltlich die RICHTIGE (ein Voting-Balken über der laufenden Show ist
+keine Werbung; ohne die Regel hält der Agent die Sendung für Werbung).
+Also: **das Screening mit der neuen Konvention wiederholen**, dann messen.
+Kosten: der 106er-Sweep noch einmal, auf Sonnet.
+
+⚠️ **Und ein Vorbehalt zum 03.09.-Ergebnis:** jener Lauf war in sich
+konsistent (ein Auftrag für alle 106), seine 16 % bleiben also intern
+gültig. Aber er hat Overlays als Werbung gezählt. Das verschiebt
+Übergänge nach vorn und kann „zu spät" überschätzt haben. Die Zahl ist
+eine Obergrenze, kein Punktwert.

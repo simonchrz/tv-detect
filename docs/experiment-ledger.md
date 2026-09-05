@@ -3286,3 +3286,39 @@ Schnitt; Ledger ist `kanten-schatten.jsonl`, die leere
 `ocr-schatten.jsonl` vom 15.08. ist ein Stummel ohne Leser). Versiegelter
 Satz 35 — nicht geöffnet (O5). Keine Serie mit Regelblock läuft,
 Warteschlange §3a leer, nichts eingereiht.
+
+### Nachtrag 2026-09-05 (Tagesdurchgang) — neunte Ensemble-Nacht, der Spiegel war zu alt
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `hsmm`,
+`ensemble3`, n=38, Seeds 0.964/0.959/0.959). Deploy per Head-to-Head (Δ
++0.000 auf 118, 6/4 — keine belastbare Regression), `champion source:
+head.gate.bin`. Golden **0.9627** gegen Boden 0.963 (−0.000, passiert);
+Champion bleibt 0.9638 vom 09-04. Kein Befund, Reihe fortgeschrieben (R3).
+Laufzeit 03:30 → ~04:55, im Rahmen.
+
+Schwanz: dieselben vier beharrlich (Mein Lokal 14/14, Galileo 14/14, Galileo
+360° 12/14, Galileo 10/14); neu in den Fünf ist CSI: Vegas mit 6/14 — noch
+nicht beharrlich, nur notiert.
+
+**Defekt im Ergebnismaß, dritte Bauart in drei Tagen:** der Bericht zeigte
+wieder „2026-09 n=1, Median 0.0, exakt 100 %". Die Aufnahme
+(`dvr-kabel-eins-1788533886`, Abenteuer Leben täglich) trägt auf dem Pi
+`auto_confirmed_via_fingerprint`, geschrieben **08:00:05** — der Filter von
+gestern ist korrekt, er las aber den Label-Spiegel von **04:32**, und der
+Tagesdurchgang läuft um **08:07**. Jede Fingerprint-Bestätigung des Morgens
+galt so genau einen Tag lang als Mensch mit 0 s/h (`dvr-kabel-eins-1788537506`,
+Mein Lokal, ebenso — nur im Training, darum nicht in der Monatszeile).
+Kein Filterfehler, ein Zeitfenster.
+
+**Behoben:** `review-effort.py` liest die Markierung jetzt live per ssh aus
+den `ads_user.json` auf dem Pi (Quelle der Wahrheit, 97 Dateien) und
+vereinigt sie mit dem Spiegel; antwortet der Pi nicht, bleibt der Spiegel
+mit ausdrücklicher Warnung. `scripts/test_review_effort_auto.py`, 4 Tests.
+Nachgemessen: 158 Mensch / 97 ausgeschlossen, nicht im Training n=26 Median
+12.0, exakt 12 % — identisch mit dem Stand von gestern nach dem Fix; die
+September-Zeile ist weg. **O4 hat für September weiterhin keinen Messwert.**
+
+O13: 148 Kanten aus 39 Aufnahmen im Ledger, Herkunft `{'agent': 148, 'auto':
+8}`, kein Mensch seit dem Schnitt — 0/40. Versiegelter Satz 37, nicht
+geöffnet (O5). Keine Serie mit Regelblock läuft, Warteschlange §3a leer,
+nichts eingereiht.

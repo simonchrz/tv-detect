@@ -33,12 +33,22 @@ später als Entdeckung verkauft werden:
 
 Die Herkunft der Daten ist geteilt, weil keine Quelle beides hat: `auto` und
 `user` kommen aus dem Endpunkt (nie die Caches catten, s. Memory
-never_cat_gateway_caches), die Auto-Confirm-Markierung aus dem lokalen
-Label-Backup-Spiegel (~/tv-labels-backup, täglich 04:30 vom Pi).
+never_cat_gateway_caches), die Auto-Confirm-Markierung direkt aus den
+`ads_user.json` auf dem Pi (per ssh, Quelle der Wahrheit) — und nur wenn der
+Pi nicht antwortet aus dem lokalen Label-Backup-Spiegel (~/tv-labels-backup,
+täglich 04:32 vom Pi).
+
+4. Der Spiegel allein reicht NICHT (Befund 2026-09-05): die Fingerprint-
+   Bestätigung schreibt um 08:00, der Spiegel wurde um 04:32 gezogen, der
+   Tagesdurchgang liest um 08:07. Jede Bestätigung des Morgens galt so einen
+   Tag lang als Mensch mit 0 s/h — "2026-09 n=1, 100 % exakt" war genau das.
+   Deshalb wird die Markierung jetzt live gelesen; der Spiegel ist Rückfall
+   und wird dazuvereinigt (er kann nur Dateien kennen, die es gab).
 """
 import argparse
 import json
 import statistics
+import subprocess
 import sys
 import urllib.request
 from collections import defaultdict
@@ -73,6 +83,45 @@ def auto_bestaetigte(spiegel):
         except Exception:
             continue
     return out
+
+
+PI_HOST = "raspberrypi5lan"
+PI_HLS = "/mnt/tv/hls"
+MARKIERUNGEN = ("auto_confirmed_at", "auto_confirmed_via_fingerprint")
+
+
+def auto_bestaetigte_live(host=PI_HOST, hls=PI_HLS, timeout=20):
+    """uuids mit Auto-Confirm-Markierung, direkt von den Dateien auf dem Pi.
+
+    Liefert None, wenn der Pi nicht antwortet — der Aufrufer faellt dann auf
+    den Spiegel zurueck und sagt das. Ein leeres Set ist ein Ergebnis
+    (keine Markierung), None ist keins.
+    """
+    muster = "|".join(MARKIERUNGEN)
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
+           f"grep -lE '{muster}' {hls}/_rec_*/ads_user.json; true"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    out = set()
+    for zeile in r.stdout.splitlines():
+        name = Path(zeile.strip()).parent.name
+        if name.startswith("_rec_"):
+            out.add(name[len("_rec_"):])
+    return out
+
+
+def auto_bestaetigte_vereinigt(live, spiegel_uuids):
+    """Live-Ergebnis mit dem Spiegel vereinigen; ohne Live nur der Spiegel.
+
+    Rueckgabe: (uuids, quelle) mit quelle in {"pi+spiegel", "spiegel"}.
+    """
+    if live is None:
+        return set(spiegel_uuids), "spiegel"
+    return set(live) | set(spiegel_uuids), "pi+spiegel"
 
 
 def hole(url, timeout=15):
@@ -149,7 +198,12 @@ def main():
               f"nicht von menschlichem Review zu unterscheiden, und die Zahl "
               f"waere geschoent statt unvollstaendig. Abbruch.", file=sys.stderr)
         return 2
-    auto_uuids = auto_bestaetigte(SPIEGEL)
+    live = auto_bestaetigte_live()
+    auto_uuids, quelle = auto_bestaetigte_vereinigt(live, auto_bestaetigte(SPIEGEL))
+    if quelle == "spiegel":
+        print("warn: Pi nicht erreichbar — Auto-Confirm-Markierung nur aus dem "
+              "Spiegel von 04:32. Bestaetigungen von heute frueh zaehlen dann "
+              "faelschlich als Mensch mit 0 s/h.", file=sys.stderr)
 
     def einer(r):
         try:
@@ -186,7 +240,7 @@ def main():
     print("=" * 68)
     print(f"  {len(zeilen)} von Menschen reviewte Aufnahmen "
           f"({len(recs)} gesamt, {len(auto_uuids)} auto-bestaetigt und "
-          f"deshalb ausgeschlossen)\n")
+          f"deshalb ausgeschlossen; Markierung aus: {quelle})\n")
 
     def block(name, teil):
         if not teil:

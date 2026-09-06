@@ -133,11 +133,22 @@ def main():
     # duerfen nie Golden werden (sie haben das Modell trainiert). Der Weg
     # zu einem groesseren Satz fuehrt ueber gezielte Reviews GENAU DIESER
     # Liste:
-    offen = sorted((test - mensch - v2 - versiegelt))
+    # ⚠️ Nur Aufnahmen, die noch ein VOD haben, sind ueberhaupt reviewbar —
+    # der Rest existiert nur als eingefrorene Features im Archiv und laesst
+    # sich in der App weder ansehen noch beurteilen. Das BACKUP spiegelt den
+    # Pi exakt (2026-09-06: 289/289, 100 %), die Ordner-Existenz ist also der
+    # verlaessliche lokale Stellvertreter. Ohne diese Trennung versprach der
+    # Hebel 99 Aufnahmen, von denen nur 21 zu oeffnen waren.
+    offen_alle = sorted((test - mensch - v2 - versiegelt))
+    offen = [u for u in offen_alle if (BACKUP / f"_rec_{u}").is_dir()]
+    tot = len(offen_alle) - len(offen)
     je_kanal_offen = defaultdict(list)
     for u in offen:
         je_kanal_offen[slug_von(u)].append(u)
-    print(f"\nREVIEW-HEBEL: {len(offen)} Test-Eimer-Aufnahmen ohne "
+    if tot:
+        print(f"\n⚠ {tot} weitere Test-Aufnahmen haben KEIN VOD mehr — nicht "
+              f"reviewbar, koennen den Satz nie erweitern.")
+    print(f"\nREVIEW-HEBEL: {len(offen)} REVIEWBARE Test-Eimer-Aufnahmen ohne "
           f"menschliches Review — jede davon wird nach dem Review ein "
           f"Golden-Kandidat:")
     for k in sorted(je_kanal_offen, key=lambda k: -len(je_kanal_offen[k])):

@@ -2450,6 +2450,13 @@ def main():
                          "frames as ad. Catches broken-template runs "
                          "where a whole recording was wrongly tagged "
                          "100%% ad. Real content never exceeds ~40%%.")
+    ap.add_argument("--herkunft-streng", action="store_true",
+                    help="O18 (Arm 2): setzt --herkunft-belegt voraus und "
+                         "nimmt has_user ZUSAETZLICH den Aufnahmen ohne "
+                         "lesbare Quelle. Deren Herkunft ist NICHT "
+                         "entscheidbar -- das ist eine Annahme, keine "
+                         "Feststellung, und deshalb eine eigene Frage. "
+                         "Siehe docs/o18-unentscheidbare-preregistration.md")
     ap.add_argument("--herkunft-belegt", action="store_true",
                     help="O17: has_user nur, wo ein Mensch NACHWEISBAR war "
                          "(Marker in ads_user.json). Aufnahmen ohne lesbare "
@@ -2825,6 +2832,12 @@ def main():
 
     # --co-train forces the feature flags it needs (otherwise the
     # column slicing below points at non-existent columns).
+    if args.herkunft_streng and not args.herkunft_belegt:
+        raise SystemExit("--herkunft-streng setzt --herkunft-belegt voraus: "
+                         "es ist die zweite Stufe derselben Regel, keine "
+                         "eigene. Ohne die erste waeren die belegten "
+                         "Maschinenlabels weiter privilegiert und nur die "
+                         "unentscheidbaren degradiert -- genau verkehrt.")
     if args.co_train:
         args.with_logo = True
         args.with_audio = True
@@ -3471,7 +3484,8 @@ def main():
             pass
 
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
-    herkunft_entzogen = []   # O17: wem --herkunft-belegt has_user genommen hat
+    herkunft_entzogen = []       # O17: belegt maschinell → has_user weg
+    herkunft_unentscheidbar = []  # O18: keine Quelle mehr → has_user weg
     dropped_high = []
     logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
     logo_nan_mask_by_uuid = {}  # uuid → bool array, True where logo was NaN
@@ -3577,9 +3591,18 @@ def main():
         # Aufnahmen ohne lesbare Quelle (mensch_belegt is None, meist
         # archiv-injiziert) behalten es, weil sie nicht entscheidbar sind.
         # Sie mit hineinzuziehen waere eine zweite Aenderung und ist Arm 2.
-        if args.herkunft_belegt and has_user and mensch_belegt is False:
-            has_user = False
-            herkunft_entzogen.append(uuid)
+        # O18/Arm 2: --herkunft-streng zieht die nicht entscheidbaren mit.
+        # Das ist bewusst eine ZWEITE Stufe: `None` heisst "keine Quelle
+        # mehr, also nicht pruefbar", nicht "kein Mensch". Wer beides
+        # gleich behandelt, trifft eine Annahme ueber 294 tote Aufnahmen
+        # und nennt sie eine Messung.
+        if args.herkunft_belegt and has_user:
+            if mensch_belegt is False:
+                has_user = False
+                herkunft_entzogen.append(uuid)
+            elif args.herkunft_streng and mensch_belegt is None:
+                has_user = False
+                herkunft_unentscheidbar.append(uuid)
         rec_age_days = (time.time() - src_mt) / 86400.0
         # Cluster-anchored ad spots from the gateway snapshot (= spots
         # whose audio+visual fingerprint matches a known ≥3-member
@@ -4580,6 +4603,10 @@ def main():
         print(f"  --herkunft-belegt: {len(herkunft_entzogen)} Aufnahme(n) "
               f"verlieren has_user, KORPUSWEIT (train+test+versiegelt), "
               f"maschinell oder agenten-gelabelt")
+        if args.herkunft_streng:
+            print(f"  --herkunft-streng:  {len(herkunft_unentscheidbar)} "
+                  f"weitere ohne lesbare Quelle (Herkunft nicht "
+                  f"entscheidbar), ebenfalls korpusweit")
     n_user = sum(1 for r in train_recs if r[5])
     print(f"\nsplit: {len(train_recs)} train recs ({len(y_train)} frames, "
           f"{100*y_train.mean():.1f}% ad, {n_user} user-confirmed @ "
@@ -5762,6 +5789,7 @@ def main():
             # misst zweimal dasselbe -- der Schalter wirkt vor dem Armlauf.
             _ts_arme["mlp32-cwtmpwm-ist"] = (_arm_prod, 32)
             _ts_arme["mlp32-cwtmpwm-belegt"] = (_arm_prod, 32)
+            _ts_arme["mlp32-cwtmpwm-streng"] = (_arm_prod, 32)   # O18
             _ts_arme["mlp32"] = (_ident, 32)
             _ts_arme["mlp32-cwt-mp"] = (_augment_cwt_minuteprior, 32)
             _ts_arme["mlp32-ct-mp"] = (_augment_ct_minuteprior, 32)

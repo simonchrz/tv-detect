@@ -350,6 +350,14 @@ def vorbereiten_grob(anzahl, uuids=None):
     else:
         kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
+    _erlaubt = erlaubte_uuids()
+    if _erlaubt is None:
+        return 1
+    _vorher = len(kandidaten)
+    kandidaten = [d for d in kandidaten if d.name[5:] in _erlaubt]
+    if _vorher != len(kandidaten):
+        print(f"  {_vorher - len(kandidaten)} Aufnahmen uebersprungen "
+              f"(nicht im Train-Eimer: golden/test/versiegelt)")
     print(f"{len(kandidaten)} Aufnahmen mit lokaler Quelle")
     for d in (kandidaten if uuids else _reihum(kandidaten))[:anzahl]:
         u = d.name[5:]
@@ -517,6 +525,14 @@ def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
     else:
         kandidaten = [d for d in sorted(SNAPSHOT.glob("_rec_*")) if braucht_review(d)]
     kandidaten = [d for d in kandidaten if (QUELLE / f"{d.name[5:]}.ts").is_file()]
+    _erlaubt = erlaubte_uuids()
+    if _erlaubt is None:
+        return 1
+    _vorher = len(kandidaten)
+    kandidaten = [d for d in kandidaten if d.name[5:] in _erlaubt]
+    if _vorher != len(kandidaten):
+        print(f"  {_vorher - len(kandidaten)} Aufnahmen uebersprungen "
+              f"(nicht im Train-Eimer: golden/test/versiegelt)")
     # ⚠️ Aufnahmen mit vorhandenem Signal-Dump zuerst. Der Schattenlauf
     # (kanten-schatten.py) braucht je Aufnahme einen Dump; ohne ihn ist das
     # Review zwar richtig, aber fuer die offenen Fragen unsichtbar.
@@ -754,6 +770,36 @@ def golden_uuids():
         return None
 
 
+def erlaubte_uuids():
+    """Nur TRAIN-Aufnahmen darf ein Agent labeln. Fail-closed.
+
+    ⚠️ `braucht_review` kennt den Split-Ledger nicht — es waehlt nach
+    "hat Auto-Bloecke, kein menschliches Label". Damit standen TEST- und
+    VERSIEGELTE Aufnahmen offen, und nur der Golden-Satz war geschuetzt.
+
+    Warum das die Messung zerstoert: Test-Labels sind die Ground Truth des
+    Head-to-Head-Gates. Schreibt ein Agent dort, wird die Modellausgabe zur
+    Wahrheit — und der Champion, dessen Ausgabe der Agent laut Messung in
+    45 % der Faelle unveraendert uebernimmt, gewinnt per Konstruktion
+    (Memory kanten_massstab_ist_agent_echo). Der versiegelte Satz verliert
+    durch jede Beruehrung seinen ganzen Zweck.
+
+    Nicht im Ledger = nicht erlaubt: eine noch nicht zugeteilte Aufnahme
+    kann beim naechsten Training in den Test-Eimer fallen.
+    """
+    import json as _json
+    pfad = Path.home() / ".cache/tvd-train-archive/split-ledger.json"
+    try:
+        led = _json.loads(pfad.read_text())
+    except Exception as e:
+        print(f"⚠ Split-Ledger nicht lesbar ({e}) — schreibe sicherheitshalber nichts")
+        return None
+    gold = golden_uuids()
+    if gold is None:
+        return None
+    return {u for u, eimer in led.items() if eimer == "train"} - gold
+
+
 def anwenden(trocken, nur_enden=False):
     """Urteile lesen, Kanten ABLEITEN, schreiben.
 
@@ -766,16 +812,17 @@ def anwenden(trocken, nur_enden=False):
     mitmachtafel | unklar. Die Zuordnung zu Werbung/Sendung passiert in
     KONVENTION, die Kante in kante_aus_folge — beides hier, nicht im Agenten.
     """
-    gesperrt = golden_uuids()
-    if gesperrt is None:
+    erlaubt = erlaubte_uuids()
+    if erlaubt is None:
         return 1
     ges = 0
     for d in sorted(ARBEIT.glob("*/")):
         up, ap = d / "urteil.json", d / "auftrag.json"
         if not (up.is_file() and ap.is_file()):
             continue
-        if d.name.rstrip("/") in gesperrt:
-            print(f"  {d.name.rstrip('/')}: GOLDEN — nicht angefasst")
+        if d.name.rstrip("/") not in erlaubt:
+            print(f"  {d.name.rstrip('/')}: NICHT TRAIN (golden/test/versiegelt) "
+                  f"— nicht angefasst")
             continue
         # ⚠️ Schon angewandt = nicht noch einmal schreiben. Jeder erneute
         # POST setzt reviewed_at neu und laesst eine alte Beurteilung wie

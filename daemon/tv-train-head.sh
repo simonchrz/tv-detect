@@ -235,8 +235,35 @@ done
     --head-arch mlp32-channel-whisper-temporal-mp-wm \
     $TVH_HEAD_ARCH_OVERRIDE \
     --prod-seeds 3 \
+    --herkunft-belegt \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-06: --herkunft-belegt SCHARF (O17). `has_user` entstand bis heute
+# aus der blossen EXISTENZ von ads_user.json -- und autoConfirmApply im
+# tv-recorder legt genau so eine Datei an, mit der Detektorausgabe darin.
+# Damit galten 92 Aufnahmen korpusweit (train 65, versiegelt 17, test 13)
+# als menschlich geprueft, ohne dass je ein Mensch dran war. Das ist kein
+# Randfall: has_user steuert VIER Dinge -- 2x Trainingsgewicht, Ausnahme vom
+# Hygiene-Veto, das Reviewed-Regression-Veto (blockiert Deploys) und die
+# Ausnahme vom GT-Ausreisser-Waechter. Die Ausgabe des vorigen Champions war
+# also doppelt gewichtet, vor der Bereinigung geschuetzt und deploy-blockend.
+#
+# ⚠️ NICHT als Verbesserung eingeschaltet. Die Tagesserie vom selben Tag
+# (5 Paare, gepaart auf gleichem Seed) ergab Median +0.0032 gegen eine vorab
+# registrierte Schwelle von +0.010 -- REGEL NICHT ERFUELLT, Vorzeichen
+# stimmt, Groesse verfehlt. Die vorab festgelegte Konsequenz war trotzdem
+# der Einbau, als HYGIENE: "hier war ein Mensch" ist fuer diese 92
+# Aufnahmen schlicht falsch, und eine falsche Tatsachenbehauptung im Code
+# gehoert korrigiert, auch wenn die Metrik es nicht honoriert. Wer die
+# Golden-Reihe ab heute mit frueher vergleicht, vergleicht zwei
+# Korpus-Gewichtungen -- der Effekt liegt aber unter dem Rauschboden (§2:
+# 0.023 ueber 5 Seeds), die Reihe bricht dadurch nicht.
+# Details: docs/o17-labelherkunft-preregistration.md, Ledger §3 O17.
+#
+# Aufnahmen ohne lesbare Quelle (archiv-injiziert) behalten has_user --
+# ihre Herkunft ist NICHT entscheidbar, nicht "keine". Ob sie es auch
+# verlieren sollen, ist eine eigene Frage (Arm 2).
+#
 # 2026-08-06 (spaeter am Tag): der Temporal-Block waechst von 2 auf 3
 # Spalten — dp, dn und NEU das Unruhe-Niveau (1s-Delta ueber 31 s
 # gemittelt). Der Architektur-NAME bleibt gleich, der Header traegt die

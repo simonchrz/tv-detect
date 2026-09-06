@@ -3380,3 +3380,73 @@ kein Mensch seit dem Schnitt — 0/40. Versiegelter Satz 37, nicht geöffnet
 (O5). Korrekturaufwand: kein September-Wert, n=26 Median 12.0 unverändert
 (O4). Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
 eingereiht.
+
+### 2026-09-06 — Das Review-Fenster ist 14 Tage breit und wird nicht benutzt
+
+Nachtrag zum O5-Nebenfund („der v3-Hebel verspricht 99 Aufnahmen, reviewbar
+sind 21–24"). Die offene Frage war, **wo im Lebenszyklus ein Review-Fenster
+realistisch liegt**. Sie ist jetzt beantwortet, und die Antwort ist schärfer
+als erwartet.
+
+**Erhebung.** Split-Ledger (921), davon 825 mit Zeitstempel im uuid, gegen
+die 288 Aufnahmen mit spielbarem VOD auf dem Pi. Anteil, der heute noch
+reviewbar ist, nach Alter:
+
+| Alter (Tage) | n | noch da | Anteil |
+|---|---|---|---|
+| 0–7 | 34 | 33 | 97 % |
+| 7–14 | 38 | 36 | 95 % |
+| 14–21 | 39 | 4 | **10 %** |
+| 21–30 | 43 | 1 | 2 % |
+| 30–45 | 79 | 2 | 3 % |
+| 45–60 | 95 | 13 | 14 % |
+| 60–90 | 249 | 76 | 31 % |
+| 90–131 | 246 | 118 | 48 % |
+
+Die Kurve ist **nicht monoton**, und das ist kein Messfehler: sie ist exakt
+das Bild der Retention-Regel in `tv-receiver/dvr_retention.go` — *die
+neuesten 5 Folgen je Serie bedingungslos, ältere erst wenn zusätzlich >14
+Tage, Filme/Einzelstücke nie*. Vor Tag 14 greift die Mindestalter-Sperre
+(nichts wird gelöscht), zwischen Tag 14 und 60 räumt die Regel die
+Tagesformate ab, und was danach übrig bleibt, sind die dauerhaft
+geschützten Reste: die letzten 5 Folgen ausgelaufener Serien plus
+Einzelstücke. Der Anstieg nach hinten ist Überlebens-Selektion, kein
+Hinweis auf Langlebigkeit.
+
+**Der Befund.** Von den 69 Aufnahmen der letzten 14 Tage, die heute noch
+reviewbar sind, hat **keine einzige** ein menschliches Label (0/69; die 34
+im train-Eimer eingeschlossen). Das Fenster, in dem Review sicher möglich
+ist, ist genau das Fenster, in dem nicht reviewt wird. Was reviewt wurde,
+liegt im Restbestand: von den Überlebenden jenseits 60 Tagen sind ~70 %
+bereits menschlich beurteilt, offen sind dort nur noch 54 im train-Eimer.
+Der Restbestand ist also fast abgetragen — der Nachschub kommt
+ausschließlich durch das 14-Tage-Fenster.
+
+**Die Frist ist showabhängig, nicht pauschal.** Sie ist `max(Start+14d,
+Zeitpunkt, zu dem 5 neuere Folgen existieren)`. Für die Tagesformate, die
+den train-Zufluss dominieren (Das perfekte Dinner, Galileo, First Dates,
+Mein Lokal, Abenteuer Leben täglich — Takt 1,0 d), ist Rang 5 nach fünf
+Tagen erreicht, die Frist ist damit **glatt 14 Tage**. Wochenformate (Ab
+ins Beet, Hot oder Schrott — Takt ~7 d) haben ~5 Wochen. Einzelstücke sind
+unbefristet. Von den 34 offenen train-Aufnahmen im Fenster haben heute
+**zwei weniger als einen Tag Restfrist**, elf weniger als fünf.
+
+**Warum das zählt.** `Recorder.Delete` räumt das ganze `_rec_<uuid>/`
+inklusive `ads_user.json` (die in `docs/dataflow.md` §3b als ⚠️ vermerkte
+Lücke — die Regel kennt keinen Label-Schutz). Ein Review überlebt die
+Frist nur, wenn ein Trainingslauf es vorher ins Archiv gezogen hat. Bei
+nächtlicher Kadenz ist das gedeckt, aber der Puffer ist eine Nacht, nicht
+eine Woche.
+
+**Konsequenz für den Hebel.** Ein Review-Ranking, das über den ganzen
+train-Eimer rankt, rankt zu 90 % über Aufnahmen, die niemand mehr ansehen
+kann. Der Hebel muss auf das Fenster zeigen und die Restfrist als
+Dringlichkeit führen. Umgesetzt ist das noch nicht — hier steht nur die
+Messung.
+
+**Nebenbefund, negativ.** Label-Herkunft (`which` im Archiv) trennt den
+schwachen Schwanz nicht: im test-Eimer sind 105 von 117 Aufnahmen
+`merged`, deren Anteil unter IoU 0.85 (23/105 = 22 %) liegt unter dem von
+`auto` (3/7). Dass der Schwanz „22/25 merged" ist, ist reine Grundrate und
+trägt keine Information — es stützt die Lesart aus O5, dass dort echte
+Modellschwäche liegt und nicht Label-Rauschen.

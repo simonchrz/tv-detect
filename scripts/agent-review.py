@@ -583,6 +583,14 @@ def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
                                "verzeichnis": f"{i}_{seite}", "frames": frames})
         auftrag = {"uuid": u, "bloecke": [[round(a, 1), round(b, 1)] for a, b in auto],
                    "kanten": kanten}
+        # Quellgroesse festhalten: daran erkennt --anwenden spaeter, ob die
+        # Frames noch zur Aufnahme passen (s. veraltet()). Ohne den Vermerk
+        # bleibt nur die mtime, und die aendert schon ein Neu-Holen
+        # identischen Inhalts.
+        try:
+            auftrag["quelle_bytes"] = (QUELLE / f"{u}.ts").stat().st_size
+        except OSError:
+            pass
         ziel.mkdir(parents=True, exist_ok=True)
         (ziel / "auftrag.json").write_text(json.dumps(auftrag, indent=1))
         n = sum(len(k["frames"]) for k in kanten)
@@ -783,10 +791,27 @@ def veraltet(uuid, auftrag_pfad):
     vorbereiten). Dass sich die QUELLE unter einem offenen Auftrag bewegt,
     war ungeschuetzt — dieselbe Klasse wie recovery_churn_poisons_training,
     wo Re-Filter die Feature- und Archiv-Caches invalidieren MUSS.
+
+    ⚠️ GROESSE schlaegt Zeitstempel. Ein blosses Neu-Holen desselben
+    Inhalts aendert die mtime, nicht die Groesse — und wuerde sonst ein
+    gueltiges Urteil verwerfen. Genau so ist es am 2026-09-06 mit
+    dvr-rtl-1787482800 passiert, dessen Urteil sich unmittelbar davor durch
+    Simons Review als richtig erwiesen hatte. Alte Auftraege ohne den
+    Groessen-Vermerk fallen auf die mtime zurueck (konservativ).
     """
     src = QUELLE / f"{uuid}.ts"
     try:
-        return src.stat().st_mtime > auftrag_pfad.stat().st_mtime
+        jetzt = src.stat()
+    except OSError:
+        return False
+    try:
+        vermerkt = json.loads(auftrag_pfad.read_text()).get("quelle_bytes")
+    except Exception:
+        vermerkt = None
+    if isinstance(vermerkt, int):
+        return jetzt.st_size != vermerkt
+    try:
+        return jetzt.st_mtime > auftrag_pfad.stat().st_mtime
     except OSError:
         return False
 

@@ -2283,8 +2283,37 @@ Schleife gegen sich selbst und bekommt eine perfekte Note.
 
 ### O5 — Hält, was am Golden-Satz gemessen wurde, auch anderswo?
 
-*Status: versiegelter Satz angelegt 2026-08-09, wächst. Frühestens ab ~30
-Aufnahmen öffnen.*
+*Status: **GEÖFFNET UND BEANTWORTET 2026-09-06 — die Befürchtung ist nicht
+eingetreten.** Ein Lauf mit den 37 versiegelten Aufnahmen zwangsweise im
+Test (Scratch-Archiv, Ledger-Kopie `versiegelt→test`, sonst Nightly-Kern:
+mlp32, 3 Seeds, logo/audio/minute-prior) misst beide Sätze im SELBEN Kopf:*
+
+| Satz | n | Median | Mittel | p25 | p75 |
+|---|---|---|---|---|---|
+| GOLDEN | 38 | 0.9665 | 0.928 | 0.889 | 0.993 |
+| VERSIEGELT | 35 | 0.9867 | 0.940 | 0.954 | 0.995 |
+| übriger Test-Eimer | 80 | 0.9564 | 0.874 | 0.798 | 0.992 |
+
+*Differenz versiegelt − golden: **+0.0202**. Wäre der Golden-Satz durch
+hunderte Entscheidungen zu optimistisch geworden, müsste der versiegelte
+Satz DARUNTER liegen. Er liegt darüber — der Golden-Wert ist nicht durch
+Selektion aufgebläht.*
+
+*⚠️ **Der Nebenbefund wiegt schwerer als die Antwort:** der übrige
+Test-Eimer liegt mit Median 0.956, Mittel 0.874 und p25 0.798 unter BEIDEN.
+Rangfolge versiegelt > golden > restlicher Test. Der Maßstab ist also nicht
+der härteste Ausschnitt; der schwere Schwanz des Korpus ist in ihm
+unterrepräsentiert. Wer nur Golden liest, sieht die schwächsten Stellen
+nicht.*
+
+*Einschränkungen, bindend beim Zitieren: 35 von 37 versiegelten Aufnahmen
+wurden bewertet; die Sätze sind NICHT gleich zusammengesetzt (versiegelt
+ist kabel-eins/vox-lastig und durchweg jung, Golden eine kuratierte Mischung
+inkl. alter harter Aufnahmen) — ein Teil der +0.020 ist Zusammensetzung,
+nicht Generalisierung; der Lauf lief mit leichterer Config als der Nightly
+(Golden dort 0.9665 statt 0.957), es gilt nur der Vergleich INNERHALB des
+Laufs. Das Öffnen kostet Unabhängigkeit: der Satz ruht jetzt wieder und
+wächst weiter.*
 
 Der Golden-Satz ist der einzige Maßstab, und **jede** Entscheidung wird gegen
 ihn getroffen. Er verliert seine Unabhängigkeit nicht durch Training, sondern

@@ -122,8 +122,18 @@ def main():
             z = seiten(punkte)
             n_unklar = z.get(None, 0)
             eindeutig = {s: n for s, n in z.items() if s is not None}
+            zeiten = [t for t, _ in punkte]
+            einseitig = bool(zeiten) and (k["ist"] <= min(zeiten) or k["ist"] >= max(zeiten))
             if kante is not None:
                 art, detail = "ableitbar", f"{kante - k['ist']:+.0f}s"
+            elif einseitig:
+                # ⚠️ Kante am Rand der Aufnahme (t=0 oder Ende): das Fenster
+                # liegt komplett auf EINER Seite, ein Uebergang kann dort
+                # gar nicht sichtbar sein. Am 2026-09-06 meldete der Bericht
+                # so dvr-nick-1778516100 (SpongeBob, Block ab 0:00) als
+                # Widerspruch — der Agent sagte korrekt "Werbung", es gab
+                # nur kein Davor. Kein Widerspruch, sondern Randlage.
+                art, detail = "stumm", "Randlage (Fenster einseitig, kein Davor/Danach)"
             elif grund and "kein Wechsel" in grund:
                 # DAS ist der Widerspruch: eine Seite ueber das ganze Fenster,
                 # obwohl das Label hier eine Kante behauptet.

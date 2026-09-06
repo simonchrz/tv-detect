@@ -211,13 +211,20 @@ def auswerten(args):
                 erwartet = "werbung" if info["rolle"].endswith("werbung") else "sendung"
                 kontrollen[info["rolle"]] = (d_ == erwartet, d_, erwartet)
 
-        kontrolle_ok = all(v[0] for v in kontrollen.values()) and len(kontrollen) == 2
+        # ⚠️ `unklar` auf einer Kontrolle ist KEIN Fehlurteil, sondern
+        # Zurueckhaltung -- und Zurueckhaltung ist laut
+        # agent_review_schutzkette ein Guetezeichen. Nur eine FALSCHE
+        # Kontrolle disqualifiziert. Am 2026-09-06 waeren sonst zwei Laeufe
+        # als "gescheitert" gezaehlt worden, die inhaltlich dasselbe sagten
+        # wie die uebrigen sechs.
+        falsch = [k for k, v in kontrollen.items() if v[1] is not None and not v[0]]
+        kontrolle_ok = not falsch and len(kontrollen) == 2
         bestimmt = [x for x in streit if x is not None]
         anteil_werbung = (sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
                           if bestimmt else None)
         f = loes["fund"]
         if not kontrolle_ok:
-            urt = "KONTROLLE VERFEHLT"
+            urt = "KONTROLLE FALSCH"
         elif anteil_werbung is None:
             urt = "nur unklar"
         elif anteil_werbung >= args.schwelle:
@@ -246,10 +253,10 @@ def auswerten(args):
               f"{z['eimer']:<11} {z['serie'][:26]}")
     gut = [z for z in zeilen if z["urteil"] == "bestaetigt"]
     schlecht = [z for z in zeilen if z["urteil"] == "widerlegt"]
-    verfehlt = [z for z in zeilen if z["urteil"] == "KONTROLLE VERFEHLT"]
+    verfehlt = [z for z in zeilen if z["urteil"] == "KONTROLLE FALSCH"]
     print(f"\n{len(gut)} bestaetigt, {len(schlecht)} widerlegt, "
           f"{len(zeilen)-len(gut)-len(schlecht)} ohne Urteil "
-          f"(davon {len(verfehlt)} an der Kontrolle gescheitert).")
+          f"(davon {len(verfehlt)} mit falscher Kontrolle).")
     if gut:
         print(f"Bestaetigte Kantenfehler: Median {st.median([z['versatz_s'] for z in gut])}s")
     print("\n⚠️ Eine Trefferquote aus dieser Stichprobe rechtfertigt noch kein "

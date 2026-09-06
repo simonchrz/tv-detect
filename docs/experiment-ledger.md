@@ -3450,3 +3450,50 @@ schwachen Schwanz nicht: im test-Eimer sind 105 von 117 Aufnahmen
 `auto` (3/7). Dass der Schwanz „22/25 merged" ist, ist reine Grundrate und
 trägt keine Information — es stützt die Lesart aus O5, dass dort echte
 Modellschwäche liegt und nicht Label-Rauschen.
+
+### 2026-09-06 — Folgen-Vergleich: die Kanten-Funde sind widerlegt (8 von 8)
+
+Aus „wie können wir das Auto-Review verbessern, ich möchte nicht mehr
+reviewen". Gebaut wurden `scripts/folgen-vergleich.py` (Abweichung einer
+Folge vom Muster ihrer Serie) und `scripts/folgen-vergleich-pruefen.py`
+(Agentenprobe dazu). Das Ergebnis der Probe ist negativ und wird hier
+festgehalten, bevor jemand darauf aufbaut.
+
+**Ausgangsmessung, die trägt.** Tagesformate senden reproduzierbar: „Das
+perfekte Dinner" beginnt Block 1 in jeder der 13 Folgen zwischen Minute 43
+und 45, „Galileo" hat in 14 Folgen ein stabiles Dreier-Muster.
+
+**Der Fund, der nicht trägt.** Beim Bauen fiel auf, dass viele gemeldete
+„Lücken" direkt an einen eigenen Block grenzen — also keine fehlenden
+Blöcke, sondern verrutschte Kanten von 70–226 s. Das sah nach dem Hebel
+aus, den `block_iou` braucht. 22 solcher Funde bei 8–13 Vergleichsfolgen
+und Konsens 0.70–1.00.
+
+**Die Probe.** Der Test ist binär: die strittige Spanne ist Werbung, genau
+dann wenn der Vergleich recht hat. Acht Aufträge à 7 anonymisierte,
+gemischte Bilder (5 strittige + 2 Kontrollen mit feststehender Antwort),
+je ein Agent, keine Blocklage im Auftrag.
+
+```
+0 bestaetigt, 8 widerlegt
+Werbeanteil in der strittigen Spanne: 0 % (6x), 20 % (2x)
+Kontrollen: keine einzige falsch (2x "unklar" = Zurueckhaltung)
+```
+
+**Warum.** Reproduzierbar sind die Block-**Anfänge**, nicht die
+Block-**Längen** und nicht die genaue Lage. Eine Folge, deren Block echt
+85 s später beginnt, erzeugt exakt dasselbe Konsens-Signal wie ein
+falsches Label. Der Vergleich kann beide nicht trennen — und in acht von
+acht Fällen war es die harmlose Erklärung.
+
+**Konsequenz.** `kante-*` ist kein Korrekturhinweis; die Spalte bleibt als
+Streuungsmaß im Bericht, mit Warnung im Docstring. Ungeprüft und weiterhin
+plausibel sind `einzelgaenger` und `luecke` — andere Behauptungen (ein
+ganzer Block existiert nicht bzw. fehlt), und nur für die spricht die
+Ausgangsmessung.
+
+**Nebenbefund zur Bauart der Probe.** `unklar` auf einem Kontrollbild ist
+Zurückhaltung, kein Fehlurteil, und Zurückhaltung ist laut
+`agent_review_schutzkette` ein Gütezeichen. Die erste Fassung hat zwei
+Läufe deswegen als „gescheitert" verworfen, die inhaltlich dasselbe sagten
+wie die übrigen sechs. Nur eine FALSCHE Kontrolle disqualifiziert.

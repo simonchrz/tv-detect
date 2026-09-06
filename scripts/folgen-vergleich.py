@@ -17,8 +17,29 @@ Decode, ohne Whisper und ohne menschliches Urteil auskommt — und er hat
 Blockauflösung, wo `autoconfirm.go` mit 60-s-Whisper-Fenstern nur zustimmen
 oder ablehnen kann.
 
-⚠️ WAS DIESER BERICHT NICHT KANN
---------------------------------
+⚠️⚠️ DIE KANTEN-FUNDE SIND WIDERLEGT (2026-09-06, am selben Tag)
+----------------------------------------------------------------
+`folgen-vergleich-pruefen.py` hat die acht staerksten `kante-*`-Funde
+gegen das Bildmaterial gehalten: **0 bestaetigt, 8 widerlegt.** In der
+strittigen Spanne lief Sendung, nicht Werbung — das Label hatte recht.
+
+Der Denkfehler war meiner, und er ist lehrreich: reproduzierbar sind die
+Block-ANFAENGE (Das perfekte Dinner: Minute 43–45 in jeder Folge), nicht
+die Block-LAENGEN und nicht die genaue Lage. Eine Folge, deren Werbeblock
+echt 85 s spaeter beginnt oder 150 s frueher endet, erzeugt **exakt
+dasselbe Konsens-Signal** wie ein falsches Label. Der Vergleich kann die
+beiden nicht trennen — und die Wirklichkeit war in acht von acht Faellen
+die harmlose Erklaerung.
+
+`kante-start`/`kante-ende` sind deshalb **kein Korrekturhinweis**. Die
+Spalte bleibt im Bericht, weil sie die Streuung sichtbar macht, aber wer
+daraus Kanten setzt, verschlechtert Labels. Ungeprueft sind noch
+`einzelgaenger` und `luecke` — das sind andere Behauptungen (ein ganzer
+Block existiert nicht bzw. fehlt), und nur fuer die spricht die
+Ausgangsmessung.
+
+⚠️ WAS DIESER BERICHT AUCH SONST NICHT KANN
+-------------------------------------------
 Der Vergleichsmaßstab sind die Labels der anderen Folgen — und die sind
 inzwischen mehrheitlich maschinell (siehe `massstab-audit.py`). Gefunden
 wird deshalb UNEINIGKEIT, nicht Wahrheit. Ein Fehler, den der Detektor in

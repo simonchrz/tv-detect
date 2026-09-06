@@ -95,6 +95,59 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 
 ## 3. Offene Fragen
 
+### O17 — Zählt das Training die richtigen Labels als menschlich?
+
+*Status: **ENTSCHIEDEN 2026-09-06, REGEL NICHT ERFÜLLT.** Median **+0.0032**
+(Schwelle ≥ +0.010), 3 von 5 Paaren positiv (Schwelle ≥ 4). Vorzeichen
+stimmt, Größe verfehlt — dieselbe Lage wie O1 und O8b. Konsequenz laut
+Registrierung: **die Korrektur wird eingebaut, aber als Hygiene, nicht als
+Verbesserung.** `has_user` behauptet „hier war ein Mensch"; für 92
+Aufnahmen korpusweit ist das nachweislich falsch, und eine falsche
+Tatsachenbehauptung im Code gehört auch dann korrigiert, wenn die Metrik
+es nicht belohnt.*
+
+Tagesserie 2026-09-06, 5 Paare, gleicher Seed je Paar, Arme
+`mlp32-cwtmpwm-belegt` gegen `-ist` (identischer Spaltenbauer, Unterschied
+allein `--herkunft-belegt`):
+
+```
+p00 +0.0034   p01 +0.0032   p02 -0.0011   p03 +0.0112   p04 -0.0122
+Median +0.0032, 3/5 positiv, Spanne der Einzelwerte 0.0206
+```
+
+Die Spanne des `ist`-Arms allein (0.0206) deckt sich fast exakt mit dem
+Rauschboden aus §2 (0.023 über 5 Seeds) — sie bestätigt den Boden
+unabhängig und zeigt, warum nur der **gepaarte** Vergleich etwas taugt.
+
+**⚠️ Zwei Fehler auf dem Weg, beide meine, beide festgehalten.**
+
+1. **Der erste Lauf lief ins Leere.** `--tagesserie 1` — der Block hängt an
+   `args.tagesserie > 1`, eine Serie aus einem Paar ist keine. Zwei volle
+   Trainingsläufe (~30 min) ohne eine einzige Serien-Zeile.
+
+2. **Das Audit sagte JA zu einer Regel, die es nicht lesen konnte.** Die
+   Registrierung nannte `median_mindestens` / `positive_naechte_mindestens`
+   — Namen, die es nicht kannte. Statt sich zu weigern, meldete es
+   *„Bedingung 1  Median ≤ None: erfüllt"* und ließ O17 als **ERFÜLLT**
+   durchgehen. Ursache: `c1 = med_max is None or med <= med_max`, also
+   fail-open in der einzigen Instanz, die „nein" sagen können soll. Der
+   Kopf von `test_audit_preregistration.py` sagt genau das seit Wochen
+   (*„Ein Waechter, der nie ausloest, ist von einem fehlenden Waechter
+   nicht zu unterscheiden"*) — die Lücke war trotzdem da, weil kein Test
+   eine UNBEKANNTE Bedingung geprüft hat. Gefixt: unbekannte oder fehlende
+   Bedingungen sind jetzt ein Integritätsfehler, und die
+   Verbesserungsrichtung (`median_mindestens`,
+   `positive_naechte_mindestens`) wird unterstützt. 6 neue Tests.
+
+   **Das ist der teurere Befund des Tages.** Ein Fehlurteil in diese
+   Richtung hätte O17 als Erfolg verbucht — und jede künftige
+   Registrierung mit einem Tippfehler im Bedingungsnamen ebenso.
+
+**Offen und ausdrücklich NICHT von dieser Frage beantwortet:** ob der
+Maßstab selbst zu reparieren ist (golden 22/38 nachweislich menschlich,
+test 7/102, versiegelt 0/37) und Arm 2 (die 294 nicht entscheidbaren
+Aufnahmen).
+
 ### O1 — Kostet die Whisper-Spalte mehr als sie bringt?
 
 *Status: **ENTSCHIEDEN 2026-08-14, REGEL NICHT ERFÜLLT.** Median −0.0044

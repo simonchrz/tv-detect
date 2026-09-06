@@ -260,6 +260,73 @@ class Integritaet(unittest.TestCase):
             self.assertTrue(ok)
 
 
+class UnlesbareRegel(unittest.TestCase):
+    """⚠️ Der Fall, den es am 2026-09-06 wirklich gab.
+
+    O17 wurde mit `median_mindestens` registriert — einem Namen, den das
+    Audit nicht kannte. Statt sich zu weigern, meldete es
+    *„Bedingung 1  Median ≤ None: erfüllt"* und liess die Regel als
+    ERFUELLT durchgehen. Eine Registrierung, die das Audit nicht lesen
+    kann, ist keine Registrierung; sie darf niemals als bestanden gelten.
+    """
+
+    def _n(self):
+        return (nacht("20260810T0", 0.90, 0.80) + nacht("20260811T0", 0.90, 0.80)
+                + nacht("20260812T0", 0.90, 0.80) + nacht("20260813T0", 0.90, 0.80)
+                + nacht("20260814T0", 0.90, 0.80))
+
+    def test_unbekannte_bedingung_ist_ein_integritaetsfehler(self):
+        regel = dict(REGEL, bedingungen={"median_irgendwas": 0.010})
+        ok, txt = lauf(self._n(), regel)
+        self.assertFalse(ok)
+        self.assertIn("INTEGRITAET", txt)
+        self.assertNotIn("REGEL ERFUELLT", txt)
+
+    def test_unbekannte_neben_bekannter_bedingung_reicht_schon(self):
+        regel = dict(REGEL, bedingungen={"median_hoechstens": -0.010,
+                                         "tippfehler": 3})
+        ok, txt = lauf(self._n(), regel)
+        self.assertFalse(ok)
+        self.assertIn("INTEGRITAET", txt)
+
+    def test_leere_bedingungen_sind_kein_freibrief(self):
+        regel = dict(REGEL, bedingungen={})
+        ok, txt = lauf(self._n(), regel)
+        self.assertFalse(ok)
+        self.assertNotIn("REGEL ERFUELLT", txt)
+
+
+class RichtungVerbesserung(unittest.TestCase):
+    """Eine Hypothese darf auch behaupten, dass etwas BESSER wird.
+
+    Bis 2026-09-06 kannte das Audit nur `median_hoechstens` /
+    `negative_naechte_mindestens` — also nur die Schadensrichtung.
+    """
+
+    def _n(self, delta):
+        return [z for i in range(5)
+                for z in nacht(f"2026081{i}T0", 0.80 + delta, 0.80)]
+
+    def test_klare_verbesserung_erfuellt(self):
+        regel = dict(REGEL, bedingungen={"median_mindestens": 0.010,
+                                         "positive_naechte_mindestens": 4})
+        ok, txt = lauf(self._n(+0.02), regel)
+        self.assertTrue(ok)
+        self.assertIn("REGEL ERFUELLT", txt)
+
+    def test_zu_kleine_verbesserung_verfehlt(self):
+        regel = dict(REGEL, bedingungen={"median_mindestens": 0.010,
+                                         "positive_naechte_mindestens": 4})
+        ok, txt = lauf(self._n(+0.003), regel)
+        self.assertIn("NICHT ERFUELLT", txt)
+
+    def test_verschlechterung_erfuellt_die_verbesserungsregel_nicht(self):
+        regel = dict(REGEL, bedingungen={"median_mindestens": 0.010,
+                                         "positive_naechte_mindestens": 4})
+        ok, txt = lauf(self._n(-0.02), regel)
+        self.assertIn("NICHT ERFUELLT", txt)
+
+
 class EchteRegistrierung(unittest.TestCase):
     def test_o1_block_ist_lesbar_und_vollstaendig(self):
         regeln = A.regeln_laden(Path(__file__).resolve().parent.parent / "docs")

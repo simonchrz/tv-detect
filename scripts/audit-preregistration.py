@@ -229,8 +229,31 @@ def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
     med = statistics.median(deltas)
     neg = sum(1 for d in deltas if d < 0)
     b = regel.get("bedingungen", {})
+    # ⚠️ FAIL-CLOSED. Bis 2026-09-06 stand hier `b.get(...)` plus
+    # `c1 = med_max is None or ...` -- eine Bedingung, die das Audit nicht
+    # kannte, galt damit als ERFUELLT. O17 war so registriert
+    # ("median_mindestens", das es nicht gab) und bekam prompt
+    # "Bedingung 1 Median <= None: erfuellt". Ein Waechter, der bei einer
+    # unlesbaren Regel zustimmt, ist von einem fehlenden nicht zu
+    # unterscheiden -- genau der Satz steht im Kopf von
+    # test_audit_preregistration.py, und die Luecke war trotzdem da.
+    BEKANNT = {"median_hoechstens", "negative_naechte_mindestens",
+               "median_mindestens", "positive_naechte_mindestens"}
+    unbekannt = sorted(set(b) - BEKANNT)
+    if unbekannt:
+        print(f"\n  ✗ INTEGRITAET: unbekannte Bedingung(en) {unbekannt} — "
+              f"das Audit kann diese Regel NICHT pruefen. Bekannt sind "
+              f"{sorted(BEKANNT)}.")
+        return False
+    if not (set(b) & BEKANNT):
+        print("\n  ✗ INTEGRITAET: die Regel nennt keine pruefbare Bedingung.")
+        return False
+
     med_max = b.get("median_hoechstens")
     neg_min = b.get("negative_naechte_mindestens")
+    # Die Gegenrichtung: eine Hypothese, die eine VERBESSERUNG behauptet.
+    med_min = b.get("median_mindestens")
+    pos_min = b.get("positive_naechte_mindestens")
 
     print(f"\n  Median  {med:+.4f}   negativ  {neg}/{len(deltas)}")
 
@@ -239,12 +262,26 @@ def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
               f"Zwischenstände sind KEIN Ergebnis.")
         return True
 
-    c1 = med_max is None or med <= med_max
-    c2 = neg_min is None or neg >= neg_min
-    print(f"\n  Bedingung 1  Median ≤ {med_max}:            "
-          f"{'erfüllt' if c1 else 'NICHT erfüllt'}  ({med:+.4f})")
-    print(f"  Bedingung 2  ≥ {neg_min} von {len(deltas)} negativ:      "
-          f"{'erfüllt' if c2 else 'NICHT erfüllt'}  ({neg})")
+    pos = sum(1 for d in deltas if d > 0)
+    pruefungen = []
+    if med_max is not None:
+        pruefungen.append((f"Median ≤ {med_max:+.3f}", med <= med_max,
+                           f"{med:+.4f}"))
+    if med_min is not None:
+        pruefungen.append((f"Median ≥ {med_min:+.3f}", med >= med_min,
+                           f"{med:+.4f}"))
+    if neg_min is not None:
+        pruefungen.append((f"≥ {neg_min} von {len(deltas)} negativ",
+                           neg >= neg_min, f"{neg}"))
+    if pos_min is not None:
+        pruefungen.append((f"≥ {pos_min} von {len(deltas)} positiv",
+                           pos >= pos_min, f"{pos}"))
+    print()
+    for i, (text, ok, wert) in enumerate(pruefungen, 1):
+        print(f"  Bedingung {i}  {text:<30} "
+              f"{'erfüllt' if ok else 'NICHT erfüllt'}  ({wert})")
+    c1 = all(ok for _, ok, _ in pruefungen)
+    c2 = True
 
     if c1 and c2:
         print("\n  → REGEL ERFUELLT. Die vorab festgelegte Konsequenz gilt.")

@@ -1,6 +1,12 @@
 # O17 — Zählt das Training die richtigen Labels als menschlich?
 (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-09-06 — REGEL NICHT ERFÜLLT.** Median +0.0032
+> (Schwelle ≥ +0.010), 3 von 5 Paaren positiv (Schwelle ≥ 4). Die vorab
+> festgelegte Konsequenz gilt: Einbau als **Hygiene**, nicht als
+> Verbesserung. Ergebnis und die zwei Fehler auf dem Weg stehen im
+> Experiment-Ledger §3 unter O17.
+
 **Geschrieben 2026-09-06, bevor ein einziger Fit mit der korrigierten Regel
 gerechnet wurde.** Bedingung, Armzahl und Schwelle stehen fest, bevor die
 erste Zahl existiert (R4).

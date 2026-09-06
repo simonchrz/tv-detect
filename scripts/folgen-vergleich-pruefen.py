@@ -14,6 +14,16 @@ recht. Es braucht also keine Kantenbestimmung, nur eine Klassifikation —
 und das ist das, was Agenten nachweislich gut können
 (Memory `agent_als_kantenmassstab`).
 
+`luecke` behauptet dasselbe (dort fehlt ein Block), **`einzelgaenger` das
+Gegenteil**: dort steht ein Block, den die anderen Folgen nicht kennen —
+die Spanne ist also **Sendung**, genau dann wenn der Vergleich recht hat.
+Die erwartete Polarität steht in `POLARITAET` und darf nicht geraten
+werden; wer sie vertauscht, liest jedes Ergebnis spiegelverkehrt.
+
+⚠️ ERGEBNIS FÜR `kante-*` (2026-09-06): **0 von 8 bestätigt.** Reproduzierbar
+sind Block-Anfänge, nicht Block-Längen — eine echt verschobene Werbepause
+erzeugt dasselbe Signal wie ein falsches Label. Siehe Ledger gleichen Datums.
+
 BAUART, UND WARUM GENAU DIESE
 -----------------------------
 Drei Vorkehrungen, jede gegen einen dokumentierten Fehlschlag:
@@ -58,6 +68,15 @@ _ar = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ar)
 
 ARBEIT = Path.home() / ".cache/tvd-folgen-probe"
+
+# Was in der strittigen Spanne stehen MUESSTE, wenn der Folgen-Vergleich
+# recht hat. `einzelgaenger` ist die Gegenrichtung der beiden anderen.
+POLARITAET = {
+    "kante-start": "werbung",
+    "kante-ende": "werbung",
+    "luecke": "werbung",
+    "einzelgaenger": "sendung",
+}
 N_STREIT = 5          # Abtastpunkte in der strittigen Spanne
 RAND_S = 6            # Abstand zu beiden Enden der Spanne
 KONTROLL_ABSTAND = 45  # Mindestabstand einer Kontrolle zur nächsten Blockkante
@@ -65,7 +84,7 @@ KONTROLL_ABSTAND = 45  # Mindestabstand einer Kontrolle zur nächsten Blockkante
 
 def funde_holen(args):
     ruf = [sys.executable, str(Path(__file__).with_name("folgen-vergleich.py")),
-           "--nur", "kante", "--min-andere", str(args.min_andere), "--json"]
+           "--nur", args.art, "--min-andere", str(args.min_andere), "--json"]
     r = subprocess.run(ruf, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"folgen-vergleich.py fehlgeschlagen:\n{r.stderr[-300:]}")
@@ -220,21 +239,29 @@ def auswerten(args):
         falsch = [k for k, v in kontrollen.items() if v[1] is not None and not v[0]]
         kontrolle_ok = not falsch and len(kontrollen) == 2
         bestimmt = [x for x in streit if x is not None]
+        f = loes["fund"]
+        erwartet_spanne = POLARITAET[f["art"]]
         anteil_werbung = (sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
                           if bestimmt else None)
-        f = loes["fund"]
+        # Anteil, der ZUM FUND passt -- bei einzelgaenger ist das der
+        # Sendungsanteil, nicht der Werbeanteil.
+        anteil_passend = (None if anteil_werbung is None else
+                          (anteil_werbung if erwartet_spanne == "werbung"
+                           else 1.0 - anteil_werbung))
         if not kontrolle_ok:
             urt = "KONTROLLE FALSCH"
-        elif anteil_werbung is None:
+        elif anteil_passend is None:
             urt = "nur unklar"
-        elif anteil_werbung >= args.schwelle:
+        elif anteil_passend >= args.schwelle:
             urt = "bestaetigt"
-        elif anteil_werbung <= 1 - args.schwelle:
+        elif anteil_passend <= 1 - args.schwelle:
             urt = "widerlegt"
         else:
             urt = "unentschieden"
         zeilen.append({"verzeichnis": d.name, "urteil": urt,
                        "anteil_werbung": anteil_werbung,
+                       "anteil_passend": anteil_passend,
+                       "erwartet": erwartet_spanne,
                        "n_bestimmt": len(bestimmt), "n_streit": len(streit),
                        "kontrollen": {k: v[1] for k, v in kontrollen.items()},
                        "art": f["art"], "versatz_s": f["versatz_s"],
@@ -246,10 +273,10 @@ def auswerten(args):
     if not zeilen:
         print(f"Keine ausgewerteten Auftraege unter {ARBEIT}.")
         return 0
-    print(f"{'Urteil':<19} {'Werb':>5} {'Art':<12} {'Fehler':>7} {'Eimer':<11} Serie")
+    print(f"{'Urteil':<19} {'passt':>6} {'erwartet':>9} {'Art':<14} {'Eimer':<11} Serie")
     for z in zeilen:
-        aw = f"{z['anteil_werbung']:.0%}" if z["anteil_werbung"] is not None else "—"
-        print(f"{z['urteil']:<19} {aw:>5} {z['art']:<12} {z['versatz_s']:>6}s "
+        ap_ = f"{z['anteil_passend']:.0%}" if z["anteil_passend"] is not None else "—"
+        print(f"{z['urteil']:<19} {ap_:>6} {z['erwartet']:>9} {z['art']:<14} "
               f"{z['eimer']:<11} {z['serie'][:26]}")
     gut = [z for z in zeilen if z["urteil"] == "bestaetigt"]
     schlecht = [z for z in zeilen if z["urteil"] == "widerlegt"]
@@ -257,8 +284,8 @@ def auswerten(args):
     print(f"\n{len(gut)} bestaetigt, {len(schlecht)} widerlegt, "
           f"{len(zeilen)-len(gut)-len(schlecht)} ohne Urteil "
           f"(davon {len(verfehlt)} mit falscher Kontrolle).")
-    if gut:
-        print(f"Bestaetigte Kantenfehler: Median {st.median([z['versatz_s'] for z in gut])}s")
+    if gut and all(z["versatz_s"] for z in gut):
+        print(f"Bestaetigt, Median-Versatz {st.median([z['versatz_s'] for z in gut])}s")
     print("\n⚠️ Eine Trefferquote aus dieser Stichprobe rechtfertigt noch kein "
           "automatisches\n   Setzen von Kanten — sie sagt, ob es sich lohnt, "
           "das zu bauen.")
@@ -270,6 +297,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vorbereiten", action="store_true")
     ap.add_argument("--auswerten", action="store_true")
+    ap.add_argument("--art", choices=["kante", "luecke", "einzelgaenger"],
+                    default="kante", help="welche Fundart geprueft wird")
     ap.add_argument("--anzahl", type=int, default=8)
     ap.add_argument("--min-andere", type=int, default=8)
     ap.add_argument("--schwelle", type=float, default=0.6,

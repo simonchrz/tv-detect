@@ -171,8 +171,18 @@ def vorbereiten(args):
             loesung[name] = {"t": round(t, 1), "rolle": rolle}
         roh.rmdir()
 
+        # quelle_bytes: Groesse der Quelle ZUM ZEITPUNKT der Bildentnahme.
+        # `veraltet()` in agent-review.py vergleicht dagegen -- ohne den
+        # Vermerk faellt es auf die mtime zurueck und verwirft gueltige
+        # Urteile, sobald eine Quelle bloss neu geholt wurde.
+        try:
+            qb = (_ar.QUELLE / f"{uuid}.ts").stat().st_size
+        except OSError:
+            qb = None
         (ziel / "_loesung.json").write_text(json.dumps(
-            {"uuid": uuid, "fund": f, "punkte": loesung}, ensure_ascii=False, indent=2))
+            {"uuid": uuid, "fund": f, "punkte": loesung,
+             "quelle_bytes": qb, "bloecke_vorher": bloecke},
+            ensure_ascii=False, indent=2))
         (ziel / "auftrag.json").write_text(json.dumps({
             "aufgabe": ("Ordne JEDES Bild in diesem Verzeichnis genau einer "
                         "Kategorie zu. Sieh dir jedes Bild an. Die Bilder "
@@ -292,11 +302,127 @@ def auswerten(args):
     return 0
 
 
+SCHREIBER = "folgen-vergleich.py"
+
+
+def _urteil_fuer(d):
+    """(loesung, anteil_passend, kontrolle_falsch) oder None."""
+    lp, up = d / "_loesung.json", d / "urteil.json"
+    if not (lp.is_file() and up.is_file()):
+        return None
+    loes = json.loads(lp.read_text())
+    try:
+        urteil = json.loads(up.read_text())
+    except Exception:
+        return None
+    erwartet = POLARITAET[loes["fund"]["art"]]
+    streit, kontrolle_falsch = [], False
+    for bild, info in loes["punkte"].items():
+        gedeutet = _ar.KONVENTION.get(str(urteil.get(bild, "")).strip().lower())
+        if info["rolle"] == "streit":
+            streit.append(gedeutet)
+        elif gedeutet is not None:
+            soll = "werbung" if info["rolle"].endswith("werbung") else "sendung"
+            if gedeutet != soll:
+                kontrolle_falsch = True
+    bestimmt = [x for x in streit if x is not None]
+    if not bestimmt:
+        return loes, None, kontrolle_falsch
+    anteil_w = sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
+    return loes, (anteil_w if erwartet == "werbung" else 1.0 - anteil_w), kontrolle_falsch
+
+
+def anwenden(args):
+    """Bestaetigte Einzelgaenger loeschen. NUR train, NUR nach der Probe.
+
+    Sieben Schranken, jede aus einem bezahlten Fehler:
+      1. nur `einzelgaenger` -- `kante-*` ist am 2026-09-06 mit 0 von 8
+         durchgefallen und darf nie geschrieben werden.
+      2. `erlaubte_uuids()` fail-closed auf train (agent_review_schutzkette).
+      3. Kontrolle darf nicht falsch sein.
+      4. `veraltet()` -- Quelle darf sich seit der Bildentnahme nicht
+         geaendert haben.
+      5. Der Block muss im AKTUELLEN Label noch stehen; zwischenzeitliche
+         Aenderungen brechen ab statt zu ueberschreiben.
+      6. `reviewed_by` = folgen-vergleich.py, damit NICHT_MENSCH das Label
+         als maschinell erkennt und es nie in den Massstab rutscht
+         (fingerprint_bestaetigung_ist_kein_mensch).
+      7. Probelauf ist die Vorgabe; Schreiben braucht --schreiben.
+    """
+    erlaubt = _ar.erlaubte_uuids()
+    if erlaubt is None:
+        return 1
+    ges = 0
+    for d in sorted(ARBEIT.iterdir()) if ARBEIT.exists() else []:
+        got = _urteil_fuer(d)
+        if not got:
+            continue
+        loes, anteil, kontrolle_falsch = got
+        f = loes["fund"]
+        uuid = f["uuid"]
+        if f["art"] != "einzelgaenger":
+            continue
+        if (d / "angewandt").exists():
+            continue
+        if anteil is None or anteil < args.schwelle:
+            continue
+        if kontrolle_falsch:
+            print(f"  {d.name}: UEBERSPRUNGEN — Kontrolle falsch")
+            continue
+        if uuid not in erlaubt:
+            print(f"  {d.name}: UEBERSPRUNGEN — Eimer {f['eimer']!r}, nicht train")
+            continue
+        if _ar.veraltet(uuid, d / "_loesung.json"):
+            print(f"  {d.name}: UEBERSPRUNGEN — Quelle seit der Bildentnahme geaendert")
+            continue
+        try:
+            jetzt = _ar_hole(f"{args.pi}/recording/{uuid}/ads")
+        except Exception as e:
+            print(f"  {d.name}: UEBERSPRUNGEN — {e}")
+            continue
+        aktuell = [[float(x), float(y)] for x, y in (jetzt.get("ads") or [])]
+        treffer = [b for b in aktuell
+                   if abs(b[0] - f["von"]) <= 3 and abs(b[1] - f["bis"]) <= 3]
+        if len(treffer) != 1:
+            print(f"  {d.name}: UEBERSPRUNGEN — Block steht so nicht mehr im Label "
+                  f"({len(treffer)} Treffer)")
+            continue
+        neu = [b for b in aktuell if b is not treffer[0]]
+        z = f"{f['von']//60}:{f['von']%60:02d}–{f['bis']//60}:{f['bis']%60:02d}"
+        if not args.schreiben:
+            print(f"  [Probe] {uuid} {z} loeschen "
+                  f"({len(aktuell)} → {len(neu)} Bloecke, {anteil:.0%} Sendung)")
+            ges += 1
+            continue
+        body = json.dumps({"ads": neu, "reviewed_by": SCHREIBER}).encode()
+        req = _urllib().Request(f"{args.pi}/api/recording/{uuid}/ads/edit",
+                                data=body, headers={"Content-Type": "application/json"})
+        with _urllib().urlopen(req, timeout=20) as r:
+            print(f"  {uuid} {z} geloescht ({len(aktuell)} → {len(neu)}), HTTP {r.status}")
+        (d / "angewandt").write_text(json.dumps(
+            {"wann": __import__("time").time(), "vorher": aktuell, "nachher": neu,
+             "schreiber": SCHREIBER}, ensure_ascii=False))
+        ges += 1
+    print(f"\n{ges} Block/Bloecke"
+          + (" (Probelauf — mit --schreiben wirklich aendern)"
+             if not args.schreiben else " geloescht") + ".")
+    return 0
+
+
+def _urllib():
+    import urllib.request
+    return urllib.request
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vorbereiten", action="store_true")
     ap.add_argument("--auswerten", action="store_true")
+    ap.add_argument("--anwenden", action="store_true",
+                    help="bestaetigte einzelgaenger im train-Eimer loeschen")
+    ap.add_argument("--schreiben", action="store_true",
+                    help="mit --anwenden: wirklich schreiben statt Probelauf")
     ap.add_argument("--art", choices=["kante", "luecke", "einzelgaenger"],
                     default="kante", help="welche Fundart geprueft wird")
     ap.add_argument("--anzahl", type=int, default=8)
@@ -311,6 +437,8 @@ def main():
         return vorbereiten(args)
     if args.auswerten:
         return auswerten(args)
+    if args.anwenden:
+        return anwenden(args)
     ap.print_help()
     return 1
 

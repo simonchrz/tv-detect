@@ -63,7 +63,8 @@ BACKUP = Path.home() / "tv-labels-backup"
 
 # Deckungsgleich mit golden_v3_vorschlag.py. Wer dort einen Schreiber
 # ergaenzt, ergaenzt ihn auch hier.
-NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen"}
+NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen",
+                "folgen-vergleich.py"}
 
 # which-Werte, die ein rein maschinelles Label bezeichnen.
 MASCHINE_WHICH = {"auto", "auto-confirm"}
@@ -109,8 +110,16 @@ def herkunft(uuid, meta):
     if lebend is False:
         return "maschine", "ads_user.json mit Auto-/Agenten-Marker"
     w = (meta.get(uuid) or {}).get("which")
-    if w in ("user", "merged"):
-        return "mensch", f"Archiv which={w}"
+    if w == "user":
+        return "mensch", "Archiv which=user"
+    if w == "merged":
+        # ⚠️ KORRIGIERT 2026-09-06. `which` entsteht in train-head.py aus der
+        # blossen EXISTENZ von ads_user.json (Zeile ~3071) -- und auto-confirm
+        # legt genau so eine Datei an. Gemessen an 234 lebenden Aufnahmen mit
+        # nicht-leerem ads_user.json: 78 maschinell und 17 agentengeschrieben,
+        # zusammen 41 %, alle mit which="merged". Fuer eine tote Aufnahme ist
+        # daher NICHT entscheidbar, ob ein Mensch daran war.
+        return "unbekannt", "Archiv which=merged (deckt Mensch UND auto-confirm)"
     if w in MASCHINE_WHICH:
         return "maschine", f"Archiv which={w}"
     return "unbekannt", f"keine Quelle, Archiv which={w!r}"

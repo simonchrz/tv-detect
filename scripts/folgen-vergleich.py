@@ -377,7 +377,17 @@ def main():
             dauer = a.get("duration_s") or r.get("duration") or 0
             if not dauer:
                 continue
-            folgen.append((r["uuid"], r.get("start", 0), dauer, a.get("ads") or []))
+            # ⚠️ NICHT `ads` nehmen. Das ist die zusammengefuehrte ANSICHT und
+            # enthaelt den `overrunBlock` -- den DVR-Nachlauf nach dem
+            # Sendeplatzende, den `handleRecordingAds` anhaengt. Der steht in
+            # keinem Label, liegt naturgemaess am Aufnahmeende und damit je
+            # Folge woanders, und erzeugt so lauter Phantom-Einzelgaenger:
+            # am 2026-09-06 waren 4 von 8 "bestaetigten" Funden genau das.
+            # `user` bzw. `auto` sind die Labels selbst.
+            label = a.get("user")
+            if label is None:
+                label = a.get("auto") or []
+            folgen.append((r["uuid"], r.get("start", 0), dauer, label))
         if len(folgen) < args.min_folgen:
             continue
         funde, info = serie_pruefen(folgen, args)

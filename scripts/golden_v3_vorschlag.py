@@ -36,7 +36,8 @@ BACKUP = Path.home() / "tv-labels-backup"
 # steht bewusst NICHT hier: es korrigiert Golden-Labels nach menschlicher
 # Entscheidung, und jene Aufnahmen sind ohnehin v2-Mitglieder und damit aus
 # der Kandidatenliste. Wer einen neuen Schreiber ergaenzt, gehoert hierhin.
-NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen"}
+NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen",
+                "folgen-vergleich.py"}
 
 
 def main():

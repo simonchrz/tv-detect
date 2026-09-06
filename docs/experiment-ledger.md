@@ -3548,3 +3548,65 @@ ein weiterer Beleg dafür, dass der Maßstab selbst Fehler enthält (siehe
 `massstab-audit.py`, versiegelt 24/37 maschinell). Ein automatisches
 Löschen bestätigter Einzelgänger im train-Eimer ist damit begründet, aber
 noch nicht gebaut.
+
+### 2026-09-06 — Der Nachlauf-Block, und was er über `which="merged"` verriet
+
+Nachtrag zum Eintrag „`einzelgaenger` trägt, 8 von 8". Beim Schreiben der
+vier train-Korrekturen fiel auf, dass eine davon nichts änderte — und
+daran hing eine Kette.
+
+**Der Werkzeugfehler.** `folgen-vergleich.py` las `ads` aus
+`/recording/<uuid>/ads`. Das ist die **zusammengeführte Ansicht**, und
+`handleRecordingAds` hängt dort den `overrunBlock` an: den DVR-Nachlauf
+nach dem Sendeplatzende, abgeleitet aus `Stop - StartReal`. Der steht in
+keinem Label, liegt naturgemäß am Aufnahmeende und damit je Folge an einer
+anderen absoluten Stelle — also erzeugt er lauter Phantom-Einzelgänger.
+**4 der 8 „bestätigten" Funde waren genau das** (test 62:00, versiegelt
+60:11 und 61:50, train 63:00). Der Agent hatte recht („Sendung"), der
+Vergleich hatte recht („die anderen haben das hier nicht"), und trotzdem
+war es kein Label-Fehler. Gefixt: `user` bzw. `auto` lesen, nie `ads`.
+
+Es bleiben **4 echte Fehlalarme** von 8: drei bei Gute Zeiten, schlechte
+Zeiten (127–179 s, im train-Eimer gelöscht, die Folgen fügen sich danach
+ins Serienmuster) und einer bei Galileo (61 s, versiegelt, unantastbar).
+
+**Der eigentliche Befund.** Die überflüssige Schreibung bei First Dates
+führte auf `which` in `train-head.py` (Zeile ~3071): es entsteht aus der
+blossen **Existenz** von `ads_user.json` — und auto-confirm legt genau so
+eine Datei an. Da `has_user = which in ("user","merged")` gilt, zählt
+train-head maschinelle Labels als menschlich. Gemessen an den 234 lebenden
+Aufnahmen mit nicht-leerem `ads_user.json`:
+
+| | Mensch | Maschine | Agent |
+|---|---|---|---|
+| train | 117 | 49 | 16 |
+| test | 22 | 12 | 1 |
+| versiegelt | **0** | 17 | 0 |
+| **gesamt** | **139 (59 %)** | 78 (33 %) | 17 (7 %) |
+
+**41 % dessen, was das Training als menschlich gewichtet, ist es nicht.**
+Unter den lebenden versiegelten Aufnahmen ist **keine einzige** menschlich
+gelabelt.
+
+`massstab-audit.py` ist entsprechend korrigiert: für eine tote Aufnahme
+ist `which="merged"` kein Beleg mehr für einen Menschen, sondern
+`unbekannt`. Damit sieht der Maßstab so aus:
+
+```
+Eimer         n  Mensch  Maschine  unbekannt
+golden       38      22         3         13
+test        102       7        19         76
+versiegelt   37       0        24         13
+```
+
+Golden-Median über alle 38 Gepinnten 0.9627, über die 22 nachweislich
+menschlichen **0.9906**. Die Differenz ist nicht als Aufschlag zu lesen —
+die 22 sind „noch da und sauber gelabelt", also jung und reviewbar, und
+damit anders ausgewählt als die 13 Unbekannten.
+
+**Rest, bewusst offen gelassen:** bei `dvr-vox-1788451200` steht jetzt
+`reviewed_by: folgen-vergleich.py` statt `auto_confirmed_at`; die Blöcke
+sind unverändert und beide Marker gelten als maschinell, `which` bleibt
+`merged`. Verloren sind nur `auto_confirm_score`/`_n_blocks`. Eine
+Wiederherstellung hieße, die Label-Datei am API vorbei zu schreiben — das
+ist teurer als der Schaden.

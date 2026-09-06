@@ -64,7 +64,27 @@ Arm 1 entschieden ist — sonst stehen zwei Änderungen in einer Zahl.
   und `reviewed_by` nicht in `NICHT_MENSCH` steht. **Aufnahmen ohne lesbare
   Quelle (archiv-injiziert) behalten `has_user` wie heute** — sie sind
   nicht entscheidbar, und sie mit hineinzuziehen wäre eine zweite Änderung.
-  Betroffen sind damit genau die **65 belegten Fälle**.
+
+**Nachtrag 2026-09-06, vor dem ersten Serienpaar — Reichweite präzisiert.**
+Der erste Probelauf meldete **92** statt der oben genannten 65. Die 65 sind
+train-only; der Schalter wirkt aber **korpusweit, vor dem Split**:
+
+| Eimer | verlieren `has_user` |
+|---|---|
+| train | 65 |
+| versiegelt | 17 |
+| test | 13 |
+| **Summe** | **95** (der Lauf meldet 92; drei Aufnahmen verwirft der Korpus ohnehin) |
+
+Dass auch test und versiegelt betroffen sind, ist **gewollt und wichtiger
+als der train-Anteil**: dort steuert `has_user` den GT-Ausreißer-Wächter
+und das Reviewed-Regression-Veto. Ein maschinelles Label soll weder einen
+Deploy blockieren noch von der Verdachtsliste ausgenommen sein.
+
+⚠️ Geändert wurde hier eine **Beschreibung**, nicht die Entscheidungsregel.
+Der ```regel-Block (Schwelle +0.010, 4 von 5) steht unverändert, und die
+Serie hatte zu diesem Zeitpunkt **null** gültige Paare — es gibt nichts,
+was diese Korrektur begünstigen könnte.
 
 Arm 2 (später, eigene Registrierung): auch die 294 nicht entscheidbaren
 verlieren das Privileg.

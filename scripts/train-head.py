@@ -4573,8 +4573,13 @@ def main():
     # O17: sichtbar machen, was der Schalter bewirkt hat -- ein stiller
     # Schalter ist von einem kaputten nicht zu unterscheiden.
     if args.herkunft_belegt:
+        # ⚠️ KORPUSWEIT, vor dem Split. Die Zahl umfasst train, test UND
+        # versiegelt -- gemessen 2026-09-06: 65 / 13 / 17. Wer sie fuer die
+        # train-Zahl haelt, vergleicht sie mit einer anderen Groesse (mir
+        # selbst am 2026-09-06 passiert: 65 registriert, 92 gemeldet).
         print(f"  --herkunft-belegt: {len(herkunft_entzogen)} Aufnahme(n) "
-              f"verlieren has_user (maschinell/agenten-gelabelt)")
+              f"verlieren has_user, KORPUSWEIT (train+test+versiegelt), "
+              f"maschinell oder agenten-gelabelt")
     n_user = sum(1 for r in train_recs if r[5])
     print(f"\nsplit: {len(train_recs)} train recs ({len(y_train)} frames, "
           f"{100*y_train.mean():.1f}% ad, {n_user} user-confirmed @ "

@@ -59,8 +59,33 @@ linux-amd64:
 			-o $(BUILD_DIR)/$$b-linux-amd64 ./cmd/$$b || exit 1; \
 	done
 
-test:
+# PY = Interpreter fuer die Skript-Tests. Die ML-Skripte haengen an dieser
+# venv (Memory python_venv_location); ein blosses `python3` hat kein numpy.
+PY ?= /Users/simon/ml/tv-classifier/.venv/bin/python
+
+test: test-go test-skripte
+
+test-go:
 	go test ./...
+
+# ⚠️ Bis 2026-09-06 lief `make test` NUR go test — die damals 17
+# scripts/test_*.py liefen automatisch nirgends. Sie sind der einzige
+# Schutz fuer die Auswertungslogik (Herkunft eines Labels, Polaritaet der
+# Agentenprobe, die Reissleinen des Folgen-Vergleichs), und genau dort
+# irrt der Code STILL: ein Fehlurteil wirft keine Ausnahme, es liefert
+# eine falsche Zahl.
+test-skripte:
+	@fehler=0; \
+	for t in scripts/test_*.py; do \
+		if $(PY) $$t >/tmp/tvd-test.log 2>&1; then \
+			printf '  ok   %s\n' "$$t"; \
+		else \
+			fehler=1; printf '  FAIL %s\n' "$$t"; tail -20 /tmp/tvd-test.log; \
+		fi; \
+	done; \
+	exit $$fehler
+
+.PHONY: test-go test-skripte
 
 clean:
 	rm -rf $(BUILD_DIR)

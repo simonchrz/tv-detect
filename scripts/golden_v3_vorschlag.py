@@ -24,6 +24,7 @@ Auswahlkriterien, in dieser Reihenfolge:
      damit der Satz nicht die Kanäle überrepräsentiert, die zufällig
      viele Reviews haben.
 """
+import importlib.util
 import json
 import sys
 from collections import defaultdict
@@ -36,8 +37,12 @@ BACKUP = Path.home() / "tv-labels-backup"
 # steht bewusst NICHT hier: es korrigiert Golden-Labels nach menschlicher
 # Entscheidung, und jene Aufnahmen sind ohnehin v2-Mitglieder und damit aus
 # der Kandidatenliste. Wer einen neuen Schreiber ergaenzt, gehoert hierhin.
-NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen",
-                "folgen-vergleich.py"}
+# Herkunfts-Regel: EINE Definition fuer alle drei Leser (s. label_herkunft.py).
+_lh_spec = importlib.util.spec_from_file_location(
+    "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
+_lh = importlib.util.module_from_spec(_lh_spec)
+_lh_spec.loader.exec_module(_lh)
+NICHT_MENSCH = _lh.NICHT_MENSCH
 
 
 def main():

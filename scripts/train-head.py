@@ -34,6 +34,14 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+import importlib.util
+
+# Herkunfts-Regel: EINE Definition fuer alle drei Leser (s. label_herkunft.py).
+_lh_spec = importlib.util.spec_from_file_location(
+    "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
+_lh = importlib.util.module_from_spec(_lh_spec)
+_lh_spec.loader.exec_module(_lh)
+
 
 import numpy as np
 import onnxruntime as ort
@@ -2442,6 +2450,12 @@ def main():
                          "frames as ad. Catches broken-template runs "
                          "where a whole recording was wrongly tagged "
                          "100%% ad. Real content never exceeds ~40%%.")
+    ap.add_argument("--herkunft-belegt", action="store_true",
+                    help="O17: has_user nur, wo ein Mensch NACHWEISBAR war "
+                         "(Marker in ads_user.json). Aufnahmen ohne lesbare "
+                         "Quelle behalten es. Vorgabe AUS = heutiges "
+                         "Verhalten; siehe docs/o17-labelherkunft-"
+                         "preregistration.md")
     ap.add_argument("--user-weight", type=float, default=2.0,
                     help="sample-weight multiplier applied to frames "
                          "from recordings that have an ads_user.json. "
@@ -2984,6 +2998,7 @@ def main():
         # these from training (treated as "no labels"), losing ~150
         # recordings of negative-class signal per cron run.
         auto_confirmed_no_ads = False
+        mensch_belegt = None          # None = keine lesbare Quelle (s. O17)
         auto_at_review, abschluss_ts = None, 0
         if isinstance(user_raw, list):
             user_ads, deleted = user_raw, []
@@ -3008,6 +3023,13 @@ def main():
                     and (user_raw.get("auto_confirm_n_blocks") or 0) == 0
                     and (user_raw.get("auto_confirm_score") or 0) >= 0.9):
                 auto_confirmed_no_ads = True
+            # O17: War an DIESEM Label nachweislich ein Mensch? `which`
+            # kann das nicht beantworten -- es entsteht aus der blossen
+            # Existenz der Datei, und autoConfirmApply legt dieselbe Datei
+            # mit der Detektorausgabe darin an. Die Marker koennen es.
+            # `None` heisst "nicht entscheidbar" (keine Datei lesbar), NICHT
+            # "kein Mensch" -- der Unterschied traegt die Armtrennung.
+            mensch_belegt = _lh.mensch_aus_markern(user_raw)
         else:
             user_ads, deleted = [], []
 
@@ -3164,7 +3186,7 @@ def main():
             cache_path = cache_dir / f"{uuid}-{src_mt}{fps_tag}{suffix}.npy"
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
                          pseudo_data, is_bootstrap,
-                         confirmed_show, confirmed_ad_skips)
+                         confirmed_show, confirmed_ad_skips, mensch_belegt)
             if cache_path.exists():
                 # Re-extract if the cached features have a high NaN-rate in the
                 # logo column. Stale .npy from the pre-2026-05-23 tv-detect
@@ -3219,7 +3241,7 @@ def main():
             src_mt = int(cache_path.stat().st_mtime)  # proxy for rec_age_days
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), "",
                          pseudo_data, is_bootstrap,
-                         confirmed_show, confirmed_ad_skips)
+                         confirmed_show, confirmed_ad_skips, mensch_belegt)
             cached.append((rec_info, cache_path))
             corpus_no_ts += 1
 
@@ -3449,6 +3471,7 @@ def main():
             pass
 
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
+    herkunft_entzogen = []   # O17: wem --herkunft-belegt has_user genommen hat
     dropped_high = []
     logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
     logo_nan_mask_by_uuid = {}  # uuid → bool array, True where logo was NaN
@@ -3482,6 +3505,13 @@ def main():
         rec_dir_path = Path(rest[1]) if len(rest) > 1 else None
         pseudo_data = rest[3] if len(rest) > 3 else None
         is_bootstrap = rest[4] if len(rest) > 4 else False
+        # O17: MUSS ueber rec_info reisen. Wird `mensch_belegt` hier als
+        # Schleifenvariable aus Durchgang 1 gelesen, traegt es den Wert der
+        # LETZTEN Aufnahme -- exakt der Fehler, der drei Absaetze weiter
+        # unten fuer confirmed_show dokumentiert ist (233 von 591
+        # Archiv-Eintraegen bekamen dieselbe fremde Liste). None heisst
+        # "nicht entscheidbar", nicht "kein Mensch".
+        mensch_belegt = rest[7] if len(rest) > 7 else None
         # Carried through rec_info since 2026-07-26. Before that this loop read
         # the pass-1 loop variables, which by now hold the LAST recording's
         # values — so every recording in the corpus was assigned one arbitrary
@@ -3534,6 +3564,22 @@ def main():
             dropped_high.append((uuid[:8], title[:30], ad_rate))
             continue
         has_user = which in ("user", "merged")
+        # O17 (docs/o17-labelherkunft-preregistration.md): `has_user`
+        # steuert VIER Dinge -- 2x Gewicht, Ausnahme vom Hygiene-Veto,
+        # Reviewed-Regression-Veto und Ausnahme vom GT-Ausreisser-Waechter.
+        # Alle vier sind auf "ein Mensch hat geprueft" gebaut; gemessen am
+        # 2026-09-06 trifft das auf 65 der 474 train-Aufnahmen mit
+        # has_user=True nachweislich NICHT zu (49 maschinell bestaetigt,
+        # 16 agentengeschrieben).
+        #
+        # Vorgabe ist das heutige Verhalten. Unter --herkunft-belegt
+        # verlieren NUR die nachweislich maschinellen das Privileg;
+        # Aufnahmen ohne lesbare Quelle (mensch_belegt is None, meist
+        # archiv-injiziert) behalten es, weil sie nicht entscheidbar sind.
+        # Sie mit hineinzuziehen waere eine zweite Aenderung und ist Arm 2.
+        if args.herkunft_belegt and has_user and mensch_belegt is False:
+            has_user = False
+            herkunft_entzogen.append(uuid)
         rec_age_days = (time.time() - src_mt) / 86400.0
         # Cluster-anchored ad spots from the gateway snapshot (= spots
         # whose audio+visual fingerprint matches a known ≥3-member
@@ -4524,6 +4570,11 @@ def main():
     X_train = np.concatenate(X_train_parts) if X_train_parts else np.empty((0, per_rec[0][3].shape[1]))
     y_train = np.concatenate(y_train_parts) if y_train_parts else np.empty(0)
     sw_train = np.concatenate(sw_train_parts) if sw_train_parts else np.empty(0)
+    # O17: sichtbar machen, was der Schalter bewirkt hat -- ein stiller
+    # Schalter ist von einem kaputten nicht zu unterscheiden.
+    if args.herkunft_belegt:
+        print(f"  --herkunft-belegt: {len(herkunft_entzogen)} Aufnahme(n) "
+              f"verlieren has_user (maschinell/agenten-gelabelt)")
     n_user = sum(1 for r in train_recs if r[5])
     print(f"\nsplit: {len(train_recs)} train recs ({len(y_train)} frames, "
           f"{100*y_train.mean():.1f}% ad, {n_user} user-confirmed @ "
@@ -5696,6 +5747,16 @@ def main():
             # Serien-Zeilen muss die ganze Architektur benennen.
             _ident = lambda X, _s, _u=None: X
             _ts_arme["mlp32-channel-whisper-temporal-mp-wm"] = (_arm_prod, 32)
+            # O17: ZWEI Namen fuer DIESELBE Architektur. Die Frage ist eine
+            # Gewichtungs-, keine Spaltenfrage -- die Arme unterscheiden sich
+            # nicht in `_ts_arme`, sondern im globalen --herkunft-belegt.
+            # Gefahren werden sie deshalb als ZWEI PROZESSE ueber
+            # --tagesserie-nur-arm mit gemeinsamem --tagesserie-ts und
+            # --tagesserie-seeds; nur der Name trennt die Zeilen, damit das
+            # Audit die Paare findet. Wer beide in EINEM Prozess faehrt,
+            # misst zweimal dasselbe -- der Schalter wirkt vor dem Armlauf.
+            _ts_arme["mlp32-cwtmpwm-ist"] = (_arm_prod, 32)
+            _ts_arme["mlp32-cwtmpwm-belegt"] = (_arm_prod, 32)
             _ts_arme["mlp32"] = (_ident, 32)
             _ts_arme["mlp32-cwt-mp"] = (_augment_cwt_minuteprior, 32)
             _ts_arme["mlp32-ct-mp"] = (_augment_ct_minuteprior, 32)

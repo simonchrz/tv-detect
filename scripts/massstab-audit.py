@@ -53,6 +53,7 @@ Exit 1, wenn im Golden-Satz oder im test-Eimer maschinelle Labels stehen —
 damit der Bericht in einen Tagesdurchgang gehaengt werden kann.
 """
 import argparse
+import importlib.util
 import json
 import statistics as st
 import sys
@@ -61,10 +62,12 @@ from pathlib import Path
 ARCHIV = Path.home() / ".cache/tvd-train-archive"
 BACKUP = Path.home() / "tv-labels-backup"
 
-# Deckungsgleich mit golden_v3_vorschlag.py. Wer dort einen Schreiber
-# ergaenzt, ergaenzt ihn auch hier.
-NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen",
-                "folgen-vergleich.py"}
+# Herkunfts-Regel: EINE Definition fuer alle drei Leser (s. label_herkunft.py).
+_lh_spec = importlib.util.spec_from_file_location(
+    "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
+_lh = importlib.util.module_from_spec(_lh_spec)
+_lh_spec.loader.exec_module(_lh)
+NICHT_MENSCH = _lh.NICHT_MENSCH
 
 # which-Werte, die ein rein maschinelles Label bezeichnen.
 MASCHINE_WHICH = {"auto", "auto-confirm"}

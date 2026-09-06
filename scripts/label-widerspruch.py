@@ -81,6 +81,7 @@ def main():
 
     eimer = eimer_map()
     befunde = []
+    veraltete = []
     ohne_urteil = 0
 
     for d in sorted(_ar.ARBEIT.glob("*/")):
@@ -96,6 +97,14 @@ def main():
             ohne_urteil += 1
             continue
         u = auftrag["uuid"]
+        # ⚠️ Ist die Quelle NEUER als der Auftrag, stammen die Frames aus
+        # einem anderen Schnitt und JEDER Befund darauf ist wertlos. Am
+        # 2026-09-06 betraf das 6 von 9 Widerspruechen, darunter den
+        # groessten (dvr-rtl-1780078500, 11/16) — dort lagen die Frames
+        # 111 s daneben, die Labels waren in Wahrheit korrekt.
+        if _ar.veraltet(u, ap_datei):
+            veraltete.append(u)
+            continue
         if args.nur_eimer and eimer.get(u) != args.nur_eimer:
             continue
         je_verz = {}
@@ -150,6 +159,13 @@ def main():
     print("=" * 72)
     print(f"\n{len(befunde)} Aufnahmen mit Urteil, {ges_k} Kanten gepruft"
           f"{f' ({ohne_urteil} Auftraege noch ohne Urteil)' if ohne_urteil else ''}")
+    if veraltete:
+        print(f"  ⚠ {len(veraltete)} Aufnahmen uebersprungen: QUELLE NEUER ALS "
+              f"AUFTRAG — die Frames stammen aus einem anderen Schnitt,")
+        print(f"    jeder Befund darauf waere wertlos. Neu vorbereiten, um sie "
+              f"zu pruefen:")
+        for u in veraltete:
+            print(f"      {u}")
     print(f"  ableitbar   {ges_a:4d}  (Kante berechenbar — das nutzt agent-review)")
     print(f"  WIDERSPRUCH {ges_w:4d}  (eine Seite ueber das ganze Fenster)")
     print(f"  stumm       {ges_k - ges_a - ges_w:4d}  (unklar / Hin und Her / Fensterrand)")

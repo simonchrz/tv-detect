@@ -770,6 +770,27 @@ def golden_uuids():
         return None
 
 
+def veraltet(uuid, auftrag_pfad):
+    """Ist die Quelle NEUER als der Auftrag? Dann zeigt das Urteil ins Leere.
+
+    ⚠️ Am 2026-09-06 real passiert: ein Auftrag vom 17.08. wurde gegen eine
+    Quelle angewandt, die seither neu geholt worden war. Die Frames stammten
+    aus dem ALTEN Schnitt — bei dvr-rtl-1780078500 lag derselbe Zeitstempel
+    111 s daneben, der Agent beurteilte also eine voellig andere Stelle.
+    Sein Urteil war korrekt, es passte nur nicht mehr auf die Aufnahme.
+
+    braucht_review() schuetzt den umgekehrten Fall (Auftrag offen, nicht neu
+    vorbereiten). Dass sich die QUELLE unter einem offenen Auftrag bewegt,
+    war ungeschuetzt — dieselbe Klasse wie recovery_churn_poisons_training,
+    wo Re-Filter die Feature- und Archiv-Caches invalidieren MUSS.
+    """
+    src = QUELLE / f"{uuid}.ts"
+    try:
+        return src.stat().st_mtime > auftrag_pfad.stat().st_mtime
+    except OSError:
+        return False
+
+
 def erlaubte_uuids():
     """Nur TRAIN-Aufnahmen darf ein Agent labeln. Fail-closed.
 
@@ -831,6 +852,11 @@ def anwenden(trocken, nur_enden=False):
         if (d / "angewandt").is_file():
             continue
         auftrag = json.loads(ap.read_text())
+        if veraltet(auftrag["uuid"], ap):
+            print(f"  {auftrag['uuid']}: QUELLE NEUER ALS AUFTRAG — Urteil "
+                  f"passt nicht mehr auf die Aufnahme, nicht angewandt "
+                  f"(neu vorbereiten)")
+            continue
         try:
             bilder = json.loads(up.read_text()).get("bilder") or []
         except Exception as e:

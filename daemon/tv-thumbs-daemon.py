@@ -244,6 +244,40 @@ def golden_uuids():
     return wert
 
 
+# Der versiegelte Satz (split-ledger.json, Eimer "versiegelt") ist die
+# Gegenprobe gegen Selektionseffekte -- Aufnahmen, die weder trainiert noch
+# ausgewertet werden, damit man den Golden-Satz irgendwann unbestechlich
+# pruefen kann. ⚠️ Bis 2026-09-06 war er NICHT gepinnt: 15 von 37 waren
+# bereits unwiederbringlich weg (Pi-Retention + LRU + orphan-GC, jeder
+# Schritt fuer sich regelkonform), obwohl sie genau fuer diesen Zweck
+# zurueckgelegt worden waren. Eine Rueckstellung ohne Pin ist keine
+# Rueckstellung, sondern eine Verzoegerung bis zum Loeschen.
+SPLIT_LEDGER = Path.home() / ".cache" / "tvd-train-archive" / "split-ledger.json"
+_versiegelt_cache = (0.0, frozenset())
+
+
+def versiegelte_uuids():
+    """Die versiegelten uuids, hoechstens minuetlich neu gelesen.
+    Gleiche Fail-safe-Haltung wie golden_uuids(): unlesbar → letzter Stand."""
+    global _versiegelt_cache
+    alter, wert = _versiegelt_cache
+    if time.time() - alter < 60:
+        return wert
+    try:
+        led = json.loads(SPLIT_LEDGER.read_text())
+        wert = frozenset(u for u, e in led.items() if e == "versiegelt")
+    except Exception:
+        pass
+    _versiegelt_cache = (time.time(), wert)
+    return wert
+
+
+def geschuetzte_uuids():
+    """Golden ∪ versiegelt -- alles, was der LRU und die orphan-GC nie
+    anfassen duerfen."""
+    return golden_uuids() | versiegelte_uuids()
+
+
 def detect_timeout_s(uuid):
     """Length-scaled detect kill-timeout (see DETECT_TIMEOUT_* above).
     Probes the local source's container duration; falls back to the flat
@@ -508,8 +542,8 @@ def _maybe_evict_source_cache():
         # 404 from /recording/<uuid>/source means dual-existence is
         # already broken; skip evict and try the next-oldest dup.
         uuid = oldest.stem
-        if uuid in golden_uuids():
-            continue  # Maßstab — nie verdrängen, s. GOLDEN_SET oben
+        if uuid in geschuetzte_uuids():
+            continue  # Maßstab oder versiegelt — nie verdrängen, s. oben
         try:
             req = urllib.request.Request(
                 f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
@@ -729,8 +763,8 @@ def _maybe_gc_orphans():
         uuid = f.stem
         if uuid in valid:
             continue  # valid → forgiven (drops out of the ledger)
-        if uuid in golden_uuids():
-            continue  # Maßstab — nie löschen, s. GOLDEN_SET oben
+        if uuid in geschuetzte_uuids():
+            continue  # Maßstab oder versiegelt — nie löschen, s. oben
         first = pending.get(uuid, now)  # first time orphaned → start the clock now
         if now - first < ORPHAN_GRACE_S:
             next_pending[uuid] = first  # still in grace → keep, don't delete

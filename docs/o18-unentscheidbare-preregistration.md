@@ -1,6 +1,13 @@
 # O18 — Sollen auch die nicht entscheidbaren Aufnahmen ihr Privileg verlieren?
 (Vorab-Registrierung)
 
+> **ZURÜCKGESTELLT 2026-09-06, bevor die Serie voll war.** Nach 4 von 10
+> Zeilen abgebrochen: der Zwei-Prozess-Modus, in dem diese Frage gemessen
+> werden müsste, ist nicht reproduzierbar (Median 0.0073 zwischen
+> identischen Läufen, Ledger §3aq) — mehr als jeder hier erwartbare
+> Effekt. Die Registrierung bleibt gültig und unverändert; sie wartet auf
+> einen Trainer, der beide Arme in EINEM Prozess fahren kann.
+
 **Geschrieben 2026-09-06, bevor ein einziger Fit mit `--herkunft-streng`
 gerechnet wurde.** Bedingung, Paarzahl und Schwelle stehen fest, bevor die
 erste Zahl existiert (R4).

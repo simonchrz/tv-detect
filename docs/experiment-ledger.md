@@ -98,8 +98,15 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 ### O17 — Zählt das Training die richtigen Labels als menschlich?
 
 *Status: **ENTSCHIEDEN 2026-09-06, REGEL NICHT ERFÜLLT.** Median **+0.0032**
-(Schwelle ≥ +0.010), 3 von 5 Paaren positiv (Schwelle ≥ 4). Vorzeichen
-stimmt, Größe verfehlt — dieselbe Lage wie O1 und O8b. Konsequenz laut
+(Schwelle ≥ +0.010), 3 von 5 Paaren positiv (Schwelle ≥ 4).*
+
+*⚠️ **NACHTRAG SAME DAY — die Aussage ist schwächer als zuerst notiert.**
+Ich hatte „Vorzeichen stimmt, Größe verfehlt" geschrieben. Das Vorzeichen
+ist **nicht** belegt: zwei Läufe mit IDENTISCHER Konfiguration und
+gleichem Seed weichen im golden_median um Median **0.0073** ab (§3aq).
+Der gemessene Effekt von +0.0032 liegt unter dieser Reproduzierbarkeits-
+Grenze. Das Urteil NICHT ERFÜLLT steht — es wird dadurch nur eindeutiger —,
+aber über die Richtung sagt die Serie nichts. Konsequenz laut
 Registrierung: **die Korrektur wird eingebaut, aber als Hygiene, nicht als
 Verbesserung.** `has_user` behauptet „hier war ein Mensch"; für 92
 Aufnahmen korpusweit ist das nachweislich falsch, und eine falsche
@@ -147,6 +154,61 @@ unabhängig und zeigt, warum nur der **gepaarte** Vergleich etwas taugt.
 Maßstab selbst zu reparieren ist (golden 22/38 nachweislich menschlich,
 test 7/102, versiegelt 0/37) und Arm 2 (die 294 nicht entscheidbaren
 Aufnahmen).
+
+## §3aq. Die Tagesserie im ZWEI-PROZESS-Modus ist nicht reproduzierbar
+
+**Gefunden 2026-09-06 durch eine Gegenprobe, die ich nur beiläufig gemacht
+habe.** Der `belegt`-Arm lief in O17 (19:00) und noch einmal als Grundlinie
+von O18 (21:00) — gleiche Flags, gleiche Seeds, gleicher Korpus. Er hätte
+dieselben Zahlen liefern müssen:
+
+```
+seed 4711  0.9147 → 0.9139   Δ -0.0008
+seed 5813  0.9344 → 0.9307   Δ -0.0037
+seed 6917  0.9308 → 0.9424   Δ +0.0116
+seed 7013  0.9267 → 0.9158   Δ -0.0109
+Median |Δ| = 0.0073
+```
+
+**Zum Vergleich: der in O17 gemessene Effekt war +0.0032.** Die
+Abweichung zwischen zwei identischen Läufen ist also mehr als doppelt so
+groß wie das, was gemessen werden sollte.
+
+**Was ausgeschlossen ist.** Der Split-Ledger der Archiv-Kopie ist über
+alle Läufe unverändert (0 Unterschiede, 744/140/37); das Archiv-Rewrite
+ist idempotent (810 von 810 `.npz` byte-gleich zum Original). Es liegt
+weder an einer gewanderten Aufteilung noch an veränderten Labels.
+
+**Was belegt ist.** Die Trainingsgewichte hängen an der **Uhrzeit**:
+`rec_age_days = (time.time() - src_mt) / 86400.0` (Z. 3606), und
+`base_w *= age_mult` ist eine stetige Funktion davon. Zwei Prozesse, die
+zu verschiedenen Zeiten starten, trainieren auf verschiedenen Gewichten.
+Der Betrag ist winzig (2 h auf einer 90-Tage-Rampe ≈ 0,05 %), also
+erklärt das die Größenordnung nur, wenn der Fit stark verstärkt.
+
+**Was NICHT isoliert ist.** Ob die Uhrzeit die ganze Ursache ist. Ein
+zweiter Kandidat ist Fließkomma-Nichtdeterminismus aus mehrfädigem BLAS,
+der prozessweise anders reduziert. Beide Kandidaten sind hier nicht
+getrennt worden, und ich behaupte nicht, welcher überwiegt — belegt ist
+die **Größe**, nicht die Ursache.
+
+**Warum die früheren Tagesserien NICHT betroffen sind.** O2, O6, O7, O8
+und O8b liefen im seriellen Modus: dort entstehen `sw_train_parts` EINMAL
+oberhalb der Armschleife, beide Arme teilen also bitgleiche Gewichte, und
+`_build_train` schneidet nur daraus. Der Defekt betrifft ausschließlich
+`--tagesserie-nur-arm` über zwei Prozesse.
+
+**Und genau für diesen Modus stand im Hilfetext das Gegenteil:**
+*„Prozessisolation statt Threads — die Numerik je Seed bleibt identisch
+zum Seriellbetrieb."* Der Satz ist widerlegt und korrigiert.
+
+**Konsequenz.** Ein Gewichtungs-Unterschied gehört nicht in den
+Zwei-Prozess-Modus. Wer O17 oder O18 belastbar messen will, muss beide
+Arme in EINEM Prozess fahren — das heißt, `sw_train_parts` je Arm neu zu
+bauen, statt sie oberhalb der Schleife einmal zu berechnen. Das ist eine
+echte Änderung am Trainer und steht aus. **O18 wurde deshalb nach 4 von 10
+Zeilen abgebrochen**, statt eine weitere Stunde für eine Zahl zu rechnen,
+die im Rauschen dieses Modus verschwindet.
 
 ### O1 — Kostet die Whisper-Spalte mehr als sie bringt?
 

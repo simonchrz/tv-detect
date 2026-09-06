@@ -2678,8 +2678,14 @@ def main():
                     help="Nur DIESEN Arm fitten. Fuer Parallelbetrieb: ein "
                          "Prozess je Arm, Paarung ueber gemeinsame "
                          "--tagesserie-ts und --tagesserie-seeds. "
-                         "Prozessisolation statt Threads — die Numerik je "
-                         "Seed bleibt identisch zum Seriellbetrieb.")
+                         "⚠️ NICHT reproduzierbar: gemessen 2026-09-06 "
+                         "weichen zwei Prozesse mit IDENTISCHER "
+                         "Konfiguration und gleichem Seed um Median 0.0073 "
+                         "im golden_median ab (Einzelwerte bis 0.0116) — "
+                         "mehr als jeder Effekt, der bisher durch diesen "
+                         "Modus gemessen wurde. Nur fuer Arme benutzen, "
+                         "deren Unterschied deutlich groesser ist. Ein "
+                         "Gewichtungs-Unterschied gehoert NICHT hierher.")
     ap.add_argument("--tagesserie-ts", default=None, metavar="TS",
                     help="Zeitstempel-Basis der Serien-Zeilen. MUSS bei "
                          "parallelen Arm-Prozessen fuer alle gleich sein, "

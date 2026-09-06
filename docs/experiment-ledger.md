@@ -3725,3 +3725,52 @@ sind unverändert und beide Marker gelten als maschinell, `which` bleibt
 `merged`. Verloren sind nur `auto_confirm_score`/`_n_blocks`. Eine
 Wiederherstellung hieße, die Label-Datei am API vorbei zu schreiben — das
 ist teurer als der Schaden.
+
+### 2026-09-06 — Ohne menschliche Labels messen: Weg 1 und 2 getestet, versiegelter Satz gepinnt
+
+Ausgangslage aus dem Tag: der Maßstab lebt von menschlichen Labeln und
+bekommt keine mehr; der versiegelte Satz hatte 0 von 37 menschlich und 15
+von 37 waren bereits unwiederbringlich gelöscht — er war nie gegen LRU
+und orphan-GC gepinnt, anders als der Golden-Satz. **Pin gebaut**
+(`geschuetzte_uuids()` = golden ∪ versiegelt im Daemon, 75 Aufnahmen).
+Eine Rückstellung ohne Pin ist keine Rückstellung.
+
+**Weg 1 — Agenten-Referenz (`scripts/agenten-referenz.py`).** Agenten
+klassifizieren feste Stichpunkte (Seed aus der uuid) aus den versiegelten
+Aufnahmen, das Urteil wird eingefroren, danach wird nur noch die aktuelle
+Modellausgabe (`auto`) dagegen gehalten. 16 Aufnahmen, 90 Stichpunkte,
+Kontrollen 16 von 16 sauber. Erste Zeile der Reihe:
+
+```
+20260906T205228  Kopf 281bd92c8e06  90 Punkte  Übereinstimmung 100.0 %
+```
+
+**Das ist echt, und genau deshalb ein Problem.** Abstand der Stichpunkte
+zur nächsten Modellkante: min 2 s, p10 26 s, **Median 240 s**, p90 1507 s.
+Nur 11 von 90 liegen näher als 30 s an einer Kante. Zufällige Punkte
+landen mitten in Blöcken oder mitten in der Sendung — dort irrt kein
+Modell, das überhaupt Blöcke findet. Das Instrument **sättigt bei 100 %**
+und kann damit nur noch grobe Rückschritte zeigen (ganze Blöcke
+verschwinden/entstehen), keine Verbesserung. Dieselbe Klasse wie
+`golden_schwanz_metrik_blinde_flecken`: die Metrik sieht das Regime nicht,
+in dem der Fehler wohnt.
+
+Der Fehler wohnt an den Kanten (der ganze Tag zeigt das: 85–226 s
+verschobene Kanten, 0.0073 Rauschen, 41 % Maschinenlabel). Ein v2 müsste
+**geschichtet** ziehen — etwa 10–40 s beiderseits jeder Modellkante — statt
+gleichverteilt. Das ist nicht der Fall aus `agent_als_kantenmassstab`
+(dort scheiterten Agenten am *Finden* des Übergangs, nicht am
+Klassifizieren eines Bildes 20 s daneben). Ungeprüft; eine eigene Runde.
+
+**Weg 2 — Einzelgänger-Zählung als Trend.** Basiswert 2026-09-06: bei
+Beweislast ≥6 Vergleichsfolgen **0 Funde**, bei ≥4: 20 (davon 6 mit 0/N).
+Nach den drei Löschungen und dem Nachlauf-Fix ist der Zähler leer. Auch
+das ein Kanarienvogel, kein Maßband: er kann nur steigen.
+
+**Fazit beider Tests.** Ohne menschliche Labels lassen sich **Rückschritte**
+erkennen, in zwei unabhängigen Instrumenten. **Fortschritt** lässt sich
+so nicht zeigen — nicht, weil die Agenten schlecht wären (sie waren
+16 von 16 kalibriert), sondern weil beide Verfahren das Regime nicht
+abtasten, in dem das Modell überhaupt noch Fehler macht. Weg 3 (ein
+kleines Budget echter Blicke, nur für den Maßstab) ist von Simon
+grundsätzlich bejaht; konkrete Form steht aus.

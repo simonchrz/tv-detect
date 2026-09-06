@@ -217,47 +217,18 @@ def _ar_hole(url):
 def auswerten(args):
     zeilen = []
     for d in sorted(ARBEIT.iterdir()) if ARBEIT.exists() else []:
-        lp, up = d / "_loesung.json", d / "urteil.json"
-        if not (lp.is_file() and up.is_file()):
+        got = _urteil_fuer(d)
+        if got is None:
             continue
-        loes = json.loads(lp.read_text())
-        try:
-            urteil = json.loads(up.read_text())
-        except Exception as e:
-            print(f"  ⚠️ {d.name}: urteil.json unlesbar ({e})")
-            continue
-
-        def deutung(bild):
-            return _ar.KONVENTION.get(str(urteil.get(bild, "")).strip().lower())
-
-        kontrollen = {}
-        streit = []
-        for bild, info in loes["punkte"].items():
-            d_ = deutung(bild)
-            if info["rolle"] == "streit":
-                streit.append(d_)
-            else:
-                erwartet = "werbung" if info["rolle"].endswith("werbung") else "sendung"
-                kontrollen[info["rolle"]] = (d_ == erwartet, d_, erwartet)
-
-        # ⚠️ `unklar` auf einer Kontrolle ist KEIN Fehlurteil, sondern
-        # Zurueckhaltung -- und Zurueckhaltung ist laut
-        # agent_review_schutzkette ein Guetezeichen. Nur eine FALSCHE
-        # Kontrolle disqualifiziert. Am 2026-09-06 waeren sonst zwei Laeufe
-        # als "gescheitert" gezaehlt worden, die inhaltlich dasselbe sagten
-        # wie die uebrigen sechs.
-        falsch = [k for k, v in kontrollen.items() if v[1] is not None and not v[0]]
-        kontrolle_ok = not falsch and len(kontrollen) == 2
-        bestimmt = [x for x in streit if x is not None]
+        loes, anteil_passend, kontrolle_falsch = got
         f = loes["fund"]
-        erwartet_spanne = POLARITAET[f["art"]]
+        erwartet_spanne = loes["_erwartet"]
+        bestimmt = loes["_bestimmt"]
+        streit = loes["_streit"]
+        kontrollen = loes["_kontrollen"]
         anteil_werbung = (sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
                           if bestimmt else None)
-        # Anteil, der ZUM FUND passt -- bei einzelgaenger ist das der
-        # Sendungsanteil, nicht der Werbeanteil.
-        anteil_passend = (None if anteil_werbung is None else
-                          (anteil_werbung if erwartet_spanne == "werbung"
-                           else 1.0 - anteil_werbung))
+        kontrolle_ok = not kontrolle_falsch and loes["_vollzaehlig"]
         if not kontrolle_ok:
             urt = "KONTROLLE FALSCH"
         elif anteil_passend is None:
@@ -273,7 +244,7 @@ def auswerten(args):
                        "anteil_passend": anteil_passend,
                        "erwartet": erwartet_spanne,
                        "n_bestimmt": len(bestimmt), "n_streit": len(streit),
-                       "kontrollen": {k: v[1] for k, v in kontrollen.items()},
+                       "kontrollen": kontrollen,
                        "art": f["art"], "versatz_s": f["versatz_s"],
                        "eimer": f["eimer"], "serie": f["serie"], "uuid": f["uuid"]})
 
@@ -306,30 +277,55 @@ SCHREIBER = "folgen-vergleich.py"
 
 
 def _urteil_fuer(d):
-    """(loesung, anteil_passend, kontrolle_falsch) oder None."""
+    """Ein Probe-Verzeichnis auswerten. `None`, wenn es keins ist.
+
+    ⚠️ DIE EINE DEFINITION. Bis 2026-09-06 stand dieselbe Logik ein
+    zweites Mal in `auswerten()` -- eine Mutationsprobe zeigte, dass eine
+    Aenderung dort von keinem Test bemerkt wurde, weil die Tests nur diese
+    Funktion trafen. Zwei Kopien einer Regel sind zwei Regeln, sobald eine
+    davon angefasst wird (Memory zusatzspalten_eine_definition).
+
+    Liefert (loesung, anteil_passend, kontrolle_falsch); `anteil_passend`
+    ist der Anteil der BESTIMMTEN Streitbilder, die zur Behauptung des
+    Fundes passen -- bei `einzelgaenger` also der Sendungs-, sonst der
+    Werbeanteil (POLARITAET).
+    """
     lp, up = d / "_loesung.json", d / "urteil.json"
     if not (lp.is_file() and up.is_file()):
         return None
-    loes = json.loads(lp.read_text())
     try:
+        loes = json.loads(lp.read_text())
         urteil = json.loads(up.read_text())
     except Exception:
         return None
     erwartet = POLARITAET[loes["fund"]["art"]]
-    streit, kontrolle_falsch = [], False
+    streit, kontrollen = [], {}
     for bild, info in loes["punkte"].items():
         gedeutet = _ar.KONVENTION.get(str(urteil.get(bild, "")).strip().lower())
         if info["rolle"] == "streit":
             streit.append(gedeutet)
-        elif gedeutet is not None:
+        else:
             soll = "werbung" if info["rolle"].endswith("werbung") else "sendung"
-            if gedeutet != soll:
-                kontrolle_falsch = True
+            kontrollen[info["rolle"]] = (gedeutet, soll)
+    # ⚠️ `unklar` auf einer Kontrolle ist KEIN Fehlurteil, sondern
+    # Zurueckhaltung -- und Zurueckhaltung ist laut
+    # agent_review_schutzkette ein Guetezeichen. Nur eine FALSCHE Kontrolle
+    # disqualifiziert. Am 2026-09-06 waeren sonst zwei Laeufe als
+    # "gescheitert" gezaehlt worden, die inhaltlich dasselbe sagten wie die
+    # uebrigen sechs.
+    kontrolle_falsch = any(g is not None and g != soll
+                           for g, soll in kontrollen.values())
     bestimmt = [x for x in streit if x is not None]
-    if not bestimmt:
-        return loes, None, kontrolle_falsch
-    anteil_w = sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
-    return loes, (anteil_w if erwartet == "werbung" else 1.0 - anteil_w), kontrolle_falsch
+    anteil = None
+    if bestimmt:
+        anteil_w = sum(1 for x in bestimmt if x == "werbung") / len(bestimmt)
+        anteil = anteil_w if erwartet == "werbung" else 1.0 - anteil_w
+    loes["_streit"] = streit
+    loes["_bestimmt"] = bestimmt
+    loes["_kontrollen"] = {k: v[0] for k, v in kontrollen.items()}
+    loes["_erwartet"] = erwartet
+    loes["_vollzaehlig"] = len(kontrollen) == 2
+    return loes, anteil, kontrolle_falsch
 
 
 def anwenden(args):
@@ -368,6 +364,14 @@ def anwenden(args):
             continue
         if kontrolle_falsch:
             print(f"  {d.name}: UEBERSPRUNGEN — Kontrolle falsch")
+            continue
+        # ⚠️ Auch FEHLENDE Kontrollen disqualifizieren. Der Bericht verlangt
+        # beide (`_vollzaehlig`), der Schreibpfad tat es bis 2026-09-06
+        # nicht -- gefunden von genau dem Test, der das festhaelt. Eine
+        # Probe ohne bekannte Antwort ist keine Probe, und der schreibende
+        # Pfad muss mindestens so streng sein wie der berichtende.
+        if not loes["_vollzaehlig"]:
+            print(f"  {d.name}: UEBERSPRUNGEN — Kontrollbilder unvollstaendig")
             continue
         if uuid not in erlaubt:
             print(f"  {d.name}: UEBERSPRUNGEN — Eimer {f['eimer']!r}, nicht train")

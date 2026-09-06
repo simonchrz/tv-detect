@@ -66,6 +66,28 @@ class Verschiebungsbremse(unittest.TestCase):
         s, _ = _fv.beste_verschiebung(ind, mittel, 300, 5, 0.05)
         self.assertEqual(s, 0, "identische Lage darf keine Verschiebung ergeben")
 
+    def test_streuendes_mittel_treibt_die_suche_nicht_weg(self):
+        """Der Fall, fuer den die Bremse gebaut wurde.
+
+        ⚠️ Ein sauberes Rechteck als Referenz PRUEFT DIE BREMSE NICHT — dort
+        gewinnt 0 auch ungebremst. Real streuen die anderen Folgen um ein
+        paar Sekunden, das Mittel bekommt weiche Flanken, und dann findet
+        eine ungebremste Suche irgendwo einen Promille-Gewinn und schiebt
+        die Folgen auseinander, die verglichen werden sollen. Genau so kamen
+        beim Bauen die ±35–55 s zustande.
+
+        Eine Mutationsprobe hat gezeigt, dass der Test oben das Entfernen
+        der Bremse NICHT bemerkt. Dieser hier tut es.
+        """
+        n = 3000
+        mittel = [0.0] * n
+        for start in (980, 995, 1000, 1005, 1020, 1035):
+            for i in range(start, start + 400):
+                mittel[i] += 1 / 6
+        ind = _fv.indikator([[1000, 1400]], n)
+        gebremst, _ = _fv.beste_verschiebung(ind, mittel, 300, 5, 0.05)
+        self.assertEqual(gebremst, 0, "die Bremse muss die Folge bei 0 halten")
+
     def test_echte_verschiebung_wird_gefunden(self):
         n = 3000
         mittel = [1.0 if 1000 <= i < 1400 else 0.0 for i in range(n)]

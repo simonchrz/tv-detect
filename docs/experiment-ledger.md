@@ -3322,3 +3322,32 @@ O13: 148 Kanten aus 39 Aufnahmen im Ledger, Herkunft `{'agent': 148, 'auto':
 8}`, kein Mensch seit dem Schnitt — 0/40. Versiegelter Satz 37, nicht
 geöffnet (O5). Keine Serie mit Regelblock läuft, Warteschlange §3a leer,
 nichts eingereiht.
+
+### Nachtrag 2026-09-06 (Tagesdurchgang) — zehnte Ensemble-Nacht, nichts zu tun
+
+Audit exit 0, Golden-Zeile vollständig (`set_hash c8727e8266a8`, `label_hash
+8b23298b1371` unverändert, `hsmm`, `ensemble3`, n=38, Seeds 0.957/0.9577/
+0.9579, Spread 0.0009). Deploy per Head-to-Head (Δ +0.000 auf 117, 3/9 —
+keine belastbare Regression), `champion source: head.gate.bin`. Golden
+**0.957** gegen Boden 0.9632 (−0.006, innerhalb der Toleranz, passiert);
+Champion ist der 09-05-Kopf mit 0.9627. Kein Befund, Reihe fortgeschrieben
+(R3). Laufzeit 03:30 → 04:54, im Rahmen. Die fehlende Seed-0-Spalte in der
+Sensor-Zeile ist kein Defekt: Seed 0 war der mittlere, Wert identisch.
+
+Schwanz: dieselben vier beharrlich (Mein Lokal 14/14, Galileo 14/14, Galileo
+360° 13/14, Galileo 12/14), CSI: Vegas 6/14 — unverändert §3ap.
+
+**Zwei Commits vom Morgen (08:05, 08:07) nachgeprüft, beide vorbeugend:**
+`golden-v3` zählt Agenten-, Fingerprint- und zurückgenommene Urteile nicht
+mehr als Mensch (Kandidaten 3 → 0, alle drei wären Echo gewesen);
+`agent-review` labelt nur noch Aufnahmen, die der Split-Ledger als `train`
+führt. Kreuzprobe Spiegel × Split-Ledger: alle 9 agenten-gelabelten
+Aufnahmen (8× `agent-review.py`, 1× `claude-code`) liegen im Train-Eimer —
+**kein Agent-Label in Test (140) oder versiegelt (37)**, das Head-to-Head-
+Gate und O5 sind unberührt. `label_hash` des Golden-Satzes unverändert.
+
+O13: 148 Kanten aus 39 Aufnahmen, Herkunft `{'agent': 148, 'auto': 8}`,
+kein Mensch seit dem Schnitt — 0/40. Versiegelter Satz 37, nicht geöffnet
+(O5). Korrekturaufwand: kein September-Wert, n=26 Median 12.0 unverändert
+(O4). Keine Serie mit Regelblock läuft, Warteschlange §3a leer, nichts
+eingereiht.

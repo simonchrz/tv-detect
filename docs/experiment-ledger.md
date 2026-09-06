@@ -3497,3 +3497,54 @@ Zurückhaltung, kein Fehlurteil, und Zurückhaltung ist laut
 `agent_review_schutzkette` ein Gütezeichen. Die erste Fassung hat zwei
 Läufe deswegen als „gescheitert" verworfen, die inhaltlich dasselbe sagten
 wie die übrigen sechs. Nur eine FALSCHE Kontrolle disqualifiziert.
+
+### 2026-09-06 — Folgen-Vergleich: `einzelgaenger` trägt, 8 von 8 bestätigt
+
+Gegenprobe zum Eintrag von vorhin. Dieselbe Maschinerie, dieselben acht
+Bilder je Fund, dieselben Kontrollen — nur die andere Fundart. Und die
+andere Polarität: bei `einzelgaenger` behauptet der Vergleich **Sendung**
+in der strittigen Spanne, nicht Werbung (`POLARITAET` im Prüfskript).
+
+```
+einzelgaenger   8 bestaetigt, 0 widerlegt   Sendungsanteil 67–100 %
+kante-*         0 bestaetigt, 8 widerlegt   Werbeanteil     0–20 %
+```
+
+Keine einzige falsche Kontrolle in 16 Läufen (112 Bilder).
+
+**Die bestätigten Fehlalarme** — zusammen **16,6 min**, die fälschlich als
+Werbung gelabelt sind:
+
+| Eimer | Zeit | Dauer | Konsens | Serie |
+|---|---|---|---|---|
+| test | 62:00–67:10 | 310 s | 0.18 | Abenteuer Leben täglich |
+| train | 14:27–17:26 | 179 s | 0.14 | Gute Zeiten, schlechte Zeiten |
+| train | 32:42–34:54 | 132 s | 0.17 | Gute Zeiten, schlechte Zeiten |
+| train | 15:04–17:11 | 127 s | 0.14 | Gute Zeiten, schlechte Zeiten |
+| versiegelt | 60:11–61:42 | 91 s | 0.25 | Abenteuer Leben täglich |
+| versiegelt | 11:01–12:02 | 61 s | 0.00 | Galileo |
+| versiegelt | 61:50–62:47 | 57 s | 0.00 | Mein Lokal, Dein Lokal |
+| train | 63:00–63:42 | 42 s | 0.00 | First Dates |
+
+**Warum die eine Klasse trägt und die andere nicht.** Beide Male fragt der
+Vergleich „weicht diese Folge vom Muster ab?" — aber die Alternativerklärung
+ist verschieden. Bei einer Kante gibt es eine harmlose: die Werbepause lag
+in dieser Folge echt anders (Anfänge sind reproduzierbar, Längen nicht),
+und das erzeugt dasselbe Signal wie ein falsches Label. Bei einem ganzen
+Block, den 0 bis 3 von 7–13 Folgen kennen, gibt es sie nicht — eine
+Werbeinsel mitten in der Sendung, die sonst niemand hat, ist ein
+Detektorfehler.
+
+**Eine Vorhersage im Verfahren war falsch.** Ich hatte den First-Dates-Fund
+(63:00–63:42) vorab für ein Artefakt gehalten: Endblock bei kürzerer
+Aufnahme, andere Folgen haben ihren Endblock bei 67:00. Die Probe sagt
+bestätigt (80 % Sendung). Der Dauerfilter hatte hier also richtig gruppiert
+und mein Augenschein nicht.
+
+**Was daraus folgt, und was nicht.** Von den 8 bestätigten liegen nur 4 im
+`train`-Eimer und dürften überhaupt geschrieben werden (L2); die 3
+versiegelten und der eine test-Fund bleiben unangetastet — sie sind aber
+ein weiterer Beleg dafür, dass der Maßstab selbst Fehler enthält (siehe
+`massstab-audit.py`, versiegelt 24/37 maschinell). Ein automatisches
+Löschen bestätigter Einzelgänger im train-Eimer ist damit begründet, aber
+noch nicht gebaut.

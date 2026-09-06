@@ -32,6 +32,12 @@ from pathlib import Path
 ARCHIV = Path.home() / ".cache/tvd-train-archive"
 BACKUP = Path.home() / "tv-labels-backup"
 
+# reviewed_by-Werte, die KEIN menschliches Urteil bezeichnen. "golden-audit"
+# steht bewusst NICHT hier: es korrigiert Golden-Labels nach menschlicher
+# Entscheidung, und jene Aufnahmen sind ohnehin v2-Mitglieder und damit aus
+# der Kandidatenliste. Wer einen neuen Schreiber ergaenzt, gehoert hierhin.
+NICHT_MENSCH = {"agent-review.py", "claude-code", "zurueckgenommen"}
+
 
 def main():
     ledger = json.loads((ARCHIV / "split-ledger.json").read_text())
@@ -41,7 +47,7 @@ def main():
     test = {u for u, b in ledger.items() if b == "test"}
     versiegelt = {u for u, b in ledger.items() if b == "versiegelt"}
 
-    # Menschlich reviewt: ads_user.json ohne auto_confirmed_at, aus dem
+    # Menschlich reviewt: ads_user.json ohne Auto-/Agenten-Marker, aus dem
     # Label-Backup (die Quelle, die auch review-effort.py benutzt).
     mensch = set()
     leer = set()
@@ -57,6 +63,26 @@ def main():
         except Exception:
             continue
         if j.get("auto_confirmed_at"):
+            continue
+        # ⚠️ Fingerprint-Bestaetigungen sind KEIN Mensch. tv-recorder
+        # learning.go schreibt die MODELLAUSGABE unveraendert plus einen
+        # reviewed_at — ohne reviewed_by und ohne auto_confirmed_at. Ein
+        # Leser, der nur auto_confirmed_at prueft, zaehlt sie als
+        # menschliches Urteil. Wo die Wahrheit die Modellausgabe IST, ist
+        # der Modellfehler per Konstruktion 0 und jede Alternative kann nur
+        # verlieren (Memory fingerprint_bestaetigung_ist_kein_mensch).
+        if j.get("auto_confirmed_via_fingerprint"):
+            continue
+        # ⚠️ Agenten- und Ruecknahme-Urteile sind kein Mensch.
+        # agent-review.py markiert sich korrekt in reviewed_by — dieser
+        # Filter hat es nur nie gelesen. Waeren sie drin, wuerde ein
+        # Agentenlauf ueber die offenen Test-Aufnahmen sie ALLE zu
+        # "menschlich reviewten" Golden-Kandidaten machen, und der Maszstab
+        # meaesse sein eigenes Echo (Memory kanten_massstab_ist_agent_echo:
+        # 45 % der Agenten-Kanten hatten exakt 0.00 s Fehler). Ein
+        # zurueckgenommenes Review ist ein MODELLWERT mit frischem
+        # Zeitstempel (s. agent-review.py-Docstring).
+        if str(j.get("reviewed_by") or "") in NICHT_MENSCH:
             continue
         # ⚠️ LEERE Labels sind kein Label. Eine Aufnahme ohne Bloecke gilt
         # als bootstrap und faellt aus Train UND Test — sie kann die

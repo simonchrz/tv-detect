@@ -4331,3 +4331,64 @@ belegen 303 GB, der ganze Korpus wäre rund ein Terabyte, auf der T7 sind
 der Korpus nie wieder extrahiert werden kann. Mit ihr ist sie in einem
 halben Jahr möglich. Davor lohnt der billigere Blick auf Let's Dance,
 das allein 36 % der Verwechslungsfehler stellt.
+
+### Nachtrag 2026-09-07 (sechster Durchgang) — Idee 5 gewinnt eine Begründung, Idee 6 verliert ihre
+
+Beide waren unangetastet. Die Sonde aus dem fünften Durchgang beantwortet
+sie nebenbei, weil sie die Fehler je Sekunde und je Klasse aufschlüsselt.
+
+#### Idee 5 — mehr Klassen statt zwei
+
+Die ursprüngliche Begründung war „die Kanten gehen an den Trailern
+schief". Die ist tot: Weg 2 hat gemessen, dass die Kanten so gut sind wie
+die des Menschen. Eine bessere ist an ihre Stelle getreten.
+
+Die Klasse „Werbung" ist keine Sache, sondern drei: Produktspot,
+Programmvorschau und Ident. Aufgeteilt nach Audio-Anker, also danach ob
+eine Sekunde von einem nachweislich mehrfach gelaufenen Spot gedeckt ist:
+
+| Gruppe | Sekunden | Kopf falsch | Verwechslungsrate |
+|---|---|---|---|
+| Werbung MIT Spot-Anker | 30163 | **1.5 %** | 24.5 % |
+| Werbung OHNE Spot-Anker | 36333 | **5.6 %** | 31.3 % |
+| Sendung | 219070 | 3.5 % | 13.6 % |
+
+Innerhalb derselben Zielklasse irrt der Kopf auf dem Nicht-Spot-Teil
+**3.7-mal so oft**. Der Kopf muss heute „Spot ODER Trailer ODER Ident"
+als einen Begriff lernen, und das sind visuell völlig verschiedene Dinge.
+
+⚠️ Einschränkung: „ohne Spot-Anker" ist gemischt — darin stecken auch
+Produktspots, die nie fingerprintet wurden (die Audio-Kette deckt nur
+etwa 45 % der Blocksekunden). Die Richtung ist klar, die Reinheit der
+Gruppe nicht.
+
+#### Idee 6 — den Kopf auf das trainieren, was gemessen wird
+
+Deutlich geschwächt. Die Lauflängen der Frame-Fehler:
+
+| Richtung | Läufe | Sekunden | Median | Anteil in Läufen ab 30 s |
+|---|---|---|---|---|
+| Sendung als Werbung | 2353 | 7742 | 2 s | 15 % |
+| Werbung als Sendung | 852 | 2507 | 1 s | 20 % |
+
+**Der Median ist zwei Sekunden.** 80 bis 85 % der Frame-Fehler sind
+Flackern, das der HSMM-Dauer-Prior ohnehin verschluckt — ein Werbeblock
+ist Minuten lang, ein Zwei-Sekunden-Ausrutscher wird nie ein Block. Ein
+Verlust, der auf Block-IoU zielt, würde also optimieren, was der Dekoder
+schon erledigt.
+
+**Und was übrig bleibt, ist keine Verlustfunktion, sondern eine Liste.**
+Der gesamte IoU-Verlust dieser Stichprobe steckt in **26 Fehlerläufen ab
+30 s, in 12 von 99 Aufnahmen, zusammen 1673 Sekunden**. Die drei größten
+Aufnahmen stellen 16 der 26 Läufe.
+
+Der mit Abstand größte ist 267 s „Werbung als Sendung" in
+`dvr-kabel-eins-1780856070` — genau die Aufnahme, die das nächtliche
+Label-Audit seit Tagen als „widerspricht ihrem eigenen Signal" meldet
+(297 Phantom-Sekunden). Das ist mit hoher Wahrscheinlichkeit ein kaputtes
+LABEL und kein Modellfehler. Danach kommen zweimal Galileo, viermal
+Let's Dance und zweimal Richter Alexander Hold.
+
+**Damit ist die Reihenfolge klar:** vor jeder Architektur- oder
+Verlustfunktions-Idee steht eine Liste von 26 Stellen, und mindestens
+eine davon ist ein Label.

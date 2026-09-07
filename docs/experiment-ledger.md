@@ -4685,3 +4685,62 @@ tragen nichts.
 
 Damit zeigt der Tag am Ende doch wieder auf die **Repräsentation**, also
 auf Idee 4 und Idee 5, und nicht auf die Labels.
+
+### Nachtrag 2026-09-07 (zwölfter Durchgang) — Idee 5 hält allen drei Gegenproben stand
+
+Die Begründung für Idee 5 stand auf einer Messung, die dieselben
+Schwächen haben konnte wie die zurückgenommenen Befunde. Drei
+Gegenproben, alle bestanden.
+
+**Erstens geprüfte Zeitachse** (98 statt 99 Aufnahmen), **zweitens
+Aufnahmeränder ausgeschlossen**:
+
+| Zeuge | mit Spot-Anker | ohne | Faktor |
+|---|---|---|---|
+| Audio, alle Sekunden | 1.5 % | 5.6 % | 3.7 |
+| Audio, ohne Rand ±180 s | 1.5 % | 4.6 % | 3.0 |
+| Bild, alle Sekunden | 1.3 % | 9.6 % | 7.3 |
+| Bild, ohne Rand ±180 s | 1.3 % | 7.9 % | 5.9 |
+
+Die Rand-Konvention erklärt also nur einen kleinen Teil.
+
+**Drittens geschichtet nach Verwechslungsrate.** Der Verdacht war, der
+Nicht-Spot-Teil liege einfach dort, wo die Repräsentation ohnehin
+unsicher ist. Er tut es nicht:
+
+| Verwechslung | mit Anker | ohne Anker |
+|---|---|---|
+| unter 5 % | 0.5 % | 1.3 % |
+| 5 bis 15 % | 0.9 % | 4.2 % |
+| 30 bis 50 % | 1.6 % | 6.0 % |
+| über 75 % | 4.2 % | 16.2 % |
+
+Der Abstand bleibt auf jeder Stufe bei Faktor 2.6 bis 4.7, auch dort, wo
+die Nachbarn im Einbettungsraum perfekt übereinstimmen.
+
+**Und geschichtet nach Abstand zur Blockkante**, gegen den Verdacht, es
+sei bloß Kontext, den der HSMM ohnehin bearbeitet:
+
+| Abstand zur Kante | mit Anker | ohne Anker |
+|---|---|---|
+| 15 bis 30 s | 4.9 % | 20.7 % |
+| 30 bis 60 s | 2.8 % | 12.2 % |
+| 60 bis 120 s | 1.2 % | 7.1 % |
+| über 120 s | 0.9 % | 5.0 % |
+
+Der Abstandseffekt ist real und stark, trifft aber BEIDE Gruppen. Zwei
+Minuten tief im Block, wo der Kontext eindeutig ist, irrt der
+Nicht-Spot-Teil immer noch 5.6-mal so oft.
+
+**Damit ist Idee 5 der bestbelegte Vorschlag des Tages.** Weder die
+Repräsentation noch die Position erklären den Abstand. Es bleibt die
+Zielklasse: der Kopf muss Produktspot, Programmvorschau und Ident als
+EINEN Begriff lernen, und der Nicht-Spot-Teil ist dabei durchgehend drei-
+bis sechsmal schwerer.
+
+⚠️ **Was das nicht heißt.** Die Aufteilung nach Ankern ist ein
+DIAGNOSE-Werkzeug, kein Trainingsziel. Wer sie direkt als dritte Klasse
+trainiert, bringt dem Kopf bei vorherzusagen, ob eine Sekunde
+fingerprintet wurde, also ein Artefakt der Anker-Deckung. Ein echtes
+Mehrklassen-Ziel braucht echte Labels für die Unterklassen, und das ist
+eine Beschaffungsfrage, keine Modellfrage.

@@ -4933,3 +4933,42 @@ verstecktes Logo während der Show, Split-Screen-Werbung, dunkle Bühne.
 Wer am NN arbeiten will, arbeitet zuerst an dieser Sendung — oder nimmt
 sie bewusst heraus und weiß dann, dass der Rest sauberer ist, als jede
 Gesamtzahl aussieht.
+
+### Nachtrag 2026-09-07 (sechzehnter Durchgang) — Let's Dance NICHT herausgenommen: es lehrt
+
+Simon: „Let's Dance rausnehmen." Vor dem Eingriff nachgesehen, und zwei
+Dinge sprechen dagegen.
+
+**Erstens ist die Hälfte davon längst erledigt.** Von fünf
+Let's-Dance-Aufnahmen im Archiv (19.7 h, 2.4 % des Korpus) liegt genau
+eine im `test`-Eimer, und die steht seit **2026-07-22** in
+`TEST_SET_EXCLUDE` — damals wegen der abgeschnittenen Quelle. Die
+anderen vier liegen in `train` und werden ohnehin nicht bewertet. **Der
+Maßstab ist bereits sauber von Let's Dance.** Keine der fünf ist im
+Golden-Satz.
+
+**Zweitens kostet die andere Hälfte messbar.** Trainiert mit und ohne die
+Let's-Dance-Zeilen (2.6 % des Trainings), gemessen auf allem, was NICHT
+Let's Dance ist, fünf gepaarte Seeds:
+
+| | F1 (Median) |
+|---|---|
+| mit Let's Dance | 0.9069 |
+| ohne | 0.8982 |
+
+Median-Δ **−0.0087**, positiv in 1 von 5 Seeds. Bei einem Rauschen von
+sd 0.0045 sind das rund zwei Standardabweichungen. **Die Sendung ist
+schwer, aber sie lehrt.** Wer sie herausnimmt, verschlechtert das Modell
+auf allem anderen.
+
+Der Grund liegt nahe: dunkle Bühne, dramatisches Licht, weite Totale,
+verstecktes Logo, Split-Screen-Werbung. Das sind genau die Fälle, an
+denen der Kopf lernen muss, und andere Shows haben sie auch, nur seltener.
+
+**Was stattdessen hilft.** Let's Dance verzerrt nicht das Modell, sondern
+den BERICHT: es stellt 7 der 26 langen Fehlerläufe, 36 % der
+Verwechslungsfehler und beide langen Fehlalarme. Wer eine ehrliche
+Gesamtzahl will, weist es getrennt aus, statt es zu entfernen. Der
+Nightly kann das schon — er berichtet per-Show-IoU.
+
+Der Eingriff wurde deshalb NICHT ausgeführt.

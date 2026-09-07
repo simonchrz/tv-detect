@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -514,6 +515,72 @@ class GeteilteArme(unittest.TestCase):
                                               0.88, 0.90, seed=100 + i)],
                        regel=TAGES_REGEL)
         self.assertIn("ein Arm fehlt", txt)
+
+
+class Abschlussdatei(unittest.TestCase):
+    """serien-abschluss.json: abgeschlossen ODER zurueckgestellt beendet die
+    Neubewertung — ohne die Registrierung anzufassen (Integritaet).
+
+    Anlass 2026-09-07: O18 lag mit 4 Grundlinien-Zeilen ohne Gegenarm im
+    Archiv, bewusst gestoppt (Zwei-Prozess-Modus nicht reproduzierbar).
+    Das Audit meldete jeden Tag "ALLE Paare verworfen — Defekt", Exit 1.
+    Ein Defekt, der nie verschwindet, ist kein Waechter mehr."""
+
+    def _docs(self, d, abschluss):
+        p = Path(d)
+        (p / "docs").mkdir()
+        (p / "archiv").mkdir()
+        (p / "docs" / "otest-preregistration.md").write_text(
+            "# Test\n\n```regel\n" + json.dumps(TAGES_REGEL) + "\n```\n")
+        if abschluss is not None:
+            (p / "docs" / "serien-abschluss.json").write_text(
+                json.dumps(abschluss))
+        # Vier halbe Gruppen: nur der ohne-Arm, kein Besitzer.
+        with open(p / "archiv" / "shadow-trend.jsonl", "w") as f:
+            for i in range(4):
+                f.write(json.dumps({
+                    "ts": f"20260906T210000p{i:02d}", "arch": "arm-ohne",
+                    "golden_median": 0.9, "seed": 100 + i,
+                    "quelle": "tagesserie", "set_hash": HASH,
+                    "decoder": DEC, "golden_n": 38}) + "\n")
+        return p
+
+    def _main(self, p):
+        buf = io.StringIO()
+        argv = ["audit", "--archiv", str(p / "archiv"),
+                "--docs", str(p / "docs")]
+        with redirect_stdout(buf), unittest.mock.patch.object(
+                sys, "argv", argv):
+            rc = A.main()
+        return rc, buf.getvalue()
+
+    def test_ohne_eintrag_bleibt_der_defekt_laut(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, txt = self._main(self._docs(d, None))
+        self.assertEqual(rc, 1)
+        self.assertIn("ein Arm fehlt", txt)
+        self.assertIn("Defekt", txt)
+
+    def test_zurueckgestellt_ist_kein_defekt(self):
+        ab = {"OTEST": {"zurueckgestellt": True, "datum": "2026-09-06",
+                        "grund": "Modus nicht reproduzierbar",
+                        "verbucht": "ledger §3aq"}}
+        with tempfile.TemporaryDirectory() as d:
+            rc, txt = self._main(self._docs(d, ab))
+        self.assertEqual(rc, 0)
+        self.assertIn("zurückgestellt am 2026-09-06", txt)
+        self.assertIn("Modus nicht reproduzierbar", txt)
+        self.assertNotIn("ein Arm fehlt", txt)
+        self.assertNotIn("abgeschlossen", txt)
+
+    def test_abgeschlossen_bleibt_wie_bisher(self):
+        ab = {"OTEST": {"datum": "2026-09-06", "urteil": "REGEL NICHT ERFUELLT",
+                        "verbucht": "ledger §3"}}
+        with tempfile.TemporaryDirectory() as d:
+            rc, txt = self._main(self._docs(d, ab))
+        self.assertEqual(rc, 0)
+        self.assertIn("abgeschlossen am 2026-09-06", txt)
+        self.assertNotIn("zurückgestellt", txt)
 
 
 if __name__ == "__main__":

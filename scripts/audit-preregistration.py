@@ -386,8 +386,26 @@ def main():
         if rid in abschluss:
             a = abschluss[rid]
             print(f"\n{rid} — {regel.get('frage','')}")
-            print(f"  → abgeschlossen am {a.get('datum')}: {a.get('urteil')}"
-                  f" (verbucht in {a.get('verbucht', 'experiment-ledger.md')})")
+            if a.get("zurueckgestellt"):
+                # Zurueckgestellt ist der DRITTE Zustand neben "laeuft" und
+                # "abgeschlossen": Regel steht, Urteil fehlt, und die
+                # Serie darf nach Stand der Dinge nicht laufen (O18: der
+                # Zwei-Prozess-Modus ist nicht reproduzierbar, §3aq).
+                # Ohne diesen Zustand zaehlt das Audit die verwaisten
+                # Zeilen jeden Tag als Defekt — ein Waechter, der immer
+                # ausloest, wird ueberlesen, und dann fehlt er beim
+                # echten Defekt. Die Registrierung selbst bleibt
+                # unangetastet (Integritaet). Wieder aufnehmen heisst:
+                # Eintrag hier entfernen; serie_ab dann NEU setzen, weil
+                # die alten Zeilen unter dem Defekt gemessen wurden.
+                print(f"  → zurückgestellt am {a.get('datum')}: "
+                      f"{a.get('grund')} (vermerkt in "
+                      f"{a.get('verbucht', 'experiment-ledger.md')}). "
+                      f"Keine Bewertung — kein Urteil, kein Defekt.")
+            else:
+                print(f"  → abgeschlossen am {a.get('datum')}: "
+                      f"{a.get('urteil')} (verbucht in "
+                      f"{a.get('verbucht', 'experiment-ledger.md')})")
             continue
         fremd = set()
         for _, andere_regel in regeln:

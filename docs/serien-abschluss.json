@@ -28,5 +28,16 @@
     "datum": "2026-08-22",
     "urteil": "REGEL NICHT ERFUELLT — Temporal-Spalte nuetzt nicht belegbar (Median -0.0071, 4/5 negativ; Vorzeichen erfuellt, Groesse verfehlt). Prospektiv gemessen schrumpft der Effekt auf gut ein Drittel der vorab gesehenen +0.017 — genau wogegen serie_ab in die Zukunft gesetzt wurde.",
     "verbucht": "experiment-ledger.md §3a Punkt 1 (O8b)"
+  },
+  "O17": {
+    "datum": "2026-09-06",
+    "urteil": "REGEL NICHT ERFUELLT — Korrektur der has_user-Regel bringt keinen belegbaren Golden-Gewinn (Median +0.0032, 3/5 positiv; Schwelle +0.010 / 4 von 5). Der Effekt liegt zudem unter der Reproduzierbarkeitsgrenze des Zwei-Prozess-Modus (0.0073, §3aq), ueber die Richtung sagt die Serie nichts. Konsequenz laut Registrierung: --herkunft-belegt im Nightly scharf — als Hygiene, nicht als Verbesserung.",
+    "verbucht": "experiment-ledger.md §3 O17"
+  },
+  "O18": {
+    "zurueckgestellt": true,
+    "datum": "2026-09-06",
+    "grund": "nach 4 von 10 Zeilen gestoppt — der Zwei-Prozess-Modus (--tagesserie-nur-arm), in dem ein Gewichtungs-Unterschied allein messbar ist, weicht zwischen identischen Laeufen um Median 0.0073 ab und ueberdeckt jeden erwartbaren Effekt. Registrierung bleibt gueltig und unveraendert; wartet auf einen Trainer, der beide Arme in EINEM Prozess faehrt (sw_train_parts je Arm). Wiederaufnahme: diesen Eintrag entfernen und serie_ab neu setzen.",
+    "verbucht": "experiment-ledger.md §3aq + o18-unentscheidbare-preregistration.md"
   }
 }

@@ -3922,3 +3922,37 @@ heute die Agenten überstimmt hat.
 Blockzeit bekannt, nur 22 von 289 lebenden Aufnahmen mit Ankern, die
 Extraktion läuft lazy auf lokal gecachten Quellen. Wer hier weiterbaut,
 baut an der Deckung.
+
+### Nachtrag 2026-09-07 (Tagesdurchgang) — der Wächter schrie über eine geparkte Serie
+
+**Befund.** Der Nightly lief (03:30, deployed, Golden 0.9635, Boden 0.963,
+head-to-head +0.000 auf 119 Aufnahmen), keine `set_hash`- oder
+Decoder-Warnung. Das Audit stand trotzdem auf **Exit 1** — allein wegen
+O18: die vier `belegt`-Grundlinien vom 06.09. 21:00 liegen ohne
+`streng`-Gegenarm im Archiv, weil die Serie bewusst nach 4 von 10 Zeilen
+gestoppt wurde (§3aq). Für das Audit war das „ALLE Paare verworfen —
+Defekt", und zwar **jeden Tag von jetzt an**. Ein Wächter, der dauerhaft
+auslöst, wird überlesen; genau dann fehlt er beim echten Defekt.
+
+**Zweiter Fund:** O17 war entschieden (06.09.) und im Ledger verbucht, aber
+nicht in `serien-abschluss.json` — das Audit rechnete die fertige Serie
+täglich neu.
+
+**Getan (Buchführung, keine Regel angefasst):**
+* `serien-abschluss.json` kennt jetzt den dritten Zustand
+  **`zurueckgestellt`** neben „läuft" und „abgeschlossen": Regel steht,
+  Urteil fehlt, Serie darf nach Stand der Dinge nicht laufen. Das Audit
+  meldet ihn ohne Bewertung und ohne Exit 1; die Registrierung bleibt
+  unberührt (Integritätsprüfung). Drei Tests, die den Weg über `main()`
+  fahren — den es bis heute nicht gab. Wiederaufnahme heißt: Eintrag
+  entfernen und `serie_ab` neu setzen, weil die alten Zeilen unter dem
+  Defekt gemessen wurden.
+* O17 als abgeschlossen, O18 als zurückgestellt eingetragen. Audit: Exit 0.
+
+**Nicht getan, absichtlich.** Der Trainer-Umbau, auf den O18 wartet
+(`sw_train_parts` je Arm im EINEN Prozess), ist eine echte Änderung am
+Trainingspfad und keine Tagesdurchgang-Sache. Bis er steht, ist die
+Warteschlange (§3a) leer — es gibt nichts zu registrieren, und nach dem
+Friedhof auch keinen Kandidaten, den ich vorschlagen dürfte. Der
+Golden-Schwanz (kabel-eins Lokal, drei Galileo) ist beharrlich und damit
+Label- oder Sendungssache, nicht Kopf — L2, nichts anzufassen.

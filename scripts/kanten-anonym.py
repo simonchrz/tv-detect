@@ -41,9 +41,9 @@ ARBEIT = _ar.ARBEIT
 HINWEISE = [
     "sendungsinhalt: laufende Sendung, gleich welche.",
     "produktwerbung: Werbespot fuer ein Produkt oder eine Marke.",
-    "programmvorschau: Trailer, Sendertrenner, Programmhinweis.",
+    "programmvorschau: Trailer, Sendertrenner, Programmhinweis — AUCH wenn er eine andere Sendung bewirbt.",
     "mitmachtafel: kostenpflichtige Gewinnspiel-Einblendung.",
-    "folgesendung: eine ANDERE Sendung als die aufgezeichnete.",
+    "folgesendung: die naechste Sendung LAEUFT bereits (Abspann-Squeeze, Vorspann, laufendes Programm). NICHT fuer Trailer oder Werbung auf eine andere Sendung — das ist programmvorschau.",
     "unklar: wenn du es nicht entscheiden kannst. Nutze das.",
 ]
 

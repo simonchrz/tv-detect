@@ -4972,3 +4972,29 @@ Gesamtzahl will, weist es getrennt aus, statt es zu entfernen. Der
 Nightly kann das schon — er berichtet per-Show-IoU.
 
 Der Eingriff wurde deshalb NICHT ausgeführt.
+
+### Nachtrag 2026-09-07 (siebzehnter Durchgang) — Let's Dance quarantäniert, Preis bekannt
+
+Simon nach vorgelegter Messung: „weg damit." Ausgeführt.
+
+Alle fünf Let's-Dance-Aufnahmen sind aus `tvd-train-archive/` nach
+`tvd-train-archive-quarantine/` verschoben und stehen zusätzlich in
+`TEST_SET_EXCLUDE`, damit sie bei einer Wiederherstellung nicht in die
+Bewertung zurückrutschen. Korpus **815 → 810 Aufnahmen, 812 → 793 h**.
+
+**Der Preis stand vorher fest und wird hier festgehalten, nicht
+weggerechnet:** F1 0.9069 → 0.8982 auf allem, was nicht Let's Dance ist,
+Median-Δ **−0.0087**, positiv in 1 von 5 gepaarten Seeds, bei sd 0.0045.
+Die Sendung lehrte: dunkle Bühne, verstecktes Logo, Split-Screen-Werbung
+kommen auch anderswo vor, nur seltener.
+
+**Was der Nightly heute Nacht zeigen wird.** Der Golden-Satz ist
+unberührt (keine der fünf war darin), die Nacht-zu-Nacht-Kurve bleibt
+also vergleichbar. Der Testsatz verliert eine Aufnahme, die seit
+2026-07-22 ohnehin von der Bewertung ausgeschlossen war. Erwartbar ist
+ein leichter Rückgang der Gesamt-F1 aus dem Trainingsverlust, kein
+Sprung.
+
+**Rückgängig:** die fünf npz zurück nach `tvd-train-archive/` und die vier
+neuen Zeilen aus `TEST_SET_EXCLUDE` entfernen. Der Kommentar dort trägt
+die Anleitung.

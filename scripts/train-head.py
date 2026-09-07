@@ -3958,6 +3958,29 @@ def main():
         # as "movie", so it alone floored OVERALL(movies) to 0.32. No user
         # labels; can never be re-verified.
         "dvr-rtl-1779473700",          # Let's Dance — truncated source, naive-fallback-only
+        # 2026-09-07, Simons Entscheidung nach vorgelegter Messung: ALLE
+        # fuenf Let's-Dance-Aufnahmen (19.7 h, 2.4 % des Korpus) sind aus
+        # dem Archiv nach tvd-train-archive-quarantine/ verschoben. Grund:
+        # die Sendung dominiert jede verbliebene Fehlerkategorie des
+        # Fehlerbudgets — 7 der 26 langen Fehlerlaeufe (Split-Screen-
+        # Werbung), 36 % der Verwechslungsfehler der Backbone-Sonde, beide
+        # langen Fehlalarme (dunkle Buehne, verstecktes Logo).
+        #
+        # ⚠️ DER PREIS IST GEMESSEN UND WURDE VORHER GENANNT. Trainiert mit
+        # und ohne die Let's-Dance-Zeilen, bewertet auf allem, was NICHT
+        # Let's Dance ist, fuenf gepaarte Seeds: F1 0.9069 -> 0.8982,
+        # Median-Delta -0.0087, positiv in 1 von 5. Bei sd 0.0045 rund zwei
+        # Standardabweichungen. Die Sendung ist schwer, aber sie LEHRT:
+        # dunkle Buehne, verstecktes Logo und Split-Screen kommen auch
+        # anderswo vor, nur seltener. Wer diese Zeilen je wieder
+        # hereinholt, macht das Modell auf allem anderen besser.
+        #
+        # Rueckgaengig: die npz aus tvd-train-archive-quarantine/ zurueck
+        # nach tvd-train-archive/ und diese vier Zeilen entfernen.
+        "dvr-rtl-1780078500",          # Let's Dance — 2026-09-07 quarantaeniert
+        "dvr-rtl-1780683300",          # Let's Dance — 2026-09-07 quarantaeniert
+        "a307345d5a95af506072a426d1bf80ea",  # Let's Dance — 2026-09-07 quarantaeniert
+        "e08d22bae601f4ef6e79da3691fafffb",  # Let's Dance — 2026-09-07 quarantaeniert
         # 2026-07-24 label audit (prosieben-1779878100 was 0.00/0.00 on BOTH
         # heads in the both-heads-cold report): a whole BATCH of archive npz
         # written 06-02 07:41 — i.e. BEFORE the 06-04 source-cache truncation

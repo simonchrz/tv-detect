@@ -88,6 +88,9 @@ def main():
     ap.add_argument("--rand", type=int, default=15,
                     help="Sekunden um jede Blockgrenze, die ausgelassen werden")
     ap.add_argument("--dim", type=int, default=64)
+    ap.add_argument("--achsen-toleranz", type=int, default=5,
+                    dest="achsen_toleranz",
+                    help="erlaubte Laengendifferenz Merkmale vs Dump in Sekunden")
     ap.add_argument("--json")
     ap.add_argument("--npz", help="Arrays hierhin, damit Nachfragen nichts neu rechnen")
     a = ap.parse_args()
@@ -98,8 +101,33 @@ def main():
     for p in sorted(FEATS.glob("*.npy")):
         dateien[p.name.rsplit("-", 4)[0]] = p
     uuids = [u for u in sorted(ub) if u in dateien and (DUMPS / f"{u}.json").is_file()]
+
+    # ⚠️ ACHSEN-PRUEFUNG. Merkmale und Signal-Dump muessen dieselbe
+    # Aufnahme in derselben Laenge beschreiben. Am 2026-09-07 tat
+    # dvr-nick-1778860200 das nicht: die Merkmalsdatei hielt 1748 s einer
+    # aelteren, laengeren Fassung, waehrend Dump und .ts 1536 s sagten --
+    # die Aufnahme war neu geholt worden. Die Sonde verglich daraufhin
+    # alte Labels gegen neue Kopf-Ausgabe und meldete vier Fehler, die es
+    # nicht gab. Der Fehler ist STILL: nichts wirft eine Ausnahme, die
+    # Zahlen sind nur falsch.
+    passt = []
+    for u in uuids:
+        try:
+            sig = json.loads((DUMPS / f"{u}.json").read_text())
+            ndump = int(sig["frame_count"] / float(sig["fps"]))
+        except Exception:
+            continue
+        nfeat = int(np.load(dateien[u], mmap_mode="r").shape[0])
+        if abs(nfeat - ndump) <= a.achsen_toleranz:
+            passt.append(u)
+        else:
+            print(f"  ⚠ {u}: Merkmale {nfeat}s, Dump {ndump}s "
+                  f"({nfeat-ndump:+d}) — ausgelassen, verschiedene Fassungen")
+    verworfen = len(uuids) - len(passt)
+    uuids = passt
     print(f"{len(ub)} menschlich gelabelte Aufnahmen, davon {len(uuids)} "
-          f"mit Merkmalen UND Signal-Dump")
+          f"mit Merkmalen UND passendem Signal-Dump"
+          + (f" ({verworfen} wegen Achsen-Versatz ausgelassen)" if verworfen else ""))
 
     # --- Merkmale: zentriert, normiert, auf DIM projiziert -------------
     def roh(u):

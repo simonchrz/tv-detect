@@ -4442,3 +4442,71 @@ oben). Die Sonde findet auf 99 Aufnahmen zwölf.
 **Konsequenz für die Reihenfolge.** Vor Backbone, Klassen und
 Verlustfunktion steht ein Label-Audit dieser zwölf, getrieben vom
 Widerspruch des Modells. L2 gilt: diagnostizieren, nicht anfassen.
+
+### Nachtrag 2026-09-07 (achter Durchgang) — die 26 gesichtet: zwei Drittel sind kaputte Labels
+
+`scripts/widerspruch-sichten.py` ordnet die 26 langen Widersprüche ein.
+Fünf wurden mit den **Augen** geprüft, Bilder aus der Quelle; der Rest
+nach den daran geeichten Regeln.
+
+| Urteil | Läufe | Sekunden | Aufnahmen |
+|---|---|---|---|
+| Label verpasst Werbung | 11 | 646 | 7 |
+| Split-Screen-Werbung | 7 | 477 | 1 |
+| Label zu breit | 6 | 243 | 3 |
+| Nachlauf, Folgesendung | 2 | 307 | 2 |
+
+**17 von 26 sind kaputte Labels, 65 %.** Kein Modellfehler.
+
+#### Was die Augen gezeigt haben
+
+**`dvr-prosieben-1778691925` (Galileo) — das Musterbeispiel.** Das Label
+sagt `[3316, 3972]`, ein einziger Werbeblock. Bei 3740–3900 s ist aber
+Galileo zu sehen, Moderatorin, Galileo-Logo, ProSieben-Logo, LIVE-Marker.
+Und bei 3987 s laufen Champagner- und ABOUT-YOU-Spots, die das Label
+nicht mehr abdeckt. Das Label hat zwei Werbepausen zu einer verschmolzen,
+vier Minuten Sendung verschluckt und endet dann vor dem Ende der echten
+Werbung. Das Modell sagt `[3295,3733]` und `[3967,4165]` — **in beide
+Richtungen richtig.**
+
+**`dvr-nick-1778860200` (SpongeBob).** Der Lauf beginnt mit einer
+„Werbung"-Tafel, danach Netflix-Promo und Zeitschriftenanzeige. Label
+sagt Sendung.
+
+**`dvr-rtl-1781545200` (GZSZ).** Ein „Undercover Boss"-Trailer. Per
+Konvention Programmvorschau, also Werbung. Label sagt Sendung.
+
+#### Zwei Konventionen, die keine Fehler sind
+
+**Nachlauf.** `dvr-kabel-eins-1780856070`, 267 s: „Yes we camp!" mit
+Sendungs- UND Senderlogo, dazu die Einblendung NEUE FOLGE. Die Aufnahme
+lief über ihr Ende hinaus, die Folgesendung begann, und der Schwanz ist
+absichtlich als überspringbar markiert — die /ads-Antwort nennt ihn
+`overrun [3808, 4105.64]`. **Genau diese Aufnahme meldet das nächtliche
+Label-Audit seit Tagen als „widerspricht ihrem eigenen Signal". Sie tut
+es nicht.** Der Wächter kennt die Nachlauf-Konvention nicht.
+
+**Split-Screen-Werbung.** `dvr-rtl-1780078500` (Let's Dance): der Spot
+läuft groß, die Show weiter im kleinen Fenster, und der Bildschirm zeigt
+selbst das Wort „Werbung". Der Kopf sagt Werbung, weil im großen Bild
+kein Senderlogo steht; das Label sagt Sendung, weil die Show läuft.
+**Beide haben auf ihre Art recht.** Das ist eine Klasse, die es im
+binären Ziel nicht gibt, und EINE Aufnahme stellt damit 7 der 26 Läufe.
+Es ist der stärkste Einzelbeleg für Idee 5.
+
+#### Was daraus folgt
+
+Die Kette schließt sich: das Modell irrt auf train dreimal so oft wie auf
+test, die langen Fehlerläufe liegen ausschließlich in train, und zwei
+Drittel davon sind kaputte Labels. Das Plateau bei Golden 0.96 ist keine
+Eigenschaft des Modells.
+
+**L2 bleibt gewahrt: hier wurde diagnostiziert, nichts angefasst.** Die
+Liste liegt als JSON vor. Was mit den 17 passiert, ist eine
+Menschen-Entscheidung.
+
+Zwei Sachen wären davon unabhängig anzufassen, weil sie Wächter betreffen
+und nicht Labels: das Label-Audit sollte den Nachlauf ausschließen, sonst
+meldet es dieselbe Aufnahme jede Nacht ohne Grund. Und Split-Screen
+gehört als eigener Fall benannt, bevor jemand Let's Dance für ein
+Modellproblem hält.

@@ -4561,3 +4561,70 @@ Acht Tests in `scripts/test_nachlauf_maske.py`, davon drei strukturelle:
 sie prüfen im Quelltext, dass `hole` die Maske nicht benutzt, dass der
 Phantom-Zähler voll bleibt und dass die Meldung an `phan_flag` hängt. Ein
 Rückfall wirft dort keine Ausnahme, er bringt nur den Fehlalarm zurück.
+
+### Nachtrag 2026-09-07 (zehnter Durchgang) — KORREKTUR: es waren nicht 17, es waren 9
+
+Simon hat alle neun Aufnahmen durchgesehen und gesagt: „ich habe alle
+Folgen vollständig reviewed, da fehlen keine Blöcke." Die Gegenprobe gibt
+ihm recht, und sie deckt zwei Fehler in meiner Sichtung auf.
+
+**Fehler 1: eine kaputte Zeitachse, meine Schuld.** Für
+`dvr-nick-1778860200` (SpongeBob) gibt es keine Merkmalsdatei mehr; die
+Sonde rechnete mit **1748 s**, während Aufnahme, Signal-Dump und
+`.ts`-Datei übereinstimmend **1536 s** sagen. Die Aufnahme wurde
+zwischenzeitlich neu geholt und ist kürzer geworden, die alten Merkmale
+lagen noch daneben. Damit hielt die Sonde alte Labels gegen neue
+Kopf-Ausgabe — genau die Klasse aus `frames_tragen_erwartete_zeit`. Alle
+vier SpongeBob-Funde sind **ungültig**. Die Sonde prüfte nie, ob
+Merkmalsachse und Dump-Achse dieselbe Länge haben. Betroffen ist genau
+diese eine von 99 Aufnahmen.
+
+**Fehler 2: eine Konvention, die ich nicht kannte.** Die vier übrigen
+offenen Stellen liegen ausnahmslos **an den Rändern der Aufnahme**:
+
+| Aufnahme | Stelle | Lage |
+|---|---|---|
+| Davina & Shania | 0–60 s | die ersten 60 Sekunden |
+| Galileo 13.05. | 3987–4164 s | bis 1 s vor Schluss |
+| Galileo 14.05. | 3992–4063 s | im Endblock bis 4196 s |
+| GZSZ | 2067–2100 s | bis 1 s vor Schluss |
+
+Bilder geprüft: Davina beginnt mit „NEUE FOLGE"-Trailer, RTLZWEI-Ident
+und Rossmann-Spot; Galileo 14.05. zeigt taff-Vorschau, zweimal Jever und
+einen Trailer; GZSZ zeigt „Undercover Boss". Alles Werbung nach der
+Konvention des Projekts — aber alles **vor dem Anfang oder nach dem Ende
+der Sendung**.
+
+Und genau das ist der Punkt: **wer eine Folge reviewt, markiert die
+Werbepausen IN der Sendung. Was davor und danach liegt, muss man nicht
+überspringen, weil man dort ohnehin nicht zusieht.** Die Labels sind
+nicht unvollständig, sie folgen einer anderen Frage als das Training.
+
+#### Die ehrliche Bilanz der 26 Läufe
+
+| Kategorie | Läufe |
+|---|---|
+| echte Labelfehler | **9** |
+| Konvention: Rand der Aufnahme | 4 |
+| Konvention: Nachlauf | 2 |
+| Konvention: Split-Screen-Werbung | 7 |
+| ungültig (kaputte Zeitachse) | 4 |
+
+Nicht 17 von 26, sondern **9 von 26**. Und Simon hat **genau diese neun**
+korrigiert: die sechs zu breiten Blöcke und die drei verpassten
+Werbeblöcke MITTEN in der Sendung. Alles, was offen blieb, ist Konvention
+oder mein Fehler.
+
+#### Was daraus folgt — und was nicht
+
+Die Kette aus dem siebten Durchgang bleibt bestehen: das Modell irrt auf
+train dreimal so oft wie auf test, und die langen Fehlerläufe liegen
+ausschließlich dort. Aber der Grund ist nicht „schlampige Labels". Er ist
+**ein Konventionsunterschied**: der Review beantwortet „was muss der
+Spieler überspringen", das Training liest die Antwort als „was ist
+Werbung". An den Rändern und bei Split-Screen fallen die beiden
+auseinander.
+
+Das ist keine Label-Aufgabe mehr, sondern eine Trainings-Aufgabe: die
+Ränder einer Aufnahme dürfen nicht als „Sendung" ins Training gehen, nur
+weil dort kein Block steht. Ob das heute schon so ist, ist ungeprüft.

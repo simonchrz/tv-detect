@@ -3774,3 +3774,49 @@ so nicht zeigen — nicht, weil die Agenten schlecht wären (sie waren
 abtasten, in dem das Modell überhaupt noch Fehler macht. Weg 3 (ein
 kleines Budget echter Blicke, nur für den Maßstab) ist von Simon
 grundsätzlich bejaht; konkrete Form steht aus.
+
+### 2026-09-07 — Der Auftrag war zweideutig, und erst ein Modellwechsel hat es gezeigt
+
+Beim Ausbau der Agenten-Kanten (anonymisierte Bilder, damit der Agent die
+Modellkante nicht sieht — `scripts/kanten-anonym.py`) sind zwei Fehler
+aufgefallen, beide meine.
+
+**1. `folgesendung` war zweideutig formuliert.** Der Hinweis lautete *„eine
+ANDERE Sendung als die aufgezeichnete"*. Darunter fällt für einen Leser
+auch ein **Trailer** auf eine andere Sendung. Gemeint war der Fall, für den
+die Kategorie 2026-08 überhaupt eingeführt wurde: die Folgesendung **läuft
+bereits** (Abspann-Squeeze). Da `folgesendung` → Sendung zählt und
+`programmvorschau` → Werbung, macht die Verwechslung aus Werbeblock-Bildern
+Sendung und **schrumpft Blöcke genau an den Kanten**, die gemessen werden
+sollen. Korrigiert in allen drei Auftraggebern.
+
+**⚠️ Der Text war die ganze Zeit falsch — Fable hat ihn stillschweigend
+richtig gelesen.** Sichtbar wurde er erst, als aus Kostengründen Haiku
+eingesetzt wurde: `folgesendung` 23×, 8×, 6×, 1× gegen 0× und 0× bei Fable,
+und Haiku beschrieb sie selbst als „Trailer für andere Sendungen". Ein
+Auftrag, den nur ein starkes Modell richtig versteht, ist ein
+unterspezifizierter Auftrag — das Modell hat den Fehler bloß versteckt.
+
+**2. Modell-Eichung: dieselben 136 Bilder, drei Modelle.** Fable als
+Vergleich (nicht als Wahrheit — es ist nur das Modell, mit dem die
+validierte Runde vom 06-09 lief):
+
+| | Kategorie identisch | Werbung/Sendung identisch |
+|---|---|---|
+| Haiku | 70 % | **89 %** |
+| Sonnet | 98 % | **99 %** |
+
+Die zweite Spalte entscheidet: `kante_aus_folge` interessiert nur Werbung
+oder Sendung. Haikus 11 % Abweichung sind für Kantenableitung zu viel — ein
+falsches Bild am Übergang verschiebt die Kante oder lässt sie durchfallen,
+und die Abweichung ist **gerichtet** (7× `programmvorschau →
+sendungsinhalt`, also Werbung zu Sendung). Sonnets zwei Abweichungen sind
+beide Zurückhaltung (`→ unklar`, `→ programmvorschau`), keine Umdeutung.
+
+**Konsequenz:** Sonnet für diese Aufgabe, Fable nicht nötig, Haiku nicht
+tauglich. Und: **vor jedem Modellwechsel eine Eichung auf denselben
+Bildern.** Sie kostet zwei Läufe und hat hier beide Fehler aufgedeckt.
+
+**3. Dimensionierung.** 20 Agenten × ~85 Bilder gleichzeitig haben das
+Sitzungslimit gesprengt: 2 von 20 kamen durch, 18 brachen ab. Chargen von
+fünf.

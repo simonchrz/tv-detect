@@ -4628,3 +4628,60 @@ auseinander.
 Das ist keine Label-Aufgabe mehr, sondern eine Trainings-Aufgabe: die
 Ränder einer Aufnahme dürfen nicht als „Sendung" ins Training gehen, nur
 weil dort kein Block steht. Ob das heute schon so ist, ist ungeprüft.
+
+### Nachtrag 2026-09-07 (elfter Durchgang) — geprüft: die Lücke ist echt, aber klein, und ich hatte überzogen
+
+Frage: behandelt das Training die Ränder einer Aufnahme besonders?
+
+**Nein.** `labels_for` (train-head.py:1812) setzt 1 innerhalb eines
+Blocks und 0 überall sonst. Eine `frame_mask` gibt es nur für den
+Pseudo-Label- und den Bootstrap-Pfad; im Normalfall steht dort `None`.
+Alles außerhalb eines Blocks wird als Sendung trainiert, Rand wie Mitte.
+
+**Aber der Betrag ist klein.** Gemessen an 753 archivierten Aufnahmen mit
+Bild-Ankern:
+
+| | Zeit | Aufnahmen |
+|---|---|---|
+| Werbung am Aufnahmerand, als Sendung trainiert | 0.9 h | 100 |
+| Folgesendung im Endblock, als Werbung trainiert | 0.9 h | 12 |
+| Endblock mit echter Werbung, korrekt gelabelt | 2.3 h | 42 |
+
+Zusammen rund 1.8 h falsch in einem Korpus von 628 h, also **ein Viertel
+Prozent**. Und von der Rand-Zahl ist etwa die Hälfte das, was die
+Anker-Präzision von 96.8 % ohnehin an Rauschen erwarten lässt.
+
+Bemerkenswert dabei: von 54 Endblöcken sind **42 echte Werbung** und nur
+12 die Folgesendung. Die Nachlauf-Konvention ist also seltener als der
+achte Durchgang nahelegte.
+
+#### Und eine Korrektur an meiner eigenen Statistik
+
+Im siebten Durchgang stand „das Modell irrt auf train 3.3-mal so oft wie
+auf test". Das war über **Sekunden** gerechnet, und die häufen sich in
+wenigen Aufnahmen — die scheinbare Sicherheit war aufgebläht. Je
+Aufnahme gerechnet:
+
+| Eimer | Aufnahmen | Median-Fehlerrate |
+|---|---|---|
+| train | 76 | 1.78 % |
+| test | 22 | 1.00 % |
+
+Rangsummentest über Aufnahmen: z = +2.04, **p = 0.041**. Der Unterschied
+ist real, aber schwach, und er ist ein Faktor 1.8 auf dem Median, nicht
+3.3.
+
+#### Was damit steht und was fällt
+
+**Fällt:** „Das Plateau ist mit Labels erklärt." Ein Viertel Prozent
+systematisch falsches Label erklärt kein Plateau. Der neunte Durchgang
+hat das zu weit getragen, dieser Durchgang nimmt es zurück.
+
+**Steht:** Modellkanten sind von Menschenkanten nicht zu unterscheiden
+(206 Blöcke, zwei Vorzeichentests). Die Fehler sitzen dort, wo die
+Repräsentation Werbung und Sendung übereinanderlegt (13 % der Sekunden
+tragen 45 % der Fehler, getrennt nach Klasse geprüft). Container-Signale
+tragen nichts.
+
+Damit zeigt der Tag am Ende doch wieder auf die **Repräsentation**, also
+auf Idee 4 und Idee 5, und nicht auf die Labels.

@@ -4877,3 +4877,59 @@ Das ist der eigentliche Ertrag des Tages: nicht ein besseres Modell,
 sondern die Gewissheit, wo keines zu holen ist. Sechs Ideen, drei
 registrierte Experimente, alle drei verfehlt — und am Ende ein Korpus von
 Aussagen, die man nicht mehr neu erraten muss.
+
+### Nachtrag 2026-09-07 (fünfzehnter Durchgang) — die offenen 11 % aufgelöst
+
+Letzter ungeklärter Posten des Budgets: Sekunden, in denen Modell und
+Label auseinanderliegen, kein Anker deckt und das Senderlogo zwischen
+0.3 und 0.7 steht, also nichts sagt.
+
+**91 % davon sind Flackern.** Nach Lauflänge:
+
+| Lauflänge | Läufe | Sekunden | Anteil |
+|---|---|---|---|
+| 1–4 s | 187 | 373 | 31 % |
+| 5–9 s | 41 | 267 | 22 % |
+| 10–19 s | 29 | 386 | 32 % |
+| 20–29 s | 3 | 79 | 7 % |
+| **ab 30 s** | **2** | **109** | **9 %** |
+
+Alles unter 30 s kann der HSMM-Dauer-Prior nicht zu einem Block machen —
+ein Werbeblock ist Minuten lang. Diese Sekunden kosten in der Produktion
+keinen IoU, sie tauchen nur in der Frame-Rechnung auf.
+
+**Die zwei langen Läufe sind echte Fehlalarme.** Beide in
+`dvr-rtl-1780078500` (Let's Dance), 55 s bei 4043 s und 54 s bei 7035 s.
+An Bildern geprüft: Paare auf dem Parkett, RTL-Logo mit „Live",
+Namensprojektion „Joel & Malika" auf dem Boden. Eindeutig Sendung, das
+Modell sagt Werbung (NN 0.52, knapp über der Schwelle).
+
+Die Signatur ist bei beiden dieselbe: **dunkles Studio, dramatisches
+Scheinwerferlicht, weite Totale.** Das sieht aus wie hochwertig
+produzierte Werbung, und das Logo ist auf dem dunklen, wechselnden
+Hintergrund nur halb erkannt (0.42). Genau die Verwechslung, die die
+Backbone-Sonde als Klasse beschrieben hat.
+
+#### Das Budget, endgültig
+
+| Posten | Anteil | Status |
+|---|---|---|
+| Label gegen Evidenz | 39 % | Mess-Problem (O21) |
+| Kante | 31 % | auf Menschenniveau (Weg 2) |
+| Dekoder | 14 % | Deckel 0.001 (Orakel) |
+| Flackern unter 30 s | ~9 % | wird vom HSMM verschluckt |
+| **NN, nachweisbar** | **~7 %** | **das einzige offene Feld** |
+
+**Alle Posten sind zugeordnet.** Der adressierbare NN-Fehler sind rund
+430 Sekunden in 98 Aufnahmen, und der Orakel-Lauf deckelt den Gewinn bei
+**0.030 IoU**.
+
+#### Let's Dance ist der Sonderfall, den man einzeln behandeln müsste
+
+Eine Aufnahme dominiert jede verbliebene Kategorie: 7 der 26 langen
+Fehlerläufe (Split-Screen), 36 % der Verwechslungsfehler der Sonde, und
+jetzt beide langen Fehlalarme. Ursachen bekannt und verschieden:
+verstecktes Logo während der Show, Split-Screen-Werbung, dunkle Bühne.
+Wer am NN arbeiten will, arbeitet zuerst an dieser Sendung — oder nimmt
+sie bewusst heraus und weiß dann, dass der Rest sauberer ist, als jede
+Gesamtzahl aussieht.

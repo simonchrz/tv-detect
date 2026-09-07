@@ -425,30 +425,42 @@ def anker(args):
 
     ZWEI SCHWELLEN, UND DIE ERSTE IST DIE WICHTIGE
     -----------------------------------------------
-    Der Score eines Laufs traegt mehr als die Titelzahl. Gemessen am
-    prosieben-Index gegen die Labels von 137 Aufnahmen, die
-    `label_herkunft.py` als MENSCHLICH ausweist (nicht gegen die
-    auto-Bloecke -- sonst misst man das Modell an sich selbst):
+    Der Score eines Laufs traegt mehr als die Titelzahl. Geeicht mit
+    --eichen gegen 137 Aufnahmen, die `label_herkunft.py` als MENSCHLICH
+    ausweist (nicht gegen die auto-Bloecke -- sonst misst man das
+    Verfahren am Modell statt an der Sendewirklichkeit):
 
-        Score >=      in Block   ausserhalb   Praezision
-          0.75           53720       522115        9.3 %
-          0.85           24991        17924       58.2 %
-          0.88           17087         6023       73.9 %
-          0.90           12248         3492       77.8 %
+        Score  Dauer  Titel   Praezision   Deckung
+         0.85     16      3       92.3 %    72.0 %
+         0.85     16      5       96.2 %    62.6 %
+         0.88     16      2     **96.8 %    73.8 %**
+         0.88     16      3       97.6 %    66.1 %
+         0.90     16      2       97.9 %    67.7 %
 
-    Erst die Kombination traegt:
+    Voreinstellung ist deshalb Score 0.88, Dauer 16 s, zwei fremde Titel:
+    das schlaegt die vorige Einstellung (0.85 / 3) auf BEIDEN Achsen.
 
-        Score  fremde Titel   Sekunden   Praezision   Deckung
-         0.85       >= 1         28216       71.2 %     21.3 %
-         0.85       >= 2         19856       86.9 %     18.3 %
-         0.85       >= 3         15708     **94.5 %**   15.8 %
-         0.88       >= 2         16780       94.6 %     16.9 %
-         0.90       >= 5          6380       92.2 %      6.2 %
+    DIE DAUER IST DER FALSCHE HEBEL — UND ZWAR ANDERSHERUM ALS ERWARTET
+    -------------------------------------------------------------------
+    Die naheliegende Vermutung war, dass ein echter Spot-Wiederholer kurz
+    und bildgenau ist und eine Stilaehnlichkeit lose, also durch eine
+    hoehere Mindestdauer wegfaellt. Das Gegenteil stimmt. Bei Score 0.85:
 
-    Voreinstellung ist deshalb Score 0.85 und drei fremde Titel. Deckung
-    ist bei einem Anker die falsche Sorge -- er muss RICHTIG sein, nicht
-    vollstaendig; das Modell findet die Werbung ohnehin, der Anker sagt
-    ihm, wo sie GENAU anfaengt.
+        Dauer  Titel   Praezision   Deckung
+           16      3       92.3 %    72.0 %
+           24      3       94.2 %    51.6 %
+           32      3       90.4 %    18.7 %
+           40      3       79.7 %     3.8 %
+
+    Ab 32 s FAELLT die Praezision. Die Stilverwechslungen sind die LANGEN
+    Laeufe: eine ganze Szene aehnlich aussehender Actionfilm-Bilder haelt
+    minutenlang durch, ein Werbespot ist nach 30 s vorbei. Wer die
+    Mindestdauer hochdreht, waehlt den Fehler aus.
+
+    Die beiden Haelften der Eichmenge stimmen ueberein (96.4 % / 73.1 %
+    gegen 97.2 % / 74.4 %), die Zahlen sind also kein Anpassungsartefakt.
+    Die WAHL der Einstellung fiel allerdings mit Blick auf alle 137
+    Aufnahmen; sie ist Eichung, kein blinder Test.
 
     WORAN DAS VERFAHREN SCHEITERT
     ------------------------------
@@ -644,6 +656,127 @@ def pruefen(args):
     return 0
 
 
+# --------------------------------------------------------------- Stufe 6
+def menschlich_gelabelt(snapshot=SNAPSHOT):
+    """uuids, deren ads_user.json nachweislich von einem Menschen stammt.
+
+    Die EINE Definition steht in label_herkunft.py und wird hier geladen,
+    nicht nachgebaut: eine Regel in zwei Kopien ist zwei Regeln, sobald
+    eine angefasst wird.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "lh", Path(__file__).resolve().parent / "label_herkunft.py")
+    lh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lh)
+    aus = {}
+    for d in sorted(Path(snapshot).glob("_rec_*")) if Path(snapshot).is_dir() else []:
+        f = d / "ads_user.json"
+        if not f.is_file():
+            continue
+        try:
+            roh = json.loads(f.read_text())
+        except Exception:
+            continue
+        if lh.mensch_aus_markern(roh) is not True:
+            continue
+        bl = [(float(a), float(b)) for a, b in (roh.get("ads") or [])
+              if float(b) > float(a)]
+        if bl:
+            aus[d.name[5:]] = bl
+    return aus
+
+
+def eichen(args):
+    """Praezision und Deckung gegen MENSCHENLABEL, ueber ein Gitter.
+
+    Warum gegen Menschenlabel und nicht gegen die auto-Bloecke: ein
+    maschinelles Label ist die frueherere Ausgabe desselben Dekoders.
+    Wer dagegen eicht, eicht das Verfahren auf das Modell, nicht auf die
+    Sendewirklichkeit -- und 113 der 256 reviewten Aufnahmen im Snapshot
+    sind maschinell (which_merged_ist_kein_mensch).
+
+    Praezision = Anteil der belegten Sekunden, die im Werbeblock liegen.
+    Deckung    = Anteil aller Werbesekunden, die belegt sind.
+    """
+    import collections
+    kopf("Eichen gegen Menschenlabel")
+    ub = menschlich_gelabelt()
+    meta = metadaten()
+    # Geeicht wird auf einer Haelfte, berichtet auf der anderen. Ohne das
+    # waeren die Zahlen in-sample: dieselben 137 Aufnahmen haben die
+    # Schwelle gewaehlt, die dann an ihnen gut aussieht.
+    if args.haelfte is not None:
+        import hashlib
+        ub = {u: v for u, v in ub.items()
+              if int(hashlib.sha1(u.encode()).hexdigest(), 16) % 2 == args.haelfte}
+        print(f"Haelfte {args.haelfte}: {len(ub)} von den menschlich gelabelten Aufnahmen")
+    else:
+        print(f"{len(ub)} menschlich gelabelte Aufnahmen im Snapshot (ALLE, in-sample)")
+
+    def titel(u):
+        return meta.get(u, ("", ""))[0]
+
+    schritte = sorted({args.min_dauer, 16, 20, 24, 32, 40})
+    print(f"{'Score':>6}{'Dauer':>7}{'Titel':>7}{'Sekunden':>10}"
+          f"{'Praezision':>12}{'Deckung':>10}")
+    beste = None
+    for md in schritte:
+        uuids, ra, rb, a_s, a_e, off = lade_laeufe(args.name, args.min_score, md)
+        tid = {}
+        for u in uuids:
+            t = titel(u)
+            if t:
+                tid.setdefault(t, len(tid))
+        tvon = np.array([tid.get(titel(u), -1) for u in uuids], np.int32)
+        imsatz = np.array([u in ub for u in uuids])
+        tot = sum(sum(int(b) - int(a) for a, b in ub[u])
+                  for u in ub if u in set(uuids))
+        sek = collections.defaultdict(lambda: collections.defaultdict(set))
+        for seite in (0, 1):
+            eig, part = (ra, rb) if seite == 0 else (rb, ra)
+            st = a_s if seite == 0 else a_s + off
+            en = a_e if seite == 0 else a_e + off
+            tp = tvon[part]
+            gut = (tp >= 0) & imsatz[eig]
+            for k in np.flatnonzero(gut):
+                d = sek[uuids[eig[k]]]
+                t_ = int(tp[k])
+                for t in range(int(st[k]), int(en[k])):
+                    d[t].add(t_)
+        for mt in sorted({args.min_titel, 2, 3, 5}):
+            tp_ = fp_ = 0
+            for u, tm in sek.items():
+                e_ = tid.get(titel(u), -1)
+                bl = ub[u]
+                for t, ts in tm.items():
+                    if len(ts - {e_}) >= mt:
+                        if any(a <= t < b for a, b in bl):
+                            tp_ += 1
+                        else:
+                            fp_ += 1
+            n = tp_ + fp_
+            pr = 100 * tp_ / max(n, 1)
+            dk = 100 * tp_ / max(tot, 1)
+            # Nur Konfigurationen mit brauchbarer Deckung kommen fuer die
+            # Empfehlung infrage. Ohne diese Schranke gewinnt immer die
+            # schaerfste Einstellung mit 1 % Deckung -- formal die hoechste
+            # Praezision, praktisch kein Anker.
+            mark = ""
+            if n and dk >= args.deckung_mindestens and (beste is None or pr > beste[0]):
+                beste = (pr, dk, args.min_score, md, mt)
+                mark = "  <-"
+            print(f"{args.min_score:>6.2f}{md:>7}{mt:>7}{n:>10}"
+                  f"{pr:>11.1f}%{dk:>9.1f}%{mark}", flush=True)
+    if beste:
+        print(f"\n  beste Praezision bei mindestens {args.deckung_mindestens:.0f}% Deckung: "
+              f"Score {beste[2]}, Dauer {beste[3]}s, Titel {beste[4]} "
+              f"-> {beste[0]:.1f}% bei {beste[1]:.1f}% Deckung")
+    else:
+        print(f"\n  keine Konfiguration erreicht {args.deckung_mindestens:.0f}% Deckung")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -654,14 +787,19 @@ def main():
     ap.add_argument("--suchen", action="store_true")
     ap.add_argument("--anker", action="store_true")
     ap.add_argument("--pruefen", action="store_true")
-    ap.add_argument("--min-titel", type=int, default=3, dest="min_titel")
+    ap.add_argument("--eichen", action="store_true")
+    ap.add_argument("--haelfte", type=int, choices=[0, 1],
+                    help="nur diese Haelfte der Menschenlabel (sha1(uuid) mod 2)")
+    ap.add_argument("--deckung-mindestens", type=float, default=50.0,
+                    dest="deckung_mindestens")
+    ap.add_argument("--min-titel", type=int, default=2, dest="min_titel")
     ap.add_argument("--min-anker", type=int, default=8, dest="min_anker")
     ap.add_argument("--max-anker", type=int, default=300, dest="max_anker")
     ap.add_argument("--ersatztitel", action="store_true",
                     help="Aufnahmen ohne Titel als eigener Titel zaehlen, "
                          "aber nur gegenueber fremden Sendern")
     ap.add_argument("--audio-anker", default="/tmp/anchors", dest="audio_anker")
-    ap.add_argument("--min-score", type=float, default=0.85, dest="min_score")
+    ap.add_argument("--min-score", type=float, default=0.88, dest="min_score")
     ap.add_argument("--min-dauer", type=int, default=16, dest="min_dauer")
     ap.add_argument("--schwelle", type=float, default=0.72)
     ap.add_argument("--k", type=int, default=32)
@@ -677,6 +815,8 @@ def main():
         return anker(a)
     if a.pruefen:
         return pruefen(a)
+    if a.eichen:
+        return eichen(a)
     ap.print_help()
     return 1
 

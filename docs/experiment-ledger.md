@@ -4215,3 +4215,59 @@ damit im Blockinneren sitzen. Die Audio-Anker verhalten sich wie
 beschrieben (acht außen, eine innen), weil sie kürzer sind und näher am
 Rand. Der Kommentar ist korrigiert, die ursprüngliche Begründung gilt nur
 für Anker, deren Rand außerhalb liegt.
+
+### Nachtrag 2026-09-07 (vierter Durchgang) — die Dauer war der falsche Hebel, und zwar andersherum
+
+Die Vermutung war: ein echter Spot-Wiederholer ist kurz und bildgenau,
+eine Stilähnlichkeit ist lose, also fällt sie durch eine höhere
+Mindestdauer weg. **Das Gegenteil stimmt.** Bei Score 0.85:
+
+| Dauer | Titel | Präzision | Deckung |
+|---|---|---|---|
+| 16 s | 3 | 92.3 % | 72.0 % |
+| 24 s | 3 | 94.2 % | 51.6 % |
+| 32 s | 3 | 90.4 % | 18.7 % |
+| 40 s | 3 | 79.7 % | 3.8 % |
+
+Ab 32 Sekunden **fällt** die Präzision. Die Stilverwechslungen sind die
+LANGEN Läufe: eine Szene ähnlich aussehender Actionfilm-Bilder hält
+minutenlang durch, ein Werbespot ist nach 30 Sekunden vorbei. Wer die
+Mindestdauer hochdreht, wählt den Fehler aus.
+
+**Der Hebel war wieder der Score.** Neue Voreinstellung 0.88 / 16 s / 2
+fremde Titel, und die schlägt die alte auf beiden Achsen:
+
+| Einstellung | Präzision | Deckung |
+|---|---|---|
+| 0.85 / 16 / 3 (alt) | 92.3 % | 72.0 % |
+| **0.88 / 16 / 2 (neu)** | **96.8 %** | **73.8 %** |
+| 0.90 / 16 / 2 | 97.9 % | 67.7 % |
+
+Die beiden Hälften der Eichmenge stimmen überein (96.4 % / 73.1 % gegen
+97.2 % / 74.4 %), die Zahlen sind also kein Anpassungsartefakt. Die WAHL
+fiel allerdings mit Blick auf alle 137 Aufnahmen; das ist Eichung, kein
+blinder Test, und steht so auch im Code.
+
+Die Eichung ist jetzt eine Stufe des Werkzeugs (`--eichen`), nachdem sie
+viermal von Hand gerechnet wurde. Sie misst gegen MENSCHENLABEL, nie
+gegen `auto`, und `--haelfte` trennt Eich- von Berichtsmenge.
+
+**Wirkung auf die Anker:**
+
+| | vorher (0.85/3) | jetzt (0.88/2) |
+|---|---|---|
+| Anker | 9023 in 978 Aufnahmen | 8309 in 966 |
+| ganz im Modellblock | 78.9 % | **87.0 %** |
+| ganz außerhalb | 14.7 % | **5.2 %** |
+| ungedeckte Ankerzeit | 228 min | **95 min** |
+| Audio-Anker wiedergefunden | 77.5 % | 78.1 % |
+
+**Was die ungedeckten Anker NICHT sind.** Die Rangliste der ungedeckten
+Ankerzeit wird von Filmen angeführt, und die treffen einander: Batman v
+Superman passt auf Predator, Black Adam, Batman Begins und Moonfall.
+Dunkle Actionfilme sehen sich bei 224 × 224 ähnlich. Das ist dieselbe
+Stilverwechslung wie bei Simpsons/Futurama, nur ein Genre weiter, und
+kein Fund. Eine Ausnahme bleibt offen: `dvr-rtl-1779473700` (Let's
+Dance), dessen Partner GZSZ und Unter uns sind — RTL-Trailer in
+Werbeblöcken wären per Konvention Werbung, und Let's Dance ist der
+bekannte Fall mit dem versteckten Logo.

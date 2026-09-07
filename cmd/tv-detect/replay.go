@@ -47,12 +47,15 @@ type signalsDump struct {
 	// deshalb steht die Reichweite in OCRFenster daneben.
 	OCRFunde   []signals.OCRFund `json:"ocr_funde,omitempty"`
 	OCRFenster float64           `json:"ocr_fenster_s,omitempty"`
+	// Bekannte Werbespots (tv-recorder cluster-anchored), damit ein Replay
+	// die Spot-Evidenz ohne den Pi hat. Leer in aelteren Dumps -> kein Bonus.
+	SpotAnchors []signals.SpotAnchor `json:"spot_anchors,omitempty"`
 }
 
 func writeSignalsJSON(path string, res *pipeline.Result, silences []signals.SilenceEvent,
-	ocr []signals.OCRFund, ocrFenster float64) error {
+	ocr []signals.OCRFund, ocrFenster float64, anker []signals.SpotAnchor) error {
 	d := signalsDump{
-		OCRFunde: ocr, OCRFenster: ocrFenster,
+		OCRFunde: ocr, OCRFenster: ocrFenster, SpotAnchors: anker,
 		FPS: res.FPS, FrameCount: res.FrameCount,
 		LogoConfs: res.LogoConfs, NNConfs: res.NNConfs,
 		BumperConfs: res.BumperConfs, BumperStartConfs: res.BumperStartConfs,
@@ -106,6 +109,19 @@ func loadReplayNNCSV(path string, frameCount int) ([]float64, error) {
 // signals, optionally swap in a fresh nn_confs CSV (a different
 // classifier candidate scored against the SAME cached decode), form
 // blocks, and print via the normal --output path. No ffmpeg involved.
+// optsMitAnkern traegt die Spot-Anker aus dem Dump in die Opts nach, wenn
+// --spot-anchors nicht ausdruecklich gesetzt war (dann gewinnt die
+// Kommandozeile). Fuer JEDEN Replay-Pfad dieselbe Regel -- runReplay,
+// dessen Zweitmeinung und anreicherOCR -- sonst formt die OCR-Anreicherung
+// andere Bloecke als das Produktions-Replay, und zwar still.
+func optsMitAnkern(buildOpts func(float64) blocks.Opts, anker []signals.SpotAnchor, fps float64) blocks.Opts {
+	o := buildOpts(fps)
+	if len(o.SpotAnchors) == 0 {
+		o.SpotAnchors = anker
+	}
+	return o
+}
+
 func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output, decoder string, buildOpts func(fps float64) blocks.Opts) {
 	b, err := os.ReadFile(signalsPath)
 	if err != nil {
@@ -138,7 +154,7 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output, decoder string, b
 	// boundary_confs are dumped at emit time (small per-frame scalars, unlike
 	// the 1280-dim embeddings they're computed from), so the sweep can vary
 	// --boundary-snap against a fixed dump. nil in older dumps → snap no-op.
-	blockList := formBlocks(decoder, buildOpts(d.FPS),
+	blockList := formBlocks(decoder, optsMitAnkern(buildOpts, d.SpotAnchors, d.FPS),
 		d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs, speakerConfFrames,
 		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount)
 
@@ -146,7 +162,7 @@ func runReplay(signalsPath, nnCSVPath, speakerCSVPath, output, decoder string, b
 	// over cached dumps sees the identical number production would report.
 	agree := -1.0
 	{
-		if iou, n, ok := secondOpinion(decoder, buildOpts(d.FPS), blockList,
+		if iou, n, ok := secondOpinion(decoder, optsMitAnkern(buildOpts, d.SpotAnchors, d.FPS), blockList,
 			d.LogoConfs, nnConfs, d.BumperConfs, d.BumperStartConfs,
 			speakerConfFrames, d.BoundaryConfs, d.Blackframes, d.Silences,
 			d.SceneCuts, d.Letterbox, d.IFrames, d.FrameCount); ok {
@@ -228,7 +244,7 @@ func anreicherOCR(signalsPath, quelle, decoder string,
 		fmt.Fprintln(os.Stderr, "ocr-anreichern: keine Quelldatei als Argument")
 		return
 	}
-	bl := formBlocks(decoder, buildOpts(d.FPS),
+	bl := formBlocks(decoder, optsMitAnkern(buildOpts, d.SpotAnchors, d.FPS),
 		d.LogoConfs, d.NNConfs, d.BumperConfs, d.BumperStartConfs, nil,
 		d.BoundaryConfs, d.Blackframes, d.Silences, d.SceneCuts, d.Letterbox,
 		d.IFrames, d.FrameCount)

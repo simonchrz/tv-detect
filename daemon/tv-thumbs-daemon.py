@@ -2349,6 +2349,23 @@ def process_detect(uuid):
         boundary_threshold = cfg.get("boundary_threshold", -1)
         if boundary_threshold is not None and boundary_threshold >= 0:
             cmd += ["--boundary-threshold", str(boundary_threshold)]
+    # Spot-Fingerprints (2026-09-07): bekannte Werbespots als Uebergangs-
+    # Evidenz im HSMM. Die Anker werden IMMER mitgegeben, wenn es welche
+    # gibt -- bei spot_lp_w <= 0 ist der Dekoder byte-identisch, aber die
+    # Anker landen im Signal-Dump, damit ein Replay-A/B --spot-lp-w ohne
+    # den Pi durchspielen kann (dasselbe Muster wie boundary_confs).
+    # Ein Ausfall des Endpunkts darf den Detect nicht kippen.
+    try:
+        _anker = http_get_json(f"{GATEWAY}/api/internal/spot-fp/cluster-anchored/{uuid}")
+        if _anker and _anker.get("anchored"):
+            _anker_pfad = MODEL_CACHE / f"spot-anchors-{uuid}.json"
+            _anker_pfad.write_text(json.dumps(_anker))
+            cmd += ["--spot-anchors", str(_anker_pfad)]
+            spot_lp_w = cfg.get("spot_lp_w", -1)
+            if spot_lp_w is not None and spot_lp_w > 0:
+                cmd += ["--spot-lp-w", str(spot_lp_w)]
+    except Exception as _e:
+        print(f"  detect {uuid}: spot-anchors nicht geholt ({_e}) -- ohne", flush=True)
     # --with-audio when the deployed head was trained with audio
     # (gateway tells us via the cfg flag; based on head.bin size).
     # Adds ~5-10 s ffmpeg pass per recording but unlocks the audio

@@ -92,6 +92,8 @@ func main() {
 		ocrSchrittS = flag.Float64("ocr-step", 2, "Abstand zwischen zwei Abtastpunkten in Sekunden.")
 		ocrCrop     = flag.Float64("ocr-crop", 1, "Nur dieser Anteil vom UNTEREN Bildrand geht an Vision (1 = ganzes Bild, Vorgabe). Vision haengt an der Pixelmenge, ein Zuschnitt spart also — aber die Marker sitzen in ZWEI Regionen: Werbe-Kennzeichnung unten, Programmhinweis auch OBEN RECHTS. Gemessen: 0.5 verlor auf einer Aufnahme nichts und auf einer zweiten 15 von 63 Treffern. Nur setzen, wenn fuer den konkreten Sender nachgemessen.")
 
+		spotLPW         = flag.Float64("spot-lp-w", 0, "Gewicht der Spot-Fingerprint-Evidenz im HSMM-Dekoder: Log-Bonus je bekannter Spotgrenze (Anfang -> Blockstart, Ende -> Blockende), additiv zu den Bumpern. 0 = aus. Braucht --spot-anchors. Nur unter --decoder hsmm* wirksam.")
+		spotAnchors     = flag.String("spot-anchors", "", "JSON mit bekannten Werbespots dieser Aufnahme: die Antwort von tv-recorder GET /api/internal/spot-fp/cluster-anchored/{uuid} (Feld 'anchored') oder ein nacktes Array. Landet auch im --emit-signals-json, damit ein --replay-signals sie ohne den Pi hat.")
 		emitSignalsJSON = flag.String("emit-signals-json", "", "write every raw per-frame/event signal (logo/nn/bumper/black/silence/scenes/letterbox/iframes) Form() consumes to this path as one JSON blob. Decouples the expensive decode from cheap block-formation replay — see --replay-signals. Typical use: cache once per recording, then sweep --nn-gate/--nn-weight/--*-snap or swap in a different classifier's NN confidences without re-decoding.")
 		replaySignals   = flag.String("replay-signals", "", "skip decode/detection entirely; load raw signals from a JSON file previously written by --emit-signals-json and go straight to block formation + --output. No <input> argument needed in this mode.")
 		replayNNCSV     = flag.String("replay-nn-csv", "", "with --replay-signals: replace the embedded nn_confs with fresh per-frame confidences from this CSV (idx,time_s,nn_confidence — the same format --emit-nn-csv writes). Lets an external/candidate classifier be block-formed against the cached decode-signals without re-running ffmpeg.")
@@ -117,6 +119,14 @@ func main() {
 	// buildOpts assembles blocks.Opts from the CLI flags — shared by the
 	// normal decode path and --replay-signals so both apply identical
 	// formation thresholds.
+	// Spot-Anker einmal laden; buildOpts wird je Form-Aufruf neu gebaut und
+	// traegt sie mit. Fehlende Datei = harter Fehler, nicht stiller Verzicht.
+	if *spotAnchors != "" {
+		if err := ladeSpotAnker(*spotAnchors); err != nil {
+			fmt.Fprintln(os.Stderr, "spot-anchors:", err)
+			os.Exit(2)
+		}
+	}
 	buildOpts := func(fps float64) blocks.Opts {
 		return blocks.Opts{
 			FPS:               fps,
@@ -144,6 +154,8 @@ func main() {
 			BoundarySnapS:     *boundarySnapS,
 			BoundaryThreshold: *boundaryThresh,
 			SpeakerWeight:     *speakerWeight,
+			SpotLPW:           *spotLPW,
+			SpotAnchors:       spotAnchorList,
 		}
 	}
 
@@ -440,7 +452,7 @@ func main() {
 	// nn_confs from another classifier, without re-decoding.
 	if *emitSignalsJSON != "" {
 		if err := writeSignalsJSON(*emitSignalsJSON, res, sil.events,
-			ocrFunde, *ocrFensterS); err != nil {
+			ocrFunde, *ocrFensterS, spotAnchorList); err != nil {
 			fmt.Fprintln(os.Stderr, "emit-signals-json:", err)
 			os.Exit(1)
 		}

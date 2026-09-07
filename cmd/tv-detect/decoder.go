@@ -170,6 +170,14 @@ func formBlocks(decoder string, opts blocks.Opts,
 					opts.BumperThreshold, hsmmBumperW, len(sec))
 			}
 		}
+		// Spot-Fingerprints: bekannte Werbespots als Uebergangs-Evidenz,
+		// additiv zu den Bumpern an derselben Grenze. Aus, solange
+		// --spot-lp-w 0 ist (Vorgabe) -- dann bleibt der Dekoder byte-identisch.
+		if opts.SpotLPW > 0 && len(opts.SpotAnchors) > 0 {
+			sLP, eLP := blocks.SpotBoundaryLP(opts.SpotAnchors, opts.SpotLPW, len(sec))
+			ho.StartBoundaryLP = blocks.AddLP(ho.StartBoundaryLP, sLP)
+			ho.EndBoundaryLP = blocks.AddLP(ho.EndBoundaryLP, eLP)
+		}
 		bl := blocks.FormHSMM(sec, ho)
 		if decoder == decoderHSMMRefine || decoder == decoderHSMMFull {
 			bl = blocks.RefineHSMM(bl, opts.FPS, bumperConf, startBumperConf,

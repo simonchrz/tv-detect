@@ -192,7 +192,7 @@ def main():
     falsch = ((kf > 0.5).astype(np.int8) != lab)
     np.savez(Path(a.npz or "/tmp/backbone-sonde.npz"),
              gegen=g, label=lab, kopf=kf, falsch=falsch,
-             rec=rec[gilt], uuids=np.array(uuids, object))
+             rec=rec[gilt], sek=sek[gilt], uuids=np.array(uuids, object))
 
     kanten = [0.0, 0.05, 0.15, 0.30, 0.50, 0.75, 1.01]
 

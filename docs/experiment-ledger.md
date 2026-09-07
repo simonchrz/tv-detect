@@ -3956,3 +3956,191 @@ Warteschlange (§3a) leer — es gibt nichts zu registrieren, und nach dem
 Friedhof auch keinen Kandidaten, den ich vorschlagen dürfte. Der
 Golden-Schwanz (kabel-eins Lokal, drei Galileo) ist beharrlich und damit
 Label- oder Sendungssache, nicht Kopf — L2, nichts anzufassen.
+
+### Nachtrag 2026-09-07 (zweiter Durchgang) — Wiederholung als Label, drei Wege geprüft
+
+Ausgangsfrage war, ob es außer Kopf-Architektur und mehr Labels noch
+andere Wege gibt, das Modell zu verbessern. Drei wurden gebaut und
+gemessen. Einer trägt, einer beantwortet eine offene Frage, einer ist
+widerlegt.
+
+**Vorbefund, der die Lage ändert.** Die Anker-Deckung war mit „22 von 289
+Aufnahmen" verbucht (§ Spot-Anker). Das stimmt nicht mehr: von 290
+lebenden Aufnahmen haben **252 mindestens einen Anker**, zusammen 4386
+Anker in 976 Familien, 502 davon über mehrere Sender.
+
+*Eine Erwartung, die dabei fiel:* Senderübergreifende Wiederholung sah
+nach der härtesten Evidenz aus — wer auf ProSieben und VOX läuft, hat
+Sendezeit gekauft. Für die **Audio**-Anker stimmt das auch. Für die
+Bild-Anker aus Weg 1 nicht: senderübergreifend kam auf höchstens 71 %
+Präzision, senderintern auf 73 %. Beide zu schwach, und die Richtung war
+die falsche. Was trägt, ist der Score (siehe unten).
+
+#### Weg 1 — wiederholte Bildfolgen im Merkmals-Cache (`scripts/wiederholung.py`)
+
+Die Audio-Fingerprints haben zwei bauartbedingte Grenzen: `spot_extract.go`
+fährt ffmpeg **nur über die bestätigten Werbeblöcke**, ein Audio-Anker
+kann also nie außerhalb eines Blocks liegen; und die Extraktion braucht
+die Segmente auf dem Pi. Der Merkmals-Cache hat beides nicht — 1028
+Aufnahmen, eine Einbettung je Sekunde, über die **ganze** Aufnahme.
+
+*Der Sockel war das Problem.* Die Vektoren sind nicht-negativ, roher
+Cosinus liegt deshalb bei ~0.68 und trennt kaum: an einer bekannten
+20-s-Familie mit 10 Airings 7 von 9 getroffen, Abstand zum besten
+Fehltreffer im Median **+0.03**, zwei Fehlgriffe. Nach Abzug des globalen
+Mittelwerts **9 von 9**, alle auf die Sekunde, Abstand **+0.35**. Das
+Zentrieren ist die Bedingung, nicht der Feinschliff.
+
+*Gebaut:* Fenster-Deskriptor (8 s, Schritt 4), PCA auf 64 Dimensionen
+(62 % Varianz), Alle-gegen-Alle auf der GPU, Verkettung zu Läufen mit
+konstantem Versatz. Korpus: 938286 Deskriptoren → 336 Mio Paare → 23.2
+Mio Läufe in 682 s.
+
+*Zwei Sackgassen unterwegs, beide protokolliert:* Union-Find zu Familien
+kippt in eine Riesenkomponente (78619 von 79926 Vorkommen) — 374k Kanten
+auf 80k Knoten liegen weit über der Perkolationsschwelle. Die Einordnung
+läuft deshalb **lokal über die direkten Partner**. Und ein
+Ähnlichkeitsblock von 2048×938286 sind 7.7 GB; erst Kachelung über die
+Spalten plus `i<j` im Lauf machten aus 35 s je Block 0.2 s.
+
+*Der Unterscheider — zwei Schwellen, und die Titelzahl ist die
+schwächere.* Eine Wiederholung ist nicht automatisch Werbung: Vorspann
+und Abspann wiederholen sich über alle Folgen. Erster Ansatz war deshalb,
+nur zu zählen, in wie vielen **fremden Titeln** eine Sekunde ebenfalls
+lief. Das trägt für sich genommen nicht: gegen die Labels von 143
+Aufnahmen, die `label_herkunft.py` als menschlich ausweist, lag die
+Präzision bei jeder Schwelle zwischen 47 % und 76 %, mit einem Plateau
+bei 75 %.
+
+**Der Grund steht in den Fehlpaaren.** Die häufigsten Läufe außerhalb
+der Werbeblöcke sind Simpsons/Futurama, Simpsons/SpongeBob,
+South Park/Futurama — formal fremde Titel, aber flache 2D-Animation sieht
+bei 224×224 gleich aus. Dieselbe Klasse: „Ab ins Beet!" gegen „Die
+Beet-Brüder", gleiche Produktion, gleicher Garten. Diese Treffer liegen
+im **Median 400 s vom nächsten Blockrand** entfernt, also tief im
+Programm — es sind echte Fehler des Verfahrens, keine verpasste Werbung
+an der Kante.
+
+**Der Score des Laufs trennt sie, die Titelzahl nicht.** Gegen dieselben
+Menschenlabel:
+
+| Score ≥ | in Block | außerhalb | Präzision |
+|---|---|---|---|
+| 0.75 | 53720 | 522115 | 9.3 % |
+| 0.85 | 24991 | 17924 | 58.2 % |
+| 0.88 | 17087 | 6023 | 73.9 % |
+| 0.90 | 12248 | 3492 | 77.8 % |
+
+Erst die **Kombination** taugt als Anker:
+
+| Score | fremde Titel | Sekunden | Präzision | Deckung |
+|---|---|---|---|---|
+| 0.85 | ≥ 1 | 28216 | 71.2 % | 21.3 % |
+| 0.85 | ≥ 2 | 19856 | 86.9 % | 18.3 % |
+| **0.85** | **≥ 3** | **15708** | **94.5 %** | **15.8 %** |
+| 0.88 | ≥ 2 | 16780 | 94.6 % | 16.9 % |
+| 0.90 | ≥ 5 | 6380 | 92.2 % | 6.2 % |
+
+Voreinstellung ist Score 0.85 mit drei fremden Titeln. Deckung ist bei
+einem Anker die falsche Sorge — er muss richtig sein, nicht vollständig.
+
+Reine Serien-Elemente (nur der eigene Titel als Partner) liegen zu
+**2.1 %** in einem Werbeblock gegen 21.2 % Grundrate: der Titel-Abzug
+tut, was er soll, er reicht nur nicht allein. Gegenprobe gegen die
+unabhängig entstandenen Audio-Anker: **96.3 %** von ihnen liegen in einer
+gefundenen Wiederholung.
+
+#### Weg 2 — der label-freie Maßstab (`scripts/anker-mass.py`)
+
+*Als Trend gesättigt, als Wächter gut.* 3380 von 3421 senderübergreifenden
+Audio-Ankern liegen ganz in einem auto-Block (98.8 %). Das ist zum Teil
+Konstruktion (siehe oben) und taugt nicht als Fortschrittsbalken. Als
+Alarm taugt es: fällt der Wert, schneidet das Modell in bekannte Werbung.
+
+*Was der Maßstab dafür beantwortet.* Gepaart je Werbeblock, Modellkante
+gegen Menschenkante, gemessen am äußersten harten Anker — und **nur auf
+Aufnahmen, die `label_herkunft.py` als menschlich ausweist** (143 von 256
+im Snapshot; die Einschränkung ist nicht kosmetisch: ohne sie waren 205
+von 408 Paaren identisch, das Modell verglich sich mit sich selbst):
+
+| | Mensch | Modell | Modell weiter / enger / gleich | p |
+|---|---|---|---|---|
+| Startversatz | 40.1 s | 35.6 s | 84 / 80 / 42 | 0.815 |
+| Endversatz | 90.0 s | 85.8 s | 83 / 88 / 35 | 0.760 |
+
+206 Blöcke aus 135 Aufnahmen. **Kein systematischer Unterschied in
+irgendeine Richtung.** Damit ist die alte Vermutung „das Modell ist
+wahrscheinlich besser als seine Labels" zum ersten Mal gemessen statt
+geraten: an den Kanten ist es *so gut wie* der Mensch. Das Plateau bei
+Golden 0.96 liegt nicht an den Kanten des Modells.
+
+#### Weg 3 — Container-Signale: widerlegt
+
+85 Aufnahmen mit reviewten Labels, 311 echte Kanten gegen 1244
+Zufallszeitpunkte, alles aus den vorhandenen Signal-Dumps:
+
+| Signal | Kante ≤ 0.5 s | Zufall ≤ 0.5 s |
+|---|---|---|
+| I-Frame | 89.1 % | 89.5 % |
+| Szenenschnitt | **47.6 %** | 8.0 % |
+| Letterbox | 3.9 % | 0.8 % |
+| Schwarzbild | 1.3 % | 1.3 % |
+
+**I-Frames tragen nichts.** Der GOP-Takt steht je Sender fest bei 0.96 s
+oder 2.0 s und bricht am Playout-Schnitt nicht. Das widerlegt nebenbei
+den Kommentar an `IFrameSnapS` in `internal/blocks/blocks.go` („Real
+ad-inserts almost always align with encoder I-frames") — ein Snap auf ein
+0.96-s-Raster ist ein Snap auf Rauschen. Folgenlos, weil Produktion bare
+hsmm fährt und die Snap-Kette dort ohnehin tot ist. Die Audio-Kanalzahl
+wechselt ebenfalls nicht: RTL sendet durchgehend Stereo, andere Sender
+fahren mp2-Stereo und ac3-5.1 als **parallele** Ströme über die ganze
+Aufnahme. Nur Szenenschnitte tragen, und die füttern den Detektor bereits.
+
+#### Der Korpuslauf
+
+Mit den geeichten Schwellen über alle 1028 indizierten Aufnahmen:
+**9023 Anker in 978 Aufnahmen**, Median-Dauer 40 s, 191 Belege über
+300 s als „kein Spot, sondern stilverwandter Abschnitt" verworfen. Zum
+Vergleich: die Audio-Kette hat 4386 Anker in 252 Aufnahmen. **Vierfache
+Reichweite bei doppelter Ankerzahl** — und 720 dieser Aufnahmen sind vom
+Pi längst gelöscht, für sie kann es nie wieder einen Audio-Anker geben.
+
+Gegenprobe: **77.5 %** der unabhängigen Audio-Anker liegen in einem
+Bild-Anker. Von den Bild-Ankern, die sich gegen Modellblöcke halten
+lassen (262 Aufnahmen), liegen 78.9 % ganz im Block, 14.7 % ganz
+außerhalb, und 141 Blöcke schneiden in einen Anker hinein.
+
+Die Ablage der Läufe musste dafür von JSON auf ein Spalten-Array
+umgestellt werden: 23.2 Mio Läufe sind als JSON 3.2 GB und beim Einlesen
+ein Vielfaches davon, als `.npz` 650 MB.
+
+#### Was der Maßstab findet, wenn man ihn scharf stellt
+
+Am prosieben-Index liegen **85.1 %** der
+Bild-Anker ganz in einem Modellblock, 5.1 % ganz außerhalb. Übrig bleiben
+**48 Blöcke, die in einen Anker hineinschneiden** — genau die
+label-freien Kandidaten, für die das Ganze gebaut wurde. Beispiel
+`dvr-prosieben-1782662333`: Modell `[1034,1387]` und `[2356,2846]`, die
+Anker beginnen bei 1004 bzw. 2324. **Beide Blöcke starten rund 30 s nach
+der Anker-Evidenz**, in derselben Aufnahme, mit demselben Vorzeichen. Für
+diese Aufnahme gibt es weder Menschenlabel noch Signal-Dump, der Befund
+ist also ein Kandidat und kein Urteil — aber er ist ohne ein einziges
+Label entstanden, und das war der Punkt.
+
+#### Was NICHT getan wurde, absichtlich
+
+Die Bild-Anker sind **nirgends angeschlossen**. Nicht an den Daemon, nicht
+an den nächtlichen Durchgang, und vor allem nicht ans Training:
+`cluster-anchored` erzwingt dort heute `ad` mit 1.5-fachem Gewicht auf
+35557 Frames. Anker mit 94.5 % Präzision dort einzuspeisen hieße, 5.5 %
+falsche Labels zu erzeugen — L2, und der Korpus hat diese Sorte
+Vergiftung schon zweimal gesehen. Die Entscheidung gehört an einen
+Menschen, nicht in einen Tagesdurchgang.
+
+Der harmlosere Weg wäre der Dekoder statt das Training: `--spot-anchors`
+liest die Bild-Anker bereits unverändert (Go-Test
+`TestLadeSpotAnkerBildform`), und `SpotBoundaryLP` gibt nur einen
+Log-Bonus, den der Viterbi gegen Emission und Dauer-Prior abwägt — ein
+falscher Anker kostet dort viel weniger als ein falsches Label. Wirksam
+wird das ohnehin erst, wenn `spot_lp_w` in der Detect-Config über null
+steht; heute ist es aus, und der Dekoder bleibt byte-identisch.

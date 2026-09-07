@@ -4144,3 +4144,74 @@ Log-Bonus, den der Viterbi gegen Emission und Dauer-Prior abwägt — ein
 falscher Anker kostet dort viel weniger als ein falsches Label. Wirksam
 wird das ohnehin erst, wenn `spot_lp_w` in der Detect-Config über null
 steht; heute ist es aus, und der Dekoder bleibt byte-identisch.
+
+### Nachtrag 2026-09-07 (dritter Durchgang) — O19 verfehlt, und der Kommentar im Dekoder war falsch
+
+**Titel der 188 titellosen Aufnahmen: es gibt sie nicht mehr.** Geprüft
+wurden alle vier denkbaren Quellen. Trainings-Archiv: keine der 188 ist
+darin. DVR-Grid und `/api/dvr/schedule`: 433 uuids, null Überschneidung.
+Label-Backup `~/tv-labels-backup`: eine von 188, und die trägt nur
+`ads_user.json`. Whisper-Index auf dem Pi: eine von 188, weil
+`whisper.go:268` die Zeile zusammen mit der Aufnahme löscht. Ihre
+Merkmalsdatei ist alles, was von ihnen übrig ist.
+
+Statt zu raten wurde gemessen, was ein Ersatztitel kostet, gegen 137
+menschlich gelabelte Aufnahmen:
+
+| Variante | Sekunden | Präzision | Deckung |
+|---|---|---|---|
+| übersprungen (Voreinstellung) | 73476 | **92.3 %** | 72.0 % |
+| Ersatztitel immer | 82836 | 88.6 % | 78.0 % |
+| Ersatztitel nur bei fremdem Sender | 75860 | 91.5 % | 73.8 % |
+
+`--ersatztitel` gibt es jetzt als Schalter, aus. 1.8 Punkte Deckung sind
+0.8 Punkte Präzision nicht wert, solange Schwestersender Programm teilen
+und ein Ersatztitel dort doch dieselbe Serie treffen kann.
+
+*Nebenbei korrigiert:* die Kalibrierungszahlen im vorigen Eintrag stammten
+vom prosieben-Index. Am **Korpus**-Index liegt dieselbe Einstellung bei
+**92.3 % Präzision und 72.0 % Deckung** statt 94.5 % / 15.8 % — mehr
+Partner, dieselbe Schwelle.
+
+#### O19 — der A/B, den es nie gab
+
+`--spot-lp-w` war seit zwei Tagen gebaut und nie mit echten Ankern
+gemessen. Registriert in `docs/o19-spot-lp-preregistration.md`, **bevor
+ein Lauf gerechnet wurde**, und bewusst NICHT in `serien-abschluss.json`:
+hier wird nichts trainiert, das Modell ist eingefroren, variiert wird ein
+Dekoder-Parameter. Ein Wächter, der dafür jede Nacht fehlende Zeilen
+meldet, wäre genau der Fehler von gestern.
+
+**Der versiegelte Satz fiel aus.** Keine seiner 38 Aufnahmen hat ein
+menschliches Label neben Anker und Signal-Dump. Gegen ein maschinelles
+Label zu messen hieße, den Dekoder gegen seine eigene frühere Ausgabe zu
+halten. Genommen wurden die 98 Aufnahmen mit allen vier Bedingungen,
+geteilt nach `sha1(uuid)` in 47 Stimm- und 51 Prüfaufnahmen.
+
+**Ergebnis: NICHT ERFÜLLT.** Prüfsatz mit `audio w=0.5` (vom
+Gleichstands-Tiebreak vorgeschrieben): Median ΔIoU +0.0000 gegen die
+Schwelle +0.005. `spot_lp_w` bleibt 0.
+
+**Meine Regel war schlecht gebaut, und das wurde nicht repariert.** Der
+Median über alle Aufnahmen kann nicht über null steigen, weil sich die
+große Mehrheit gar nicht ändert — im besten Arm 9 von 47. Die Schwelle
+nachträglich auf „Median der geänderten" zu drehen wäre das Anpassen der
+Regel an die Zahl. Ein Nachfolger braucht eine eigene Registrierung auf
+eigenen Aufnahmen.
+
+**Was inhaltlich hängen bleibt, ist deutlicher als die Regel.** Bis
+Gewicht 2 verbessert der Bonus einzelne Aufnahmen und verschlechtert
+keine; ab Gewicht 4 überholt der Schaden den Nutzen, bei 8 ist er im
+Minus (`beide`: 14 besser, 17 schlechter). Ein Bonus, der stark genug
+ist, eine Kante zu ziehen, ist auch stark genug, sie an die falsche
+Stelle zu ziehen.
+
+**Und der Kommentar in `spot_lp.go` war falsch.** Dort stand, der Block
+werde „ausgedehnt, nie beschnitten". Ein ÜBERGANGS-Bonus an Sekunde t
+wirkt aus beiden Richtungen. Mit den Bild-Ankern wandern bei Gewicht 1
+eine Kante nach außen und **fünf nach innen**, bei Gewicht 2 zwei gegen
+neun — weil 78.9 % dieser Anker ganz im Block liegen und ihre Ränder
+damit im Blockinneren sitzen. Die Audio-Anker verhalten sich wie
+beschrieben (acht außen, eine innen), weil sie kürzer sind und näher am
+Rand. Der Kommentar ist korrigiert, die ursprüngliche Begründung gilt nur
+für Anker, deren Rand außerhalb liegt.

@@ -131,6 +131,27 @@ class Titelnormalisierung(unittest.TestCase):
                              f"{x!r} muss zu leerem Titel werden, nicht zu einem Schluessel")
 
 
+class Ersatztitel(unittest.TestCase):
+    """Ein Ersatztitel darf nur ueber Sendergrenzen hinweg zaehlen.
+    Zwei Aufnahmen desselben Senders koennen zwei Folgen derselben Serie
+    sein — dann waere der Vorspann ploetzlich ein fremder Titel."""
+
+    @staticmethod
+    def _gilt(ohne_titel_partner, slug_eig, slug_partner):
+        # Nachbau der Bedingung aus anker(): ~ohne_titel[part] | (slug!=slug)
+        return (not ohne_titel_partner) or (slug_eig != slug_partner)
+
+    def test_partner_mit_titel_zaehlt_immer(self):
+        self.assertTrue(self._gilt(False, "prosieben", "prosieben"))
+
+    def test_ersatztitel_gleicher_sender_zaehlt_nicht(self):
+        self.assertFalse(self._gilt(True, "prosieben", "prosieben"),
+                         "gleicher Sender ohne Titel koennte dieselbe Serie sein")
+
+    def test_ersatztitel_fremder_sender_zaehlt(self):
+        self.assertTrue(self._gilt(True, "prosieben", "vox"))
+
+
 class AnkerAusSekunden(unittest.TestCase):
     """Zusammenhaengende Sekunden werden zu Ankern; zu kurze fallen weg."""
 

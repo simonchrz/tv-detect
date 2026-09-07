@@ -26,9 +26,26 @@ import "github.com/simonchrz/tv-detect/internal/signals"
 // Start-Bonus am Spot-Anfang: ist die Emission davor schon "ad" (Ident,
 // Trailer -- per Konvention Werbung), passiert der Uebergang dort und der
 // Bonus greift nicht. War die NN zu SPAET (erster Spot sah aus wie
-// Sendung), zieht der Bonus den Uebergang auf den Spot-Anfang. Der Block
-// wird also ausgedehnt, nie beschnitten: ein bekannter Spot IST Werbung,
-// ueber das, was davor liegt, sagt er nichts. Symmetrisch fuer das Ende.
+// Sendung), zieht der Bonus den Uebergang auf den Spot-Anfang.
+//
+// ⚠️ KORRIGIERT 2026-09-07 (O19). Hier stand, der Block werde "ausgedehnt,
+// nie beschnitten". Das ist falsch. Ein UEBERGANGS-Bonus an Sekunde t
+// macht eine Grenze bei t attraktiver, gleich aus welcher Richtung sie
+// sonst gekommen waere -- er zieht also auch eine Kante nach INNEN, wenn
+// der Ankerrand innerhalb des Blocks liegt. Gemessen an 47 Aufnahmen
+// wandern mit den Bild-Ankern (scripts/wiederholung.py) bei Gewicht 1
+// eine Kante nach aussen und fuenf nach innen, bei Gewicht 2 zwei gegen
+// neun. Der Grund: 78.9 % dieser Anker liegen GANZ im Block, ihre Raender
+// sitzen im Blockinneren.
+//
+// Die urspruengliche Begruendung gilt nur fuer einen Anker, dessen Rand
+// AUSSERHALB des Blocks liegt. Die Audio-Anker sind kuerzer und sitzen
+// naeher am Blockrand, sie verhalten sich deshalb wie beschrieben
+// (Gewicht 1: acht nach aussen, eine nach innen).
+//
+// O19-Ergebnis: --spot-lp-w bleibt 0. Bis Gewicht 2 verbessert der Bonus
+// einzelne Aufnahmen und verschlechtert keine, ab Gewicht 4 ueberholt der
+// Schaden den Nutzen. Siehe docs/o19-spot-lp-preregistration.md.
 //
 // Das Gewicht ist je Anker konstant (w). Die Familiengroesse geht bewusst
 // nicht ein: ab der Mindestgroesse (tv-recorder: 3) ist ein Spot ein Spot.

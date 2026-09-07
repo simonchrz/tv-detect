@@ -1,6 +1,23 @@
 # O19 — Verbessern Spot-Anker als Übergangs-Evidenz die Blockkanten?
 (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-09-07 — REGEL NICHT ERFÜLLT.** Prüfsatz mit dem
+> vom Gleichstands-Tiebreak vorgeschriebenen Arm `audio w=0.5`: Median
+> ΔIoU **+0.0000** gegen die Schwelle +0.005, 1 besser, 0 schlechter. Die
+> vorab festgelegte Konsequenz gilt: **`spot_lp_w` bleibt 0.**
+>
+> **Die Regel war schlecht gebaut, und das wird hier nicht repariert.**
+> Der Median über ALLE Aufnahmen kann nicht über null steigen, weil die
+> weit überwiegende Mehrheit sich gar nicht ändert — im besten
+> Stimmsatz-Arm ändern sich 9 von 47. Der Median war die falsche
+> Statistik; das hätte vor dem Schreiben auffallen müssen. Die Regel
+> nachträglich auf „Median der GEÄNDERTEN" zu drehen hieße, die Schwelle
+> an die Zahl anzupassen, und dafür existiert diese Datei nicht. Ein
+> Nachfolger braucht eine eigene Registrierung auf eigenen Aufnahmen.
+>
+> Der inhaltliche Befund steht unten unter „Ergebnis" und ist deutlicher
+> als die Regel: die Bild-Anker ziehen Kanten nach INNEN.
+
 **Geschrieben 2026-09-07, bevor ein einziger A/B-Lauf gerechnet wurde.**
 Arme, Aufteilung und Schwelle stehen fest, bevor die erste Zahl existiert.
 
@@ -113,3 +130,72 @@ und damit näher an das Menschenlabel bei 839. Ein Übergangs-Bonus an
 Sekunde t zieht eine Grenze aus BEIDEN Richtungen an. Der A/B zählt
 deshalb mit, wie viele Kanten nach außen und wie viele nach innen wandern.
 Das ändert nichts an der Entscheidungsregel oben.
+
+
+---
+
+## Ergebnis (2026-09-07, nach dem Lauf eingetragen)
+
+### Stimmsatz, 47 Aufnahmen
+
+| Quelle | Gewicht | besser | schlechter | größter Verlust | Kanten außen/innen |
+|---|---|---|---|---|---|
+| audio | 0.5 | 5 | 0 | 0.000 | 5 / 1 |
+| audio | 1 | 6 | 0 | 0.000 | 8 / 1 |
+| audio | 2 | 7 | 0 | 0.001 | 10 / 2 |
+| audio | 4 | 8 | 5 | 0.066 | 11 / 8 |
+| audio | 8 | 9 | 9 | 0.066 | 12 / 15 |
+| bild | 0.5 | 3 | 0 | 0.000 | 1 / 4 |
+| bild | 1 | 4 | 0 | 0.000 | 1 / 5 |
+| bild | 2 | 6 | 2 | 0.003 | 2 / 9 |
+| bild | 4 | 11 | 4 | 0.011 | 9 / 13 |
+| bild | 8 | 12 | 15 | 0.040 | 15 / 26 |
+| beide | 1 | 9 | 0 | 0.000 | 9 / 5 |
+| beide | 2 | 12 | 2 | 0.003 | 12 / 10 |
+| beide | 4 | 14 | 8 | 0.066 | 18 / 19 |
+| beide | 8 | 14 | 17 | 0.066 | 23 / 32 |
+
+Alle Mediane exakt +0.0000. Der Tiebreak der Registrierung (kleinstes
+Gewicht, dann `audio`) führt auf **`audio w=0.5`**.
+
+### Prüfsatz, 51 Aufnahmen, einmal angefasst
+
+`audio w=0.5`: n=51, Median +0.0000, 1 besser, 0 schlechter, größter
+Einzelverlust 0.000, Kanten außen 0 / innen 1.
+
+| Bedingung | Ergebnis |
+|---|---|
+| Median ≥ +0.005 | **NEIN** |
+| besser ≥ 2× schlechter | JA |
+| kein Verlust > 0.10 | JA |
+
+**==> O19 NICHT ERFÜLLT. `spot_lp_w` bleibt 0.**
+
+### Was inhaltlich hängen bleibt
+
+**Der Mechanismus ist nicht wirkungslos, er ist wirkungsARM und kippt.**
+Bis Gewicht 2 verbessert er einzelne Aufnahmen und verschlechtert keine.
+Ab Gewicht 4 überholt der Schaden den Nutzen, bei 8 ist er im Minus
+(`beide`: 14 besser, 17 schlechter). Ein Anker-Bonus, der stark genug
+ist, um eine Kante zu ziehen, ist auch stark genug, um sie an die falsche
+Stelle zu ziehen.
+
+**Die Behauptung in `spot_lp.go` ist widerlegt.** Der Kommentar sagt, der
+Block werde „ausgedehnt, nie beschnitten". Die Bild-Anker tun genau das
+Gegenteil: bei Gewicht 1 wandern **1 Kante nach außen und 5 nach innen**,
+bei Gewicht 2 sind es 2 gegen 9. Der Grund ist keine Überraschung, wenn
+man das Deckungsmaß daneben legt: 78.9 % der Bild-Anker liegen **ganz
+innerhalb** eines Modellblocks, ihre Ränder sitzen also im Blockinneren,
+und ein Übergangs-Bonus dort zieht die Blockgrenze nach innen. Ein
+Übergangs-Bonus an Sekunde t wirkt aus BEIDEN Richtungen; die
+Begründung im Kommentar gilt nur für einen Anker, dessen Rand außerhalb
+liegt.
+
+Die Audio-Anker verhalten sich umgekehrt (bei Gewicht 1: 8 außen, 1
+innen), weil sie kürzer sind und näher an den Blockrändern sitzen.
+
+**Für einen Nachfolger** wäre daraus zu lernen: nicht der Median über
+alle Aufnahmen, sondern die Bilanz über die GEÄNDERTEN; und die Bild-Anker
+gehören, wenn überhaupt, nur mit ihrem äußersten Rand je Block in den
+Dekoder, nicht mit jedem inneren Spotrand. Beides braucht eine eigene
+Registrierung.

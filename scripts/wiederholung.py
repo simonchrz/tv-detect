@@ -477,12 +477,41 @@ def anker(args):
     def titel(u):
         return meta.get(u, ("", ""))[0]
 
+    # 188 der 1028 indizierten Aufnahmen haben keinen Titel mehr: sie
+    # stehen weder im Trainings-Archiv noch im DVR-Grid noch im
+    # Label-Backup, und der Whisper-Index loescht seine Zeile zusammen
+    # mit der Aufnahme (whisper.go:268). Ihre Merkmalsdatei ist alles,
+    # was von ihnen uebrig ist. Als PARTNER fallen sie damit aus.
+    #
+    # --ersatztitel gibt jeder von ihnen einen eigenen Ersatztitel, aber
+    # nur gegenueber Aufnahmen auf einem ANDEREN Sender. Zwei Aufnahmen
+    # desselben Senders koennen zwei Folgen derselben Serie sein, und
+    # dann waere der Vorspann ploetzlich "fremder Titel" -- genau der
+    # Fehler, den der Unterscheider verhindern soll. Gemessen gegen 137
+    # menschlich gelabelte Aufnahmen:
+    #
+    #   uebersprungen (Voreinstellung)   92.3 % Praezision, 72.0 % Deckung
+    #   Ersatztitel immer                88.6 %              78.0 %
+    #   Ersatztitel nur fremder Sender   91.5 %              73.8 %
+    #
+    # Die Option ist aus, weil 1.8 Punkte Deckung 0.8 Punkte Praezision
+    # nicht wert sind, solange Schwestersender (ProSieben/Sixx/kabel eins)
+    # Programm teilen und ein Ersatztitel dort doch dieselbe Serie
+    # treffen kann.
     tid = {}
     for u in uuids:
         t = titel(u)
         if t:
             tid.setdefault(t, len(tid))
     tvon = np.array([tid.get(titel(u), -1) for u in uuids], np.int32)
+    ohne_titel = np.array([not titel(u) for u in uuids])
+    if args.ersatztitel:
+        ersatz = len(tid)
+        for i in np.flatnonzero(ohne_titel):
+            tvon[i] = ersatz + int(i)
+        print(f"  --ersatztitel: {int(ohne_titel.sum())} Aufnahmen ohne Titel bekommen "
+              f"einen Ersatz, aber nur gegenueber fremden Sendern")
+    slugvon = np.array([hash(_slug(u, meta)) for u in uuids], np.int64)
 
     # Je Aufnahme ein Satz je Sekunde -- als dict von Mengen, aber die
     # Laeufe kommen als Arrays herein, damit die 23 Mio Zeilen nicht als
@@ -495,6 +524,9 @@ def anker(args):
         en = a_e if seite == 0 else (a_e + off)
         tp = tvon[part]
         gut = tp >= 0
+        if args.ersatztitel:
+            # Ersatztitel zaehlen nur ueber Sendergrenzen hinweg.
+            gut = gut & (~ohne_titel[part] | (slugvon[eig] != slugvon[part]))
         ohne += int((~gut).sum())
         for k in np.flatnonzero(gut):
             d = sek[uuids[eig[k]]]
@@ -625,6 +657,9 @@ def main():
     ap.add_argument("--min-titel", type=int, default=3, dest="min_titel")
     ap.add_argument("--min-anker", type=int, default=8, dest="min_anker")
     ap.add_argument("--max-anker", type=int, default=300, dest="max_anker")
+    ap.add_argument("--ersatztitel", action="store_true",
+                    help="Aufnahmen ohne Titel als eigener Titel zaehlen, "
+                         "aber nur gegenueber fremden Sendern")
     ap.add_argument("--audio-anker", default="/tmp/anchors", dest="audio_anker")
     ap.add_argument("--min-score", type=float, default=0.85, dest="min_score")
     ap.add_argument("--min-dauer", type=int, default=16, dest="min_dauer")

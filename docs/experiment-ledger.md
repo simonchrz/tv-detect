@@ -4744,3 +4744,103 @@ trainiert, bringt dem Kopf bei vorherzusagen, ob eine Sekunde
 fingerprintet wurde, also ein Artefakt der Anker-Deckung. Ein echtes
 Mehrklassen-Ziel braucht echte Labels für die Unterklassen, und das ist
 eine Beschaffungsfrage, keine Modellfrage.
+
+### Nachtrag 2026-09-07 (dreizehnter Durchgang) — das Fehlerbudget, das heute Morgen hätte dastehen müssen
+
+Simon: „das wirkt alles ziemlich planlos und nach try&error." Zu Recht.
+Fünf Aussagen wurden am selben Tag widerrufen, weil es keinen gemeinsamen
+Maßstab gab, an dem sich ordnen ließ, was sich lohnt. Dieser Durchgang
+baut ihn: **jede Sekunde Verlust bekommt genau eine Ursache, und zwei
+Orakel-Läufe sagen, was maximal zu holen wäre, bevor irgendjemand etwas
+baut.**
+
+**Messsatz eingefroren:** `messsatz-2026-09-07.json`, Hash `59b979ab4e10`,
+98 Aufnahmen mit menschlichem Label, gleich langer Zeitachse und
+Signal-Dump. Es ist der einzige Satz, dem heute jede Zahl standgehalten
+hat. 76 davon liegen in `train`; für Dekoder-Fragen egal (der Kopf ist
+eingefroren), für Kopf-Fragen zählen nur die 22 aus `test`.
+
+#### Die Deckel (Block-IoU, Median)
+
+| | alle 98 | nur test |
+|---|---|---|
+| Produktion: echtes NN, HSMM | 0.969 | 0.980 |
+| Orakel-NN → HSMM | **0.999** | 1.000 |
+| echtes NN, kein Dekoder | 0.935 | 0.956 |
+
+| Deckel | Wert | Bedeutung |
+|---|---|---|
+| Dekoder | **0.001** | so viel geht verloren, selbst mit perfektem NN |
+| NN | **0.030** | so viel wäre mit perfektem NN zu holen |
+| Dekoder-Beitrag | +0.034 | was der HSMM heute gegenüber bloßem Schwellen bringt |
+
+**Der Dekoder ist fertig.** Mit perfektem NN liefert er 0.999. Jede
+Dekoder-Arbeit, Spot-Anker, Boundary-Head, HSMM-Tuning, kann höchstens
+0.001 holen. Das erklärt rückwirkend O19 und den negativen Boundary-Head,
+und zwar ohne Versuch. **Der gesamte Spielraum, 0.030, liegt im NN.**
+
+#### Das Budget (6570 Verlust-Sekunden, Modell gegen Wahrheit)
+
+Jede Sekunde nach Lage, NN-Ausgabe, Wiederholungs-Anker und Senderlogo
+eingeordnet:
+
+| Ursache | Sekunden | Anteil | Wer |
+|---|---|---|---|
+| Kante, ±15 s um eine Wahrheitskante | 2048 | 31 % | niemand: auf Menschenniveau (Weg 2) |
+| NN sagt Werbung, Label Sendung, **Anker deckt** | 434 | 7 % | Label: NN hatte recht |
+| NN sagt Werbung, Label Sendung, **kein Logo** | 1252 | 19 % | Label: vermutlich Trailer, Ident, Split-Screen |
+| NN sagt Sendung, Label Werbung, **Logo da** | 858 | 13 % | Label: vermutlich zu breit |
+| NN erfindet, Logo unklar | 618 | 9 % | offen |
+| NN verpasst, Logo unklar | 137 | 2 % | offen |
+| **NN erfindet, Logo da** | **201** | 3 % | **NN: echter Fehlalarm** |
+| **NN verpasst, Anker deckt** | **51** | 1 % | **NN: verpasster nachgewiesener Spot** |
+| **NN verpasst, kein Logo** | **67** | 1 % | **NN: verpasster Trailer** |
+| Dekoder erfindet | 770 | 12 % | Dekoder, aber Deckel 0.001 |
+| Dekoder verpasst | 134 | 2 % | Dekoder, aber Deckel 0.001 |
+
+Zusammengefasst:
+
+| Wer | Sekunden | Anteil |
+|---|---|---|
+| Label widerspricht harter Evidenz | 2544 | **39 %** |
+| Kante auf Menschenniveau | 2048 | 31 % |
+| Dekoder, Deckel 0.001 | 904 | 14 % |
+| offen, Logo unklar | 755 | 11 % |
+| **NN, nachweisbar** | **319** | **5 %** |
+
+#### Was das heißt
+
+**Das NN verpasst in 98 Aufnahmen 51 Sekunden nachgewiesene
+Produktspots.** Produktwerbung ist gelöst. Der nachweisbare NN-Fehler
+sind 319 Sekunden von 6570, fünf Prozent. Selbst wenn man die offenen 755
+dazurechnet, sind es 16 %.
+
+**Der größte Posten, 39 %, ist kein Modellfehler.** Es sind Sekunden, an
+denen das Label harter Evidenz widerspricht: einem Anker mit 96.8 %
+Präzision oder dem Senderlogo. Das ist dieselbe Konvention wie im
+zehnten Durchgang, Trailer und Idents und Split-Screen und Ränder, nur
+jetzt in der Einheit des Budgets. Auf dem Messsatz sind das 26 Sekunden
+je Aufnahme.
+
+⚠️ Das Logo als Zeuge ist schwächer als der Anker. Let's Dance blendet es
+aus, sixx wäscht es aus. Die 1252 und 858 Sekunden sind „vermutlich",
+nicht „nachgewiesen"; die 434 mit Anker sind es.
+
+**Die Rangfolge, die das Budget vorgibt:**
+
+1. **Dekoder: nichts mehr anfassen.** Deckel 0.001. Geschlossen durch
+   Messung, nicht durch Versuch.
+2. **Kanten: nichts mehr anfassen.** Auf Menschenniveau; ohne bessere
+   Wahrheit nicht messbar zu verbessern.
+3. **Labels gegen Evidenz abgleichen.** 39 % des Verlusts. Das ist keine
+   Modellarbeit und L2 gilt: die Liste der Widersprüche liegt vor, die
+   Entscheidung liegt beim Menschen. Zwei Wege: reviewen, oder die
+   widersprüchlichen Sekunden per `frame_mask` aus dem Training nehmen,
+   was der Code für Pseudo-Labels schon kann.
+4. **Erst danach das NN.** Was übrig bleibt, sind 5 bis 16 % des
+   Verlusts, und sie liegen bei Trailern, Idents und Fehlalarmen auf
+   Sendung. Das ist die Frage von Idee 5, und O20 hat gezeigt, dass sie
+   echte Unterklassen-Labels braucht.
+
+Alles, was heute vor diesem Durchgang gebaut wurde, hätte das Budget in
+zwei Stunden geordnet.

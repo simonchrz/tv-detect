@@ -4844,3 +4844,36 @@ nicht „nachgewiesen"; die 434 mit Anker sind es.
 
 Alles, was heute vor diesem Durchgang gebaut wurde, hätte das Budget in
 zwei Stunden geordnet.
+
+### Nachtrag 2026-09-07 (vierzehnter Durchgang) — O21: die 39 % sind ein Mess-Problem
+
+Erste Frage, die das Fehlerbudget selbst gestellt hat. Antwort:
+**NICHT ERFÜLLT**, Median-ΔF1 −0.0020, 1 von 5 Seeds positiv.
+
+Widersprüchliche Frames aus dem Training zu nehmen bringt nichts. Der
+Kopf lernt aus ihnen nichts Falsches — er wird an ihnen nur falsch
+gemessen. Der grösste Posten des Budgets ist damit als Handlungsfeld
+geschlossen, und der gemessene IoU von 0.969 unterschätzt das Modell.
+
+Vorher benannt und deshalb keine Überraschung: der Eingriff betraf 1.0 %
+der Trainingszeilen. Die 39 % sind ein Anteil an VERLUST-Sekunden, nicht
+an Trainingsdaten.
+
+#### Die Bilanz nach einem Tag Budget
+
+| Posten | Anteil | Status |
+|---|---|---|
+| Label gegen Evidenz | 39 % | Mess-Problem (O21) |
+| Kante | 31 % | auf Menschenniveau (Weg 2) |
+| Dekoder | 14 % | Deckel 0.001 (Orakel) |
+| offen, Logo unklar | 11 % | ungeklärt |
+| NN, nachweisbar | 5 % | offen |
+
+**Vier von fünf Posten sind durch Messung geschlossen.** Was bleibt, sind
+16 % des Verlusts, und davon ist die grössere Hälfte noch nicht einmal
+eingeordnet.
+
+Das ist der eigentliche Ertrag des Tages: nicht ein besseres Modell,
+sondern die Gewissheit, wo keines zu holen ist. Sechs Ideen, drei
+registrierte Experimente, alle drei verfehlt — und am Ende ein Korpus von
+Aussagen, die man nicht mehr neu erraten muss.

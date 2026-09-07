@@ -1,6 +1,18 @@
 # O21 — Vergiften widersprüchliche Frames das Training?
 (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-09-07 — REGEL NICHT ERFÜLLT.** Median-ΔF1
+> **−0.0020**, 1 von 5 Seeds positiv, gegen +0.002 und 4 von 5. Die
+> vorab festgelegte Konsequenz gilt: **die Vergiftungs-These ist
+> erledigt. Die 39 % aus dem Fehlerbudget sind ein MESS-Problem, kein
+> Trainingsproblem.**
+>
+> Das ist kein Nullresultat, sondern eine Antwort. Der Kopf lernt aus
+> den widersprüchlichen Frames nichts Falsches — er wird an ihnen nur
+> falsch GEMESSEN. Damit ist der grösste Posten des Budgets als
+> Handlungsfeld geschlossen, und der gemessene IoU von 0.969
+> unterschätzt das Modell.
+
 **Geschrieben 2026-09-07, nachdem der Kontrollarm lief und BEVOR der
 Maskenarm gerechnet wurde.**
 
@@ -94,3 +106,44 @@ hängt nicht an der Effektgrösse.
 einer Gewichtsänderung vermengt, weil die Klassengewichte aus den
 Häufigkeiten kommen. Hier bleibt das Ziel binär und die Gewichtsregel
 dieselbe; die Häufigkeiten verschieben sich nur um die maskierten 1 %.
+
+
+---
+
+## Ergebnis (2026-09-07, nach dem Lauf eingetragen)
+
+| Seed | alle Zeilen | maskiert | Δ |
+|---|---|---|---|
+| 0 | 0.9053 | 0.9091 | +0.0038 |
+| 1 | 0.9129 | 0.9051 | −0.0078 |
+| 2 | 0.9131 | 0.9111 | −0.0020 |
+| 3 | 0.9102 | 0.9072 | −0.0030 |
+| 4 | 0.9061 | 0.9044 | −0.0017 |
+| **Median** | **0.9102** | **0.9072** | **−0.0020** |
+
+| Bedingung | Ergebnis |
+|---|---|
+| Median ≥ +0.002 | **NEIN** |
+| 4 von 5 Seeds positiv | **NEIN** (1 von 5) |
+
+**==> O21 NICHT ERFÜLLT.**
+
+### Was das für das Fehlerbudget heisst
+
+Der grösste Posten des Budgets, 39 % der Verlust-Sekunden, ist damit als
+**Handlungsfeld geschlossen**. Er verschwindet nicht — er bleibt in der
+Messung. Aber er ist nichts, was man im Training reparieren müsste.
+
+Damit steht die Bilanz des Tages so:
+
+| Posten | Anteil am Verlust | Status |
+|---|---|---|
+| Label gegen Evidenz | 39 % | Mess-Problem, O21 |
+| Kante | 31 % | auf Menschenniveau, Weg 2 |
+| Dekoder | 14 % | Deckel 0.001, Orakel-Lauf |
+| offen, Logo unklar | 11 % | ungeklärt |
+| NN, nachweisbar | 5 % | offen, braucht Unterklassen-Labels |
+
+**Vier von fünf Posten sind durch Messung geschlossen, nicht durch
+Meinung.** Übrig bleiben 16 %: die 5 % nachweisbarer NN-Fehler und die
+11 %, bei denen das Logo als Zeuge nicht ausreicht.

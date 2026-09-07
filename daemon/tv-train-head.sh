@@ -464,6 +464,28 @@ echo "=== label audit (report only) ==="
   | tail -30 || echo "label audit failed (non-fatal)"
 echo "=== label audit end ==="
 
+# ── Fehlerbudget ─────────────────────────────────────────────────────────
+# Jede Verlust-Sekunde bekommt genau eine Ursache, und zwei Orakel-Laeufe
+# sagen, was maximal zu holen waere. Gemessen auf einem eingefrorenen Satz
+# (messsatz-2026-09-07.json, 98 Aufnahmen mit Menschenlabel, geprueft
+# gleicher Zeitachse und Signal-Dump).
+#
+# WARUM JEDE NACHT und nicht einmal: der 2026-09-07 lief als Folge von
+# Ideen — vorschlagen, bauen, messen, zuruecknehmen; fuenf Aussagen wurden
+# am selben Tag widerrufen, weil es keinen gemeinsamen Massstab gab. Das
+# Budget IST dieser Massstab, und als Momentaufnahme verfaellt er wie der
+# Golden-Satz von 60 auf 23 Mitglieder verfallen ist. Als Eigenschaft
+# statt als Ereignis zeigt er, wie die Zusammensetzung wandert — und die
+# naechste Sitzung faengt nicht wieder bei Ideen an.
+#
+# Aendert NICHTS. Liest Dumps, Labels und Anker, schreibt eine Zeile in
+# fehlerbudget-trend.jsonl. Bei unvollstaendigem Satz wird der Trend
+# bewusst NICHT fortgeschrieben (dieselbe Regel wie golden_boden).
+echo "=== fehlerbudget (misst, aendert nichts) ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/fehlerbudget.py" 2>&1 \
+  | tail -40 || echo "fehlerbudget failed (non-fatal)"
+echo "=== fehlerbudget end ==="
+
 # ── O13-Schattenlauf ─────────────────────────────────────────────────────
 # Schreibt mit, was die OCR-Regel an den Kanten GETAN HAETTE. Wendet nichts
 # an; die Cutlist bleibt unberuehrt.

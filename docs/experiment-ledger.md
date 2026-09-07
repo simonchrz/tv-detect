@@ -4998,3 +4998,39 @@ Sprung.
 **Rückgängig:** die fünf npz zurück nach `tvd-train-archive/` und die vier
 neuen Zeilen aus `TEST_SET_EXCLUDE` entfernen. Der Kommentar dort trägt
 die Anleitung.
+
+### Nachtrag 2026-09-07 (achtzehnter Durchgang) — das Budget hängt im Ablauf
+
+Simon: „warum nicht schon jetzt das Budget in den Ablauf hängen." Kein
+Hindernis, nur meine Vorsicht. Erledigt.
+
+`scripts/fehlerbudget.py` läuft ab heute Nacht im Nightly, direkt hinter
+dem Label-Audit. Es ändert nichts, liest Dumps, Labels und Anker und
+schreibt eine Zeile nach `fehlerbudget-trend.jsonl`.
+
+**Zwei Wächter eingebaut, beide aus schon bezahlten Lehren:**
+
+* **Kompositions-Prüfung.** Fehlt einem Messsatz-Mitglied der
+  Signal-Dump, wird der Trend NICHT fortgeschrieben — dieselbe Regel wie
+  `golden_boden` in train-head.py: „Lieber nicht prüfen als falsch
+  prüfen." Genau so ist der Golden-Satz unbemerkt von 60 auf 23
+  Mitglieder verfallen.
+* **Anker-Alter.** Fehlen Bild-Anker (heute 2 von 98, durch die Neu-Eichung
+  der Schwellen), sagt der Lauf, dass der Label-Posten unterschätzt ist.
+  Die Anker müssen periodisch neu gebaut werden, `wiederholung.py` braucht
+  dafür rund 45 Minuten und gehört nicht in den Nightly.
+
+**Erste Trendzeile geschrieben:** Produktion 0.969, Orakel-NN 0.999,
+NN ohne Dekoder 0.935, 6570 Verlust-Sekunden.
+
+**Warum jede Nacht und nicht einmal.** Der heutige Tag lief als Folge von
+Ideen, und fünf Aussagen wurden am selben Tag widerrufen, weil der
+gemeinsame Maßstab fehlte. Als Momentaufnahme verfällt ein Maßstab. Als
+Eigenschaft zeigt er, wie die Zusammensetzung wandert — und die nächste
+Sitzung fängt nicht wieder bei Ideen an.
+
+**Was ab morgen sichtbar wird:** ob die Let's-Dance-Quarantäne die
+Zusammensetzung verschiebt, und in welche Richtung. Der Messsatz enthält
+zwei der fünf quarantänierten Aufnahmen weiterhin — bewusst, denn die
+Sendung läuft ja weiter und das Modell trifft sie in Produktion. Nur
+lernen darf es nicht mehr von ihr.

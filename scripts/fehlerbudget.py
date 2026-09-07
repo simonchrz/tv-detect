@@ -178,11 +178,33 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--trend", default=str(Path.home() / ".cache/tvd-train-archive/fehlerbudget-trend.jsonl"),
+                    help="Zeile je Lauf anhaengen, damit sich Naechte vergleichen lassen")
+    ap.add_argument("--kein-trend", action="store_true", dest="kein_trend")
     a = ap.parse_args()
 
     ms = json.loads(MESSSATZ.read_text())
     uuids = ms["uuids"][:a.limit] if a.limit else ms["uuids"]
     print(f"Messsatz {ms['name']} (hash {ms['hash']}), {len(uuids)} Aufnahmen")
+
+    # ⚠️ KOMPOSITIONS-PRUEFUNG, dieselbe Regel wie golden_boden in
+    # train-head.py: "Lieber nicht pruefen als falsch pruefen." Fehlt ein
+    # Signal-Dump, misst der Lauf einen ANDEREN Satz, und die Zahl ist mit
+    # den Vornaechten nicht mehr vergleichbar. Genau so ist der Golden-Satz
+    # unbemerkt von 60 auf 23 Mitglieder verfallen.
+    ohne_dump = [u for u in uuids if not (DUMPS / f"{u}.json").is_file()]
+    if ohne_dump and not a.limit:
+        print(f"  ⚠ {len(ohne_dump)} von {len(uuids)} Aufnahmen ohne Signal-Dump — "
+              f"der Satz ist nicht mehr komposition-konstant.")
+        print(f"    {', '.join(ohne_dump[:5])}"
+              + (" …" if len(ohne_dump) > 5 else ""))
+        print("    Trend wird NICHT fortgeschrieben; die Zahlen unten gelten "
+              "nur fuer diesen Lauf.")
+    ohne_anker = [u for u in uuids if not (BILD / f"{u}.json").is_file()]
+    if ohne_anker:
+        print(f"  Hinweis: {len(ohne_anker)} Aufnahme(n) ohne Bild-Anker — "
+              f"ihr Label-Posten ist unterschaetzt "
+              f"(scripts/wiederholung.py neu laufen lassen)")
     ub = _lade("bs", "backbone-sonde.py").menschlabels()
     led = json.loads((Path.home() / ".cache/tvd-train-archive/split-ledger.json").read_text())
 
@@ -258,6 +280,41 @@ def main():
             {"messsatz": ms["hash"], "zeilen": zeilen,
              "ursachen": dict(ges), "label": dict(ges_label)}, indent=1))
         print(f"\n-> {a.json}")
+
+    # Trend: eine Zeile je Lauf. Nur wenn der Satz vollstaendig war --
+    # sonst vergleicht man spaeter Aepfel mit einer Teilmenge Aepfel.
+    if not a.kein_trend and not a.limit and not ohne_dump:
+        zeile = {"ts": __import__("time").strftime("%Y%m%dT%H%M%S"),
+                 "messsatz": ms["hash"], "n": len(zeilen),
+                 "iou_prod": round(med("iou_prod"), 4),
+                 "iou_orakel_nn": round(med("iou_orakel_nn"), 4),
+                 "iou_nn_nur": round(med("iou_nn_nur"), 4),
+                 "ursachen": dict(ges), "label": dict(ges_label)}
+        tp = Path(a.trend)
+        vorher = None
+        if tp.is_file():
+            try:
+                zeilen_alt = [json.loads(x) for x in tp.read_text().splitlines() if x.strip()]
+                passend = [z for z in zeilen_alt if z.get("messsatz") == ms["hash"]]
+                vorher = passend[-1] if passend else None
+            except Exception:
+                pass
+        with tp.open("a") as fh:
+            fh.write(json.dumps(zeile) + "\n")
+        if vorher:
+            print(f"\n=== gegen den vorigen Lauf ({vorher['ts']}) ===")
+            for k, name in (("iou_prod", "Produktion"),
+                            ("iou_orakel_nn", "Orakel-NN"),
+                            ("iou_nn_nur", "NN ohne Dekoder")):
+                d = zeile[k] - vorher[k]
+                print(f"  {name:<18}{vorher[k]:.4f} -> {zeile[k]:.4f}  ({d:+.4f})")
+            for k in sorted(set(zeile["ursachen"]) | set(vorher.get("ursachen", {}))):
+                alt_, neu_ = vorher.get("ursachen", {}).get(k, 0), zeile["ursachen"].get(k, 0)
+                if abs(neu_ - alt_) >= 60:
+                    print(f"  {k:<18}{alt_:>7} -> {neu_:>7}s  ({neu_-alt_:+}s)")
+        else:
+            print(f"\n  erster Lauf fuer Messsatz {ms['hash']} — kein Vergleich moeglich")
+        print(f"  Trend -> {tp}")
     return 0
 
 

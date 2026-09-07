@@ -4510,3 +4510,54 @@ und nicht Labels: das Label-Audit sollte den Nachlauf ausschließen, sonst
 meldet es dieselbe Aufnahme jede Nacht ohne Grund. Und Split-Screen
 gehört als eigener Fall benannt, bevor jemand Let's Dance für ein
 Modellproblem hält.
+
+### Nachtrag 2026-09-07 (neunter Durchgang) — der Wächter kennt jetzt den Nachlauf
+
+Das Label-Audit meldete `dvr-kabel-eins-1780856070` jede Nacht mit 297 s
+Phantom. Nachgesehen (achter Durchgang): es ist die Folgesendung „Yes we
+camp!" am Aufnahmeende, absichtlich als überspringbar markiert. Kein
+Labelfehler. Ein Wächter, der täglich grundlos schreit, wird überlesen.
+
+**Gebaut, und zwar in der zweiten Fassung.** Der erste Entwurf
+UNTERDRÜCKTE das Phantom im Endblock. Das war falsch, und die Daten haben
+es gezeigt: von vier Aufnahmen mit Endblock ist eine
+(`dvr-kabel-eins-1781539018`, 742 s) nach den Bild-Ankern zu **43 %** mit
+wiederholten Spots belegt — echte Werbung, kein Nachlauf. Die Form allein
+trennt das nicht, und ein stiller Filter wäre schlimmer als der
+Fehlalarm, den er behebt.
+
+Die Audio-Anker taugen als Gegenprobe hier NICHT: bei 1780856070 decken
+sie 50 % des Endblocks ab, obwohl er nachweislich Sendung ist. Die
+Extraktion läuft über den bestätigten Block, und wiederkehrende
+Sendungsteile bilden genauso Familien wie Spots.
+
+**Die zweite Fassung unterdrückt nichts.** Der Phantom-Zähler bleibt
+voll; nur die MELDESCHWELLE rechnet ohne den Endblock, und was dort liegt,
+bekommt eine eigene Zeile im Bericht:
+
+```
+  Endblock am Aufnahmeende: 1122s Phantom in 4 Aufnahme(n) loesen KEINE Meldung aus.
+    dvr-vox-1780247400          401s im Endblock
+    dvr-kabel-eins-1780856070   297s im Endblock
+    dvr-kabel-eins-1781539018   245s im Endblock, 279s davor
+    dvr-rtl-1785667200          179s im Endblock, 816s davor
+```
+
+**Ein Fehler unterwegs, den der Bericht selbst aufgedeckt hat.** Die Regel
+„Phantom zählt nur bei Menschen-Label" nullt `phan`. Beim Umbau hing die
+Meldung plötzlich an `phan_flag`, das ungenullt blieb — also meldete der
+Wächter maschinell gelabelte Aufnahmen, mit einer **0** in der
+Phantom-Spalte, weil die Anzeige ja genullt war. Der Bericht sprang von 6
+auf 13 eingefrorene Zeilen. Aufgefallen ist es nur, weil geflaggte
+Einträge mit `hole 0 phantom 0` unmöglich sind. Beide Zähler werden jetzt
+genullt, und ein Test hält es fest.
+
+**Stand danach:** 0 Aufnahmen widersprechen ihrem eigenen Signal (vorher
+1), 5 eingefrorene (vorher 6, also nicht gewachsen), Exit 0. Der
+Vergleichsstand in `~/.cache/tvd-audit-stand.json` wurde auf den ehrlichen
+Wert zurückgesetzt, nachdem die Probeläufe ihn verstellt hatten.
+
+Acht Tests in `scripts/test_nachlauf_maske.py`, davon drei strukturelle:
+sie prüfen im Quelltext, dass `hole` die Maske nicht benutzt, dass der
+Phantom-Zähler voll bleibt und dass die Meldung an `phan_flag` hängt. Ein
+Rückfall wirft dort keine Ausnahme, er bringt nur den Fehlalarm zurück.

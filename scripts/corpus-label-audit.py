@@ -242,6 +242,49 @@ def runs(mask, min_len):
     return out
 
 
+def nachlauf_maske(ads, n, min_dauer=60, rand=3):
+    """Sekunden im Block, der am Aufnahmeende endet — meist der NACHLAUF.
+
+    Laeuft eine Aufnahme ueber ihr geplantes Ende hinaus, beginnt die
+    naechste Sendung, und tv-recorder haengt diesen Schwanz als Block an,
+    damit der Spieler ihn ueberspringt (`overrunBlock` in ads.go:273,
+    Ergebnis `[stop - start_real, duration]`). Das ist eine KONVENTION,
+    kein Werbelabel: der Kopf sagt dort zu Recht "Sendung", das Label
+    sagt "ueberspringen", und beide haben recht.
+
+    Am 2026-09-07 hat genau das dazu gefuehrt, dass
+    `dvr-kabel-eins-1780856070` jede Nacht mit 297 s Phantom gemeldet
+    wurde. Nachgesehen: 267 s "Yes we camp!" mit Sendungs- UND
+    Senderlogo. Kein Labelfehler. Ein Waechter, der taeglich grundlos
+    schreit, wird ueberlesen -- und fehlt dann beim echten Defekt.
+
+    ⚠️ DIESE MASKE UNTERDRUECKT NICHTS. Sie steuert nur, ob der
+    Phantom-Zaehler eine MELDUNG AUSLOEST. Gezaehlt und ausgewiesen wird
+    er weiterhin voll. Der Grund steht in den Zahlen: von vier
+    Aufnahmen mit Endblock war eine (`dvr-kabel-eins-1781539018`,
+    742 s) nach den Bild-Ankern zu 43 % mit wiederholten Spots belegt,
+    also echte Werbung und kein Nachlauf. Die Form allein kann das nicht
+    trennen, und ein stiller Filter waere schlimmer als der Fehlalarm.
+
+    Die Audio-Anker helfen hier NICHT: bei 1780856070 decken sie 50 %
+    des Endblocks ab, obwohl er nachweislich Sendung ist. Die Extraktion
+    laeuft ueber den bestaetigten Block, und wiederkehrende Sendungsteile
+    bilden genauso Familien wie Spots.
+
+    Das Archiv kennt weder `stop` noch `start_real`, der Nachlauf laesst
+    sich also nicht nachrechnen. Erkannt wird die FORM: der Block endet
+    am Aufnahmeende und ist mindestens so lang, wie tv-recorder verlangt.
+    Das trifft 56 von 770 archivierten Aufnahmen (7 %), Median 200 s.
+    """
+    m = np.zeros(n, bool)
+    for a, b in (ads or []):
+        a, b = float(a), float(b)
+        if n - b <= rand and (b - a) >= min_dauer:
+            m[int(max(0, a)):int(min(n, b))] = True
+    return m
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--verify", action="store_true",
@@ -296,9 +339,11 @@ def main():
         gt = np.zeros(n, bool)
         for a, b in (ads or []):
             gt[int(max(0, a)):int(min(n, b))] = True
+        gt_flag = gt & ~nachlauf_maske(ads, n)
         hole = sum(b - a for a, b in runs((ps[:n] > args.hi) & ~gt, args.min_run))
         phan = sum(b - a for a, b in runs((ps[:n] < args.lo) & gt, args.min_run))
-        return hole, phan, (hole > 4 * args.min_run or phan > 2 * args.min_run)
+        phan_flag = sum(b - a for a, b in runs((ps[:n] < args.lo) & gt_flag, args.min_run))
+        return hole, phan, (hole > 4 * args.min_run or phan_flag > 2 * args.min_run)
 
     if args.verify:
         print("\n=== Verifikation: stimmt das URTEIL ueberein? ===")
@@ -365,6 +410,7 @@ def main():
     # falsche Begruendung hat die Suche in die falsche Richtung geschickt.
     flagged, checked = [], 0
     ohne_features, falsche_breite = [], []
+    nachlauf_unterdrueckt = []
     for f in files:
         u = os.path.basename(f)[:-4]
         z = np.load(f, allow_pickle=True)
@@ -387,8 +433,12 @@ def main():
         gt = np.zeros(n, bool)
         for a, b in (m.get("ads") or []):
             gt[int(max(0, a)):int(min(n, b))] = True
+        gt_flag = gt & ~nachlauf_maske(m.get("ads"), n)
         hole = sum(b - a for a, b in runs((ps > args.hi) & ~gt, args.min_run))
         phan = sum(b - a for a, b in runs((ps < args.lo) & gt, args.min_run))
+        phan_flag = sum(b - a for a, b in runs((ps < args.lo) & gt_flag, args.min_run))
+        if phan > phan_flag:
+            nachlauf_unterdrueckt.append((u, phan - phan_flag, phan_flag))
         checked += 1
         # A phantom only counts when a HUMAN put the label there. On a
         # machine-labelled recording the label IS the block output, which on a
@@ -403,10 +453,18 @@ def main():
         # a different cartoon starts right after the disputed block. The logo
         # was right and the NN was wrong. Counting that as a label defect
         # produced a false alarm and nearly a wrong config change.
+        # ⚠️ BEIDE Zaehler nullen, nicht nur den angezeigten. Beim Einbau
+        # des Endblock-Filters am 2026-09-07 blieb `phan_flag` hier stehen
+        # — und weil die MELDUNG daran haengt, wurden ploetzlich
+        # maschinell gelabelte Aufnahmen gemeldet, mit "0" in der
+        # Phantom-Spalte, weil die ANZEIGE ja genullt war. Der Bericht
+        # sprang von 6 auf 13 eingefrorene Zeilen. Genau die Sorte
+        # stiller Fehler, gegen die dieses Skript Tests hat.
         human = which_of(m) in ("user", "merged")
         if not human:
             phan = 0
-        if hole > 4 * args.min_run or phan > 2 * args.min_run:
+            phan_flag = 0
+        if hole > 4 * args.min_run or phan_flag > 2 * args.min_run:
             # A recording whose npz the last training run did NOT rewrite was
             # not evaluated by it — for a labelled recording that means its
             # labels went empty (a label-less recording counts as bootstrap and
@@ -497,6 +555,20 @@ def main():
     # ⚠️ Nur die HANDHABBAREN in die Datei. Wer sie zur Review benutzt, lief
     # sonst in 7 von 10 Faellen ins Leere. Die eingefrorenen daneben, damit
     # sie nicht verloren gehen — nur eben nicht in derselben Liste.
+    # Sichtbar halten, was der Nachlauf-Filter geschluckt hat. Ein stiller
+    # Filter ist auf Dauer schlimmer als ein lauter Fehlalarm: niemand
+    # merkt, wenn er zu viel wegnimmt.
+    if nachlauf_unterdrueckt:
+        ges = sum(x[1] for x in nachlauf_unterdrueckt)
+        print(f"\n  Endblock am Aufnahmeende: {ges}s Phantom in "
+              f"{len(nachlauf_unterdrueckt)} Aufnahme(n) loesen KEINE Meldung aus.")
+        print("  Meist ist das die Folgesendung (Nachlauf-Konvention, kein")
+        print("  Labelfehler) — es kann aber auch ein echter Werbeblock am")
+        print("  Aufnahmeende sein. Gezaehlt wird weiterhin voll:")
+        for u, sk, rest in sorted(nachlauf_unterdrueckt, key=lambda x: -x[1])[:6]:
+            print(f"    {u:<34} {sk:>5}s im Endblock" +
+                  (f", {rest}s davor" if rest else ""))
+
     if handhabbar:
         json.dump([r[0] for r in handhabbar],
                   open("/tmp/label-audit-flagged.json", "w"))

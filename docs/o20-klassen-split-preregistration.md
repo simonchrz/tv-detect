@@ -1,6 +1,33 @@
 # O20 — Hilft es dem Kopf, wenn er zwei Sorten Werbung getrennt lernen darf?
 (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-09-07 — REGEL NICHT ERFÜLLT.** Median-ΔF1
+> **−0.0608**, 0 von 5 Seeds positiv, gegen die Schwelle +0.005 und
+> 4 von 5. Die vorab festgelegte Konsequenz gilt: **Idee 5 wird als
+> gemessen abgeschlossen.**
+>
+> ⚠️ **Aber der registrierte Arm hatte einen Konstruktionsfehler, und der
+> ändert die Lesart.** Die Gewichtsregel `N/(K·n_k)` gibt bei drei Klassen
+> der Werbung insgesamt das **6.3-fache** Gewicht gegenüber Sendung, bei
+> zwei Klassen nur das **3.15-fache**. Der Versuchsarm bekam also nebenbei
+> eine doppelt so starke Schieflagen-Korrektur — mehr Fehlalarme, weniger
+> Präzision, weniger F1. Die Zielaenderung war mit einer
+> Gewichtsaenderung vermengt.
+>
+> Nachträgliche Diagnose mit fairen Gewichten (Klasse 1 und 2 zusammen so
+> schwer wie die eine Werbeklasse im Kontrollarm): Median-ΔF1
+> **−0.0013**, 2 von 5 Seeds positiv. Also **null**, nicht schädlich.
+>
+> **Was daraus folgt.** Die registrierte Konsequenz bleibt — sie wird
+> nicht nachträglich weggerechnet. Technisch heißt das Ergebnis aber
+> „kein Effekt", nicht „schadet". Und getestet wurde ohnehin nur der
+> billige Stellvertreter: die Anker-Aufteilung sagt „wurde
+> fingerprintet", nicht „ist ein Produktspot". Dass sie nichts trägt,
+> war im Voraus als Risiko benannt. **Die Hypothese aus dem zwölften
+> Durchgang ist damit weder bestätigt noch widerlegt — der billige Weg,
+> sie zu prüfen, ist erschöpft.** Ein echter Test braucht echte
+> Unterklassen-Labels und eine eigene Registrierung.
+
 **Geschrieben 2026-09-07, nachdem der Kontrollarm lief und BEVOR der
 zweite Arm gerechnet wurde.** Die Schwelle steht als Vielfaches des
 gemessenen Rauschens fest, bevor die erste Vergleichszahl existiert.
@@ -103,3 +130,42 @@ zurechtgelegt sein.
 
 Dass die Rauschmessung zuerst lief, hat alle drei gefunden. Ohne sie wäre
 der Vergleich gegen einen kollabierten Kontrollarm gelaufen.
+
+
+---
+
+## Ergebnis (2026-09-07, nach dem Lauf eingetragen)
+
+| Seed | 2 Klassen | 3 Klassen (registriert) | 3 Klassen (faire Gewichte) |
+|---|---|---|---|
+| 0 | 0.8973 | 0.8446 | — |
+| 1 | 0.9053 | 0.8440 | — |
+| 2 | 0.9056 | 0.8417 | — |
+| 3 | 0.9024 | 0.8416 | — |
+| 4 | 0.8984 | 0.8441 | 0.8994 |
+| **Median** | **0.9024** | **0.8440** | **0.8994** |
+
+| | Median-ΔF1 | positive Seeds |
+|---|---|---|
+| registriert | −0.0608 | 0 von 5 |
+| faire Gewichte (nachträglich) | −0.0013 | 2 von 5 |
+
+| Bedingung | Ergebnis |
+|---|---|
+| Median ≥ +0.005 | **NEIN** |
+| 4 von 5 Seeds positiv | **NEIN** |
+
+**==> O20 NICHT ERFÜLLT. Idee 5 ist als gemessen abgeschlossen.**
+
+### Was hängen bleibt
+
+Der Kontrollarm erreicht F1 0.902 gegen 0.91 im Nightly — der
+Offline-Aufbau ist also brauchbar und lässt sich für weitere
+Kopf-Fragen wiederverwenden, ohne die Produktion anzufassen.
+
+Und eine Lehre über Experimente: **beim Ändern des Ziels ändert sich die
+Klassengewichtung mit, wenn man sie aus den Klassenhäufigkeiten
+ableitet.** Das ist kein exotischer Fall, es passiert bei jeder
+Aufteilung einer Klasse. Ohne die nachträgliche Diagnose hätte hier
+gestanden, ein feineres Ziel schade dem Kopf um 0.06 F1 — eine Aussage,
+die schlicht falsch gewesen wäre.

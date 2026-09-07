@@ -136,7 +136,8 @@ def standardisieren(Xtr, Xte):
     return (Xtr - mu) / sd, (Xte - mu) / sd
 
 
-def fit_und_werte(Xtr, ytr, Xte, yte, rec_te, klassen, seed, epochen, hidden):
+def fit_und_werte(Xtr, ytr, Xte, yte, rec_te, klassen, seed, epochen, hidden,
+                  faire_gewichte=False):
     import torch
     import torch.nn as nn
     torch.manual_seed(seed)
@@ -150,6 +151,19 @@ def fit_und_werte(Xtr, ytr, Xte, yte, rec_te, klassen, seed, epochen, hidden):
     # Arme nach DERSELBEN Regel: Gewicht = N / (K * n_k).
     zaehl = torch.bincount(yt, minlength=klassen).float()
     w = (len(yt) / (klassen * zaehl.clamp(min=1))).to(dev)
+    # ⚠️ NACHTRAEGLICHE DIAGNOSE, nicht Teil der Registrierung.
+    # Die Regel N/(K*n_k) gibt bei drei Klassen der Werbung insgesamt das
+    # 6.3-fache Gewicht gegenueber Sendung, bei zwei Klassen nur das
+    # 3.15-fache — der Versuchsarm bekam also nebenbei eine ganz andere
+    # Schieflagen-Korrektur. Das ist ein Konstruktionsfehler in O20: die
+    # Zielaenderung war mit einer Gewichtsaenderung vermengt. Mit
+    # --faire-gewichte tragen Klasse 1 und 2 zusammen genau so viel wie
+    # die eine Werbeklasse im Kontrollarm.
+    if faire_gewichte and klassen == 3:
+        n_show = float(zaehl[0]); n_ad = float(zaehl[1] + zaehl[2])
+        w_show = len(yt) / (2 * max(n_show, 1))
+        w_ad = len(yt) / (2 * max(n_ad, 1))
+        w = torch.tensor([w_show, w_ad, w_ad], dtype=torch.float32).to(dev)
     opt = torch.optim.Adam(net.parameters(), lr=1e-3)
     lf = nn.CrossEntropyLoss(weight=w)
     B = 8192
@@ -202,6 +216,9 @@ def main():
     ap.add_argument("--nur-kontrollarm", action="store_true", dest="nur_kontroll",
                     help="nur der 2-Klassen-Arm — fuer die Rauschmessung VOR "
                          "der Schwellenfestlegung")
+    ap.add_argument("--faire-gewichte", action="store_true",
+                    dest="faire_gewichte",
+                    help="NACHTRAEGLICHE Diagnose: Klasse 1+2 zusammen so\n                         schwer wie die Werbeklasse im Kontrollarm")
     ap.add_argument("--json")
     a = ap.parse_args()
 
@@ -223,7 +240,7 @@ def main():
     for seed in range(a.seeds):
         for k in arme:
             p = fit_und_werte(Xtr, ytr, Xte, yte, rec_te, k, seed,
-                              a.epochen, a.hidden)
+                              a.epochen, a.hidden, a.faire_gewichte)
             ps = glaetten(p, rec_te)
             s = f1((ps > 0.5).astype(np.int64), wahr)
             erg[str(k)].append(s)

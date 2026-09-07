@@ -3871,3 +3871,54 @@ Anonymisierung nimmt dem Agenten den informationellen Anker, aber nicht den
 **Abtast-Anker** — außerhalb ±40 s existieren keine Bilder, ein Fehler von
 68 s oder 200 s kann dort nicht auftauchen. Ein Verfahren, das nur dort
 hinsieht, wo das Modell hinsieht, kann das Modell nicht widerlegen.
+
+### 2026-09-07 — Spot-Fingerprints im Dekoder: gebaut, sicher, und ein besserer Zeuge als die Agenten
+
+Aus „wie machen das andere?": Werbung wiederholt sich; ein Block ist eine
+Folge bekannter Spots, Spotgrenzen sind harte Schnitte. Der Stapel hatte
+die Familien seit Monaten (`spot.go`, `cluster-anchored`), nutzte sie aber
+nur als Ja/Nein-Zähler in auto-confirm — **im Dekoder kamen sie nie an**
+(0 Referenzen in `internal/blocks`, `internal/decode`).
+
+**Gebaut (`7e6006f`):** `--spot-lp-w` / `--spot-anchors`. Spotgrenzen als
+Log-Bonus in `StartBoundaryLP`/`EndBoundaryLP` des HSMM, additiv zu den
+Bumpern. Bewusst **nicht als Snap**: Produktion fährt bare hsmm,
+`RefineHSMM` ist ein ungenutztes Experiment — ein Snap wäre dort tot
+(`train_gate_mass_den_falschen_decoder`). Ausdehnend, nie beschneidend.
+Anker reisen im Signal-Dump mit und werden bei jedem der drei Replay-Pfade
+nachgetragen. Daemon reicht sie immer durch, Gewicht nur per
+detect-config `spot_lp_w`.
+
+**Parität (L3):** ALT = HEAD gegen NEU auf drei Dumps byte-identisch
+(cutlist + summary); mit Ankern bei w=0 ebenfalls. Vorgabe ist AUS.
+
+**Wirkung auf vier Aufnahmen mit Dump und Ankern:**
+
+| Aufnahme | Deckung | Modell vs. Spot-Cluster | Änderung |
+|---|---|---|---|
+| kabel-eins-1778597792 (reviewt) | 50 % | Starts sekundengenau auf erstem Spot (23:12, 40:58) | keine |
+| prosieben-1778691925 (reviewt) | 34 % | ein Start 3 s hinter erstem Spot | 36:47 → 36:44 |
+| rtlzwei-1788603300 (Bella Italia) | 42 % | alle 4 Blöcke umschließen ihren Cluster | keine (w=8: ein Ende −5 s) |
+| prosieben-1781344194 (Goldbergs) | — | kein Signal-Dump | nicht testbar |
+
+**Der eigentliche Befund steckt in der dritten Zeile.** Der grobe Durchgang
+hatte bei Bella Italia +114 s und +57 s über dem Raster gemeldet (Eintrag
+oben). Die Spot-Datenbank sagt: der erste bekannte Spot liegt **14 s bzw.
+13 s NACH dem Modellstart** — das Modell startet früher als der erste Spot,
+nicht 114 s zu spät. Der Agent hat sich geirrt, das Modell nicht. Damit
+sind auch die letzten zwei „über dem Raster"-Ausreißer des groben
+Durchgangs erledigt: **kein systematischer Fehler, und auch kein
+verbliebener Einzelfall.**
+
+**Was der Hebel damit ist — und was nicht.** Auf allen getesteten
+Aufnahmen umschließen die Modellblöcke jeden Spot-Cluster bereits. Ein
+ausdehnender Anker hat dort nichts zu tun. Er hilft, wo das Modell einen
+Block **verpasst** oder deutlich zu spät startet — in dieser Stichprobe
+kam das nicht vor. Was der Hebel dagegen sofort ist: ein **label-freier
+Zeuge**, der die Modellstarts gegen die Sendewirklichkeit hält, und der
+heute die Agenten überstimmt hat.
+
+**Engpass ist die Deckung**, nicht der Mechanismus: 34–50 % der
+Blockzeit bekannt, nur 22 von 289 lebenden Aufnahmen mit Ankern, die
+Extraktion läuft lazy auf lokal gecachten Quellen. Wer hier weiterbaut,
+baut an der Deckung.

@@ -4392,3 +4392,53 @@ Let's Dance und zweimal Richter Alexander Hold.
 **Damit ist die Reihenfolge klar:** vor jeder Architektur- oder
 Verlustfunktions-Idee steht eine Liste von 26 Stellen, und mindestens
 eine davon ist ein Label.
+
+### Nachtrag 2026-09-07 (siebter Durchgang) — das Modell ist auf seinen EIGENEN Trainingsdaten dreimal schlechter
+
+Beim Nachsehen, ob die 26 langen Fehlerläufe der bekannte Golden-Schwanz
+sind, kam etwas anderes heraus. Sie sind es nicht — **null Überschneidung
+mit dem Golden-Satz und null mit dem per-rec-IoU-Schwanz der letzten
+Nacht.** Stattdessen:
+
+| Eimer | Aufnahmen | Sekunden | Fehlerrate | lange Fehlerläufe |
+|---|---|---|---|---|
+| train | 77 | 222686 | **4.24 %** | **26** |
+| test | 22 | 62880 | **1.28 %** | **0** |
+
+Bei diesem Sekundenverhältnis wären 5.7 der 26 Läufe im test-Eimer zu
+erwarten. Beobachtet: null. Und die Fehlerrate auf den Trainingsdaten ist
+**3.3-mal so hoch** wie auf den ungesehenen.
+
+**Das ist das Gegenteil von Überanpassung.** Ein Modell kann auf Daten,
+die es gesehen hat, nicht schlechter sein als auf ungesehenen — es sei
+denn, die Labels dieser Daten sind falsch. Dann hat es das allgemeine
+Muster aus dem übrigen Korpus gelernt und widerspricht jetzt einzelnen
+kaputten Labels.
+
+Alle 99 Aufnahmen der Sonde sind **menschlich gelabelt**
+(`label_herkunft.py`), es ist also kein Maschinenlabel-Artefakt. Und die
+Label-Hygiene schützt genau diese Aufnahmen: „kept 18700 teacher-disputed
+frames across 409 user-reviewed recordings (user labels win)". Die
+strittigen Frames wurden also mit dem menschlichen Label trainiert, und
+das Modell widerspricht trotzdem.
+
+Ein Mechanismus, der die Richtung erklärt, steht im Nightly selbst:
+*„split ledger: retired 3 dead machine-labelled recording(s) from test →
+train (stale, never re-verifiable ground truth)"*. Aufnahmen, deren
+Wahrheit nicht mehr prüfbar ist, wandern per Regel in den train-Eimer.
+Der sammelt Label-Probleme also bauartbedingt an.
+
+**Warum das die Golden-Kurve erklärt.** Golden-Satz und Testsatz sind
+vergleichsweise sauber; die Fehler sitzen im train-Eimer, wo niemand
+misst. Ein Plateau bei 0.96 ist genau das, was man sieht, wenn das Modell
+gegen saubere Labels gemessen wird und die schmutzigen ins Training
+gehen.
+
+**Die Sonde ist dabei empfindlicher als das nächtliche Audit**, das
+gestern Nacht genau EINE widersprüchliche Aufnahme von 712 gemeldet hat
+(`dvr-kabel-eins-1780856070`, und die steht mit 267 s auch hier ganz
+oben). Die Sonde findet auf 99 Aufnahmen zwölf.
+
+**Konsequenz für die Reihenfolge.** Vor Backbone, Klassen und
+Verlustfunktion steht ein Label-Audit dieser zwölf, getrieben vom
+Widerspruch des Modells. L2 gilt: diagnostizieren, nicht anfassen.

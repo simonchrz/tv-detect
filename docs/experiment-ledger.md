@@ -4271,3 +4271,63 @@ kein Fund. Eine Ausnahme bleibt offen: `dvr-rtl-1779473700` (Let's
 Dance), dessen Partner GZSZ und Unter uns sind — RTL-Trailer in
 Werbeblöcken wären per Konvention Werbung, und Let's Dance ist der
 bekannte Fall mit dem versteckten Logo.
+
+### Nachtrag 2026-09-07 (fünfter Durchgang) — die Sonde für Idee 4: ja, aber
+
+Idee 4 wäre, das Backbone anzutrainieren statt nur den Kopf darauf zu
+setzen. Der Preis steht fest: 737 von 1028 Aufnahmen haben keine Quelle
+mehr, die Merkmale ließen sich also nicht neu rechnen. Der Korpus fiele
+auf 291, der Golden-Satz von 38 auf 23, und die Nacht-zu-Nacht-Kurve
+finge bei null an. Bevor jemand das bezahlt, gehört geprüft, ob die
+Repräsentation überhaupt der Engpass ist.
+
+**Der Test** (`scripts/backbone-sonde.py`): für jede Sekunde mit
+menschlichem Label die 20 ähnlichsten Sekunden in ANDEREN Aufnahmen
+suchen und zählen, wie viele davon das GEGENTEILIGE Label tragen. Das ist
+die Verwechslungsrate der Sekunde. Dann fragen, ob der Kopf genau dort
+irrt. 99 Aufnahmen, 285566 Sekunden im Blockinneren; Ränder ±15 s
+ausgelassen, weil dort ein anderer Fehler wohnt und Weg 2 gezeigt hat,
+dass die Kanten stimmen.
+
+**Ergebnis, getrennt nach Klasse** (der Störfaktor: in den hohen
+Verwechslungsklassen steigt auch der Werbeanteil von 17.8 auf 52.2 %,
+und Werbung ist die schwierigere Klasse):
+
+| Gegen-Nachbarn | Sekunden | Kopf falsch, Werbung | Kopf falsch, Sendung |
+|---|---|---|---|
+| 0 bis 5 % | 121354 | 0.7 % | 1.2 % |
+| 5 bis 15 % | 61188 | 1.8 % | 2.4 % |
+| 15 bis 30 % | 38315 | 2.4 % | 4.3 % |
+| 30 bis 50 % | 26562 | 3.2 % | 6.7 % |
+| 50 bis 75 % | 20950 | 4.8 % | 9.7 % |
+| 75 bis 100 % | 17197 | **14.3 %** | **20.5 %** |
+
+Beide Klassen steigen monoton, der Anstieg ist also nicht die
+Zusammensetzung. **13.4 % der Sekunden tragen 44.5 % aller Fehler.**
+
+**Gegenprobe auf Konzentration.** 67 % der Verwechslungsfehler kommen aus
+10 der 99 Aufnahmen, allein 1621 aus `dvr-rtl-1780078500` (Let's Dance),
+das sind 36 % aller Verwechslungsfehler aus einer einzigen Aufnahme. Zwei
+der zehn haben bekannte, NICHT-Backbone-Ursachen: Let's Dance blendet das
+Logo während der Show aus, und `dvr-kabel-eins-1780856070` ist genau die
+Aufnahme, die das nächtliche Label-Audit als „widerspricht ihrem eigenen
+Signal" meldet.
+
+Ohne die fünf größten Beiträger überlebt der Befund trotzdem: 11.6 % der
+Sekunden tragen 38.7 % der Fehler, und der Anstieg bleibt zehn- bis
+siebzehnfach (Werbung 0.6 → 10.2 %, Sendung 0.9 → 8.8 %). Es ist also
+kein Handvoll-Effekt.
+
+**Was die Sonde NICHT zeigt.** Dass ein anderes Backbone diese Sekunden
+trennen würde. Sie zeigt, dass die Fehler dort sitzen, wo die HEUTIGE
+Repräsentation Werbung und Sendung übereinanderlegt. Die Sekunden könnten
+auch schlicht mehrdeutig sein — ein Trailer, der wie Sendung aussieht,
+bleibt in jeder Repräsentation schwer. Notwendiges Indiz, kein Beweis.
+
+**Empfehlung.** Idee 4 ist damit belegt statt vermutet, aber der nächste
+Schritt ist nicht das Antrainieren. Er ist die Quellen aufzuheben: 291
+belegen 303 GB, der ganze Korpus wäre rund ein Terabyte, auf der T7 sind
+1,5 frei. Ohne diese Entscheidung bleibt Idee 4 für immer unmöglich, weil
+der Korpus nie wieder extrahiert werden kann. Mit ihr ist sie in einem
+halben Jahr möglich. Davor lohnt der billigere Blick auf Let's Dance,
+das allein 36 % der Verwechslungsfehler stellt.

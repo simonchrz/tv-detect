@@ -3820,3 +3820,54 @@ Bildern.** Sie kostet zwei Läufe und hat hier beide Fehler aufgedeckt.
 **3. Dimensionierung.** 20 Agenten × ~85 Bilder gleichzeitig haben das
 Sitzungslimit gesprengt: 2 von 20 kamen durch, 18 brachen ab. Chargen von
 fünf.
+
+### 2026-09-07 — Kein systematischer Frühstart. Der grobe Durchgang, gegen seine eigene Quantisierung gerechnet
+
+Nachdem die kantenbezogene Agenten-Prüfung sich als untauglich erwiesen hat
+(s. u.), der grobe Durchgang auf vier train-Aufnahmen aus den vier
+schwächsten Serien (Simpsons 0.62, Beet-Brüder 0.70, Goldbergs 0.78, Bella
+Italia 0.80), 45-s-Takt über die ganze Aufnahme, **anonymisierte Bilder**
+(Sonnet, 414 Bilder).
+
+```
+                     roh      Quantisierung   nach Abzug   über 45-s-Takt
+Blockstarts      +20 s         +29 s            −9 s          2 von 9
+Blockenden       +16 s          +8 s            +8 s          1 von 9
+```
+
+Die Quantisierungszahlen stammen aus der Eichung vom 2026-08-17 gegen
+**menschliche** Golden-Labels (`grobes_raster_misst_sich_selbst`): der grobe
+Durchgang setzt den Blockstart auf den ersten Werbe-Rasterpunkt und meldet
+ihn deshalb per Konstruktion ~29 s zu spät, egal wie gut die Referenz ist.
+
+**Ergebnis: kein systematischer Frühstart.** Nach Abzug der Quantisierung
+liegt der Median bei −9 s, also unter dem Raster und mit umgekehrtem
+Vorzeichen. Damit ist die These aus §3al („das Modell startet Werbeblöcke
+systematisch 20–72 s zu früh") auf diesem Satz **nicht reproduziert**. Sie
+war schon 08-17 zur Hälfte als Artefakt entlarvt worden; hier bleibt auch
+der Rest nicht stehen.
+
+⚠️ Das ist kein Freispruch für den Detektor, sondern für die *Richtung*.
+Einzelne Fehler gibt es weiter — sie streuen nur, statt zu zeigen.
+
+**Was über dem Raster übrig bleibt, sind zwei Aufnahmen:**
+
+* `dvr-rtlzwei-1788603300` (Bella Italia): Start +114 s bei einem Block,
+  Ende +65 s bei einem anderen — beide deutlich über dem Takt.
+* `dvr-prosieben-1781344194` (Die Goldbergs): der grobe Durchgang **zerlegt**
+  den Modellblock 13:33–20:56 in zwei (13:30–16:30 und 18:00–21:00). Rund
+  90 s in der Mitte sieht der Agent als Sendung. Das ist die interessanteste
+  Einzelbeobachtung des Laufs, weil sie nicht von der Quantisierung erklärbar
+  ist.
+
+Für beide gibt es die zweite Stufe `--vorbereiten --fein` (Fenster
+`[t − Takt − 15 s, t + 15 s]`, bewusst asymmetrisch). Noch nicht gelaufen.
+
+**Warum die kantenbezogene Prüfung davor gescheitert ist.** Sieben
+Aufnahmen, ~480 anonymisierte Bilder, Ausbeute: **sieben Kanten mit exakt
+±5 s** — und 5 s ist die Abtastschrittweite. Das ist Quantisierung, kein
+Befund. Ursache: das Fenster ist ±40 s um die MODELLKANTE. Die
+Anonymisierung nimmt dem Agenten den informationellen Anker, aber nicht den
+**Abtast-Anker** — außerhalb ±40 s existieren keine Bilder, ein Fehler von
+68 s oder 200 s kann dort nicht auftauchen. Ein Verfahren, das nur dort
+hinsieht, wo das Modell hinsieht, kann das Modell nicht widerlegen.

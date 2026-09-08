@@ -5319,3 +5319,45 @@ liegt nach der Let's-Dance-Quarantäne bei 0.949 gegen einen Boden von
 +0.0024-Effekt ist kleiner als dieser Rückstand. Erwartbar ist eine
 zweite Ablehnung, und das wäre kein Widerspruch zu O22, sondern die
 Quarantäne, die weiterwirkt.
+
+### Nachtrag 2026-09-08 (Tagesdurchgang) — Ablehnung wie erwartet, ein Loch im Gate vor der ersten Schwankungs-Nacht
+
+**Nightly 09-08 (03:30): REJECTED**, Golden 0.949 gegen Bestwert 0.9635,
+paarweise 2 besser / 10 schlechter. Das ist die erste Nacht nach der
+Let's-Dance-Quarantäne und war so angekündigt; `head.bin` ist byte-gleich
+mit dem Archiv vom 07.09., der Champion steht. Audit exit 0, keine
+verworfenen Nächte, set_hash und Decoder unverändert (38/38 gepinnt).
+Keine Serie läuft: O19–O22 sind alle am 07./08.09. in ihren Dateien
+entschieden, O18 zurückgestellt. Kein Urteil heute, nichts eingereiht.
+
+**Defekt, gefunden beim Lesen des Gate-Pfads für heute Nacht.** Mit
+`--audio-dynamik` wird Spalte 1281 am Ladepunkt ERSETZT — für alle
+Aufnahmen, also auch für `test_recs_ch`. Das head-to-head scort darauf
+den Champion `head.gate.bin`, der auf dem Pegel trainiert ist. Gleiche
+Breite 1282, falsche Spalte, kein Absturz. Folgen in BEIDEN Gates:
+das paarweise Delta kippt zugunsten des Kandidaten, und `golden_boden`
+nimmt denselben re-gescorten Champion als `g_champ` — ein deflationierter
+Champion macht die Waiver-Zeile „schlägt aber den Champion — Aufstieg"
+wahr, und der Kandidat steigt unter dem Boden am Boden vorbei auf. Genau
+die Kopplung, die die Beilage für den Daemon schließt, fehlte für das
+Gate.
+
+**Fix (`train-head.py`):** `audio_semantik_beilage()` liest
+`head.audio.json` neben dem deployten Kopf (fehlt → Pegel, wie der
+Daemon); differiert sie von der Kandidaten-Semantik, wird das
+head-to-head laut ausgesetzt — derselbe Zweig wie bei input_dim- oder
+channel-map-Unterschied. Es schützen dann historischer Boden und
+Golden-Boden ohne Champion-Vergleich. Erwartet genau in der ERSTEN Nacht
+nach dem Umschalten; ab dem ersten deployten Schwankungs-Kopf trägt die
+Beilage `true` und der Vergleich läuft wieder. Vier Tests für den Leser,
+einer nagelt den Zweig fest. Nichts am Golden-Boden, an Labels, am
+Header oder am Go-Pfad.
+
+**Nebenbei:** `audit-preregistration.py` führte O19–O22 als „Serie hat
+noch nicht begonnen", obwohl sie entschieden sind — `nicht_in_
+serienabschluss` wurde ignoriert. Jetzt: „ABGESCHLOSSEN laut Datei".
+Ein Tagesdurchgang hätte sie sonst als wartende Warteschlange gelesen.
+
+**Heute Nacht** ist damit weiterhin eine Ablehnung wahrscheinlich
+(Golden-Rückstand 0.014 > gemessener O22-Effekt), aber jetzt aus dem
+richtigen Grund und ohne den Aufstiegs-Waiver auf falscher Grundlage.

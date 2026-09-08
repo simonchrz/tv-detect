@@ -170,5 +170,57 @@ class Kopplung(unittest.TestCase):
                             f"Go-Seite pruefen")
 
 
+def _lade_beilage_leser():
+    """audio_semantik_beilage braucht json + Path, nicht np."""
+    import json as _j
+    quelle = (_HIER / "train-head.py").read_text()
+    baum = ast.parse(quelle)
+    fn = [n for n in baum.body
+          if isinstance(n, ast.FunctionDef)
+          and n.name == "audio_semantik_beilage"]
+    if not fn:
+        raise AssertionError("audio_semantik_beilage nicht in train-head.py")
+    mod = types.ModuleType("ausschnitt2")
+    mod.json, mod.Path = _j, Path
+    exec(compile(ast.Module([fn[0]], []), "<f>", "exec"), mod.__dict__)
+    return mod.audio_semantik_beilage
+
+
+class Beilage(unittest.TestCase):
+    """Der Champion wird im Gate auf den Spalten des KANDIDATEN gescort.
+    Gleiche Breite heisst nicht gleiche Spalte — nur die Beilage sagt,
+    was der deployte Kopf erwartet. Fehlt sie: Pegel, wie vor 2026-09-08."""
+
+    def setUp(self):
+        import tempfile
+        self.lese = _lade_beilage_leser()
+        self.tmp = Path(tempfile.mkdtemp())
+        self.head = self.tmp / "head.bin"
+
+    def test_ohne_beilage_gilt_pegel(self):
+        self.assertEqual(self.lese(self.head), (False, 30))
+
+    def test_beilage_true_wird_gelesen(self):
+        (self.tmp / "head.audio.json").write_text(
+            '{"dynamik": true, "fenster": 30, "ts": "x"}')
+        self.assertEqual(self.lese(self.head), (True, 30))
+
+    def test_beilage_false_ueberschreibt_nichts_stilles(self):
+        (self.tmp / "head.audio.json").write_text(
+            '{"dynamik": false, "fenster": 30}')
+        self.assertEqual(self.lese(self.head), (False, 30))
+
+    def test_unlesbare_beilage_faellt_auf_pegel(self):
+        (self.tmp / "head.audio.json").write_text("{kaputt")
+        self.assertEqual(self.lese(self.head), (False, 30))
+
+    def test_gate_zweig_existiert(self):
+        # Der Zweig, der das head-to-head bei Semantik-Unterschied
+        # aussetzt, darf nicht still verschwinden.
+        quelle = (_HIER / "train-head.py").read_text()
+        self.assertIn("Audio-Semantik differiert", quelle)
+        self.assertIn("and _audio_gleich", quelle)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -917,6 +917,24 @@ def extract_audio_yamnet_per_second(src, n_seconds, target_sr=16000):
     return emb_1hz[:n_seconds].astype(np.float32)
 
 
+def audio_semantik_beilage(head_path):
+    """(dynamik, fenster) des DEPLOYTEN Kopfes, gelesen aus head.audio.json.
+
+    Fehlt die Beilage oder ist sie unlesbar: (False, 30) = Pegel — das gilt
+    fuer jeden Kopf von vor 2026-09-08 und ist der sichere Rueckfall, den
+    auch der Daemon nimmt. Die Bauform "Spalte ERSETZEN" laesst die Breite
+    bei 1282, also kann der Header es nicht sagen; nur die Beilage weiss es.
+    """
+    pfad = Path(head_path).with_suffix(".audio.json")
+    try:
+        if pfad.is_file():
+            d = json.loads(pfad.read_text())
+            return bool(d.get("dynamik")), int(d.get("fenster") or 30)
+    except Exception:
+        pass
+    return False, 30
+
+
 def audio_dynamik(rms, fenster=30):
     """Gleitende Standardabweichung der Lautheit — was die Spalte KANN.
 
@@ -5203,11 +5221,38 @@ def main():
             # dem MLP1-Lesefix. `_dep_slugs or []` faengt zusaetzlich einen
             # fehlenden/leeren Sidecar ab. Gefixt 2026-08-23.
             _prod_slugs_wirksam = prod_chan_slugs if wants_kanal else []
+            # ⚠️ Gleiche Breite heisst NICHT gleiche Spalte (O22, 2026-09-08).
+            # Seit --audio-dynamik kann Spalte 1281 den Pegel ODER seine
+            # Schwankung tragen, bei identischem input_dim. test_recs_ch ist
+            # bereits in der Semantik des KANDIDATEN gebaut; ein Champion
+            # der anderen Semantik wuerde darauf still schlechter gescort,
+            # und zwar in BEIDEN Gates: das paarweise Delta kippt zu seinen
+            # Ungunsten, und golden_boden nimmt champ_pr als g_champ — der
+            # Kandidat "schlaegt den Champion" und steigt am Boden vorbei
+            # auf. Also wie bei channel-map/input_dim: nicht raten, sondern
+            # laut aussetzen und auf den historischen Boden zurueckfallen.
+            _audio_champ = audio_semantik_beilage(args.output)
+            _audio_kand = (bool(getattr(args, "audio_dynamik", False)),
+                           int(getattr(args, "audio_dynamik_fenster", 30))
+                           if getattr(args, "audio_dynamik", False) else 30)
+            _audio_gleich = _audio_champ == _audio_kand
             if (_dep is not None and _dep.input_dim == mlp_prod_in_dim
-                    and (_dep_slugs or []) == _prod_slugs_wirksam):
+                    and (_dep_slugs or []) == _prod_slugs_wirksam
+                    and _audio_gleich):
                 print("\n=== deployed-head re-eval (head-to-head, smooth=10s) ===")
                 deployed_test_metrics = eval_split(_dep, test_recs_ch,
                                                    args.fps_extract, smooth_s=10)
+            elif (_dep is not None and _dep.input_dim == mlp_prod_in_dim
+                    and not _audio_gleich):
+                print(f"  ⚠️ head-to-head SKIPPED: Audio-Semantik differiert — "
+                      f"deployt dynamik={_audio_champ[0]} (Fenster "
+                      f"{_audio_champ[1]} s), Kandidat dynamik={_audio_kand[0]} "
+                      f"(Fenster {_audio_kand[1]} s). Der Champion wuerde auf "
+                      f"der falschen Spalte gescort. Es schuetzen nur noch der "
+                      f"historische IoU-Boden und der Golden-Boden (ohne "
+                      f"Champion-Vergleich). Erwartet in der ERSTEN Nacht nach "
+                      f"dem Umschalten; danach traegt die Beilage die neue "
+                      f"Semantik und der Vergleich laeuft wieder.")
             elif _dep is not None and _dep.input_dim == mlp_prod_in_dim:
                 print(f"  head-to-head skipped: channel-map differs — deployt "
                       f"{_dep_slugs or []!r}, Kandidat wirksam "

@@ -99,6 +99,24 @@ def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
     print(f"  Registrierung: {pfad.name}")
     print("=" * 68)
 
+    # Offline-/Dekoder-A/Bs (O19–O22) tragen `nicht_in_serienabschluss`:
+    # sie lesen keine Nightly-Zeilen, ihr Urteil steht im Kopf der Datei.
+    # Ohne diesen Zweig erschienen sie als "Serie hat noch nicht begonnen"
+    # — und der Tagesdurchgang liest das als "eingereiht, wartet".
+    if regel.get("nicht_in_serienabschluss"):
+        try:
+            kopf = pfad.read_text(errors="replace")[:2000]
+        except Exception:
+            kopf = ""
+        if "ABGESCHLOSSEN" in kopf:
+            print("  Stand: ABGESCHLOSSEN laut Datei — kein Nachtserien-"
+                  "Waechter (offline-/dekoder-A/B), Urteil steht im Kopf "
+                  "der Registrierung.")
+        else:
+            print("  Stand: offen, ohne Nachtserien-Waechter (offline-/"
+                  "dekoder-A/B) — Urteil wird in der Datei selbst verbucht.")
+        return True
+
     g = regel.get("gueltige_nacht", {})
     arme = regel.get("arme", {})
     a_mit, a_ohne = arme.get("mit"), arme.get("ohne")

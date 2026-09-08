@@ -145,13 +145,23 @@ class Kopplung(unittest.TestCase):
         d = (_HIER.parent / "daemon" / "tv-thumbs-daemon.py").read_text()
         self.assertIn("head.audio.json", d,
                       "der Daemon muss die Beilage lesen")
+        # ⚠️ Kein festes Zeichenfenster. Der erste Entwurf pruefte 900
+        # Zeichen ab dem Beilagen-Pfad und brach, als die
+        # Binary-Pruefung dazwischenkam — ein Test, der an einer
+        # Zeilenzahl haengt, meldet Umbauten als Defekte. Geprueft wird
+        # die REIHENFOLGE: erst lesen, dann entscheiden, dann setzen.
         i = d.index('_ad_pfad = MODEL_CACHE / "head.audio.json"')
-        block = d[i:i + 900]
-        self.assertIn('"--audio-dynamik"', block)
+        j = d.index('"--audio-dynamik"', i)
+        self.assertGreater(j, i, "das Flag muss NACH dem Lesen gesetzt werden")
+        block = d[i:j + 200]
         self.assertIn('.get("dynamik")', block,
                       "die Entscheidung haengt am Feld, nicht an einer Heuristik")
         # Fehlende oder kaputte Beilage MUSS auf den Pegel zurueckfallen.
         self.assertIn("except Exception", block)
+        # Und das Binary muss das Flag ueberhaupt kennen (2026-09-08:
+        # das installierte war einen Tag alt und haette hart abgebrochen).
+        self.assertIn("_binary_kennt_audio_dynamik", block,
+                      "vor dem Setzen pruefen, ob tv-detect das Flag kennt")
 
     def test_go_und_python_haben_dieselbe_fixture(self):
         fix = (_HIER.parent / "internal" / "signals" / "testdata"

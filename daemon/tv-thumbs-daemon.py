@@ -203,7 +203,14 @@ DETECT_DECODE_SCALE = float(os.environ.get("DETECT_DECODE_SCALE", "0.5") or "1.0
 SNAPSHOT_MARKER = Path.home() / ".cache" / "tv-detect-daemon" / "snapshot-requested"
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 SOURCE_CACHE.mkdir(parents=True, exist_ok=True)
+# ⚠️ Seit 2026-09-08 entscheidet der FREIE PLATZ, nicht die Cache-Groesse.
+# Der alte Deckel (60 GB) war wirkungslos: die Sole-Copy-Sperre in
+# _maybe_evict_source_cache uebersprang fast jede Datei, und im
+# Verzeichnis lagen 305 GB. Simons Entscheid: Quellen aufheben, solange
+# Platz da ist.
 SOURCE_CACHE_MAX_GB = int(os.environ.get("SOURCE_CACHE_MAX_GB", "60"))
+SOURCE_CACHE_MIN_FREE_GB = int(os.environ.get("SOURCE_CACHE_MIN_FREE_GB", "200"))
+SOURCE_CACHE_HARD_FREE_GB = int(os.environ.get("SOURCE_CACHE_HARD_FREE_GB", "80"))
 
 # Golden-Satz: NIE verdraengen.
 #
@@ -527,12 +534,92 @@ def _maybe_whisper_refine(uuid, src_path, raw_cutlist):
         return raw_cutlist
 
 
+_AD_KANN = None
+
+
+def _binary_kennt_audio_dynamik():
+    """Einmal je Prozess pruefen, ob tv-detect --audio-dynamik kennt.
+
+    Die Kopplung Kopf↔Dekoder hat drei Stellen, und heute sind zwei davon
+    gerissen: die Gateway-Whitelist gab head.audio.json nicht heraus, und
+    das installierte Binary war einen Tag alt. Beide waren fuer sich
+    richtig gebaut. Diese Pruefung faengt die dritte.
+    """
+    global _AD_KANN
+    if _AD_KANN is None:
+        try:
+            r = subprocess.run([TVD, "-h"], capture_output=True, text=True,
+                               timeout=10)
+            _AD_KANN = "audio-dynamik" in (r.stdout + r.stderr)
+        except Exception:
+            _AD_KANN = False
+    return _AD_KANN
+
+
+def _freier_platz_gb(pfad):
+    st = os.statvfs(pfad)
+    return st.f_bavail * st.f_frsize / 1024 ** 3
+
+
 def _maybe_evict_source_cache():
+    """Quellen aufheben, solange Platz da ist (Simons Entscheid 2026-09-08).
+
+    # WARUM NICHT MEHR EIN GROESSEN-DECKEL
+
+    `SOURCE_CACHE_MAX_GB` stand auf 60, im Verzeichnis lagen 305 GB. Der
+    Deckel war wirkungslos, weil die Sole-Copy-Sperre unten fast jede
+    Datei ueberspringt: was der Pi nicht mehr hat, darf nicht weg. Ein
+    Deckel, den die eigene Schutzregel nicht durchsetzen kann, ist keine
+    Regel, sondern eine Zahl, die jemanden in Sicherheit wiegt.
+
+    # WARUM ES SICH LOHNT, SIE AUFZUHEBEN
+
+    Ohne Quelle lassen sich die Merkmale nie wieder NEU berechnen. Am
+    2026-09-08 hatten 737 von 1028 Aufnahmen keine mehr — damit ist jede
+    Idee ausgeschlossen, die andere Merkmale braucht (antrainiertes
+    Backbone, hoehere Aufloesung, zusaetzliches Bildsignal). Nicht
+    schwierig, sondern unmoeglich, weil das Material weg ist. Aufheben
+    kauft die Option zurueck, aber nur fuer das, was ab jetzt anfaellt.
+
+    # DIE REGEL, ZWEISTUFIG
+
+    Stufe 1 — unterhalb MIN_FREE: nur DUPLIKATE raeumen, also Dateien,
+    die der Pi auch noch hat. Kostet nichts, die Aufnahme bleibt
+    erreichbar.
+
+    Stufe 2 — unterhalb HARD_FREE: auch Sole-Copies raeumen, aeltester
+    Zugriff zuerst, und zwar LAUT. Eine volle Platte bricht alles; ein
+    verlorener Korpus-Eintrag bricht eine Option. Diese Stufe ist der
+    Moment, in dem das Aufheben-Versprechen reisst, und sie darf nicht
+    stillschweigend eintreten.
+
+    Der Maßstab (Golden, versiegelt) ist in BEIDEN Stufen geschuetzt.
+
+    # HORIZONT, damit niemand sich taeuscht
+
+    Stand 2026-09-08: 1558 GB frei, ~1.04 GB je Aufnahme, Zuwachs rund
+    200 Aufnahmen im Monat. Das reicht fuer etwa siebeneinhalb Monate,
+    bis Stufe 1 greift — nicht fuer Jahre.
+    """
     files = sorted(SOURCE_CACHE.glob("*.ts"),
                    key=lambda p: p.stat().st_atime)
-    total = sum(f.stat().st_size for f in files)
-    cap = SOURCE_CACHE_MAX_GB * 1024 ** 3
-    while total > cap and files:
+    if not files:
+        return
+    frei = _freier_platz_gb(SOURCE_CACHE)
+    if frei >= SOURCE_CACHE_MIN_FREE_GB:
+        return
+    notlage = frei < SOURCE_CACHE_HARD_FREE_GB
+    if notlage:
+        print(f"  ⚠️ Quellen-Cache: nur noch {frei:.0f} GB frei (Notgrenze "
+              f"{SOURCE_CACHE_HARD_FREE_GB}) — es werden jetzt auch "
+              f"EINZIGE Kopien geraeumt. Damit gehen Aufnahmen dem Korpus "
+              f"endgueltig verloren; Platz schaffen oder die Grenzen "
+              f"anpassen.", flush=True)
+    else:
+        print(f"  Quellen-Cache: {frei:.0f} GB frei (unter "
+              f"{SOURCE_CACHE_MIN_FREE_GB}) — raeume Duplikate, die der "
+              f"Pi noch hat.", flush=True)
+    while _freier_platz_gb(SOURCE_CACHE) < SOURCE_CACHE_MIN_FREE_GB and files:
         oldest = files.pop(0)
         # Sole-copy guard: if Pi no longer has the source (= drop-pi-
         # source already fired for this uuid), the T7 cache is the
@@ -554,8 +641,11 @@ def _maybe_evict_source_cache():
         except Exception:
             # Gateway unreachable → don't risk evicting; pause cycle.
             break
-        if not pi_has:
+        if not pi_has and not notlage:
             continue  # protected — try older dups instead
+        if not pi_has:
+            print(f"    ⚠️ raeume EINZIGE Kopie {uuid} — der Korpus "
+                  f"verliert sie endgueltig", flush=True)
         sz = oldest.stat().st_size
         try: oldest.unlink(); total -= sz
         except Exception: pass
@@ -2397,6 +2487,21 @@ def process_detect(uuid):
             if _ad_pfad.is_file():
                 _ad = json.loads(_ad_pfad.read_text())
                 if _ad.get("dynamik"):
+                    # ⚠️ Kennt das INSTALLIERTE Binary das Flag? Am
+                    # 2026-09-08 war es einen Tag alt und haette den
+                    # Detect mit "flag provided but not defined" hart
+                    # abgebrochen. Hart ist hier besser als still — ein
+                    # Binary ohne das Flag hat auch die Umrechnung nicht,
+                    # der Kopf bekaeme also ohnehin die falsche Spalte.
+                    # Aber die Meldung soll sagen, WAS zu tun ist.
+                    if not _binary_kennt_audio_dynamik():
+                        print(f"  detect {uuid}: ⚠️ der deployte Kopf will "
+                              f"die Audio-Schwankung, aber {TVD} kennt "
+                              f"--audio-dynamik nicht. Binary aus "
+                              f"tv-detect neu bauen und nach ~/.local/bin "
+                              f"kopieren. Detect wird uebersprungen.",
+                              flush=True)
+                        return
                     cmd += ["--audio-dynamik",
                             "--audio-dynamik-fenster",
                             str(int(_ad.get("fenster") or 30))]

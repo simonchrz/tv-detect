@@ -5458,3 +5458,50 @@ nicht sehen — heute stand dort folgerichtig 0.9726 gegen 0.9726, obwohl
 ein neuer Kopf deployt wurde. Für Label- und Dekoderfragen ist das
 richtig so; für Kopffragen ist es blind, und wer es dafür liest, liest
 falsch.
+
+### Nachtrag 2026-09-08 (Abend) — Quellen werden aufgehoben; und zwei Risse in derselben Kette
+
+Simons Entscheid: „Quellen aufheben, ja solange noch genügend Platz da
+ist." Umgesetzt — und beim Umsetzen fiel der dritte Riss der
+Audio-Kopplung auf.
+
+#### Der dritte Riss: das installierte Binary
+
+Der Daemon ruft `~/.local/bin/tv-detect`, nicht das gebaute. Das
+installierte war vom 07.09. und kannte `--audio-dynamik` nicht:
+
+    flag provided but not defined: -audio-dynamik
+
+Der nächste Detect wäre **hart abgebrochen**. Anders als die 404 auf der
+Beilage ist das wenigstens laut — aber es hätte die Erkennung gestoppt.
+Binary gesichert und neu installiert, Flag verifiziert.
+
+**Die Kopplung hatte damit drei Stellen und zwei sind gerissen:**
+Gateway-Whitelist (404) und installiertes Binary (unbekanntes Flag).
+Beide Enden waren je für sich richtig gebaut und getestet. Der Daemon
+prüft jetzt vor dem Setzen des Flags, ob das Binary es kennt, und
+überspringt den Detect mit einer Meldung, die sagt, was zu tun ist.
+
+#### Quellen-Aufbewahrung: von der Größe auf den freien Platz
+
+`SOURCE_CACHE_MAX_GB` stand auf 60, im Verzeichnis lagen 305 GB. Der
+Deckel war **wirkungslos**, weil die Sole-Copy-Sperre fast jede Datei
+überspringt: was der Pi nicht mehr hat, darf nicht weg. Ein Deckel, den
+die eigene Schutzregel nicht durchsetzen kann, ist keine Regel.
+
+Neu, zweistufig:
+
+| Stufe | Schwelle | Verhalten |
+|---|---|---|
+| 1 | unter 200 GB frei | nur **Duplikate** räumen, die der Pi noch hat |
+| 2 | unter 80 GB frei | auch **einzige** Kopien, ältester Zugriff zuerst, **laut** |
+
+Der Maßstab (Golden, versiegelt) ist in beiden Stufen geschützt. Stufe 2
+ist der Moment, in dem das Aufheben-Versprechen reisst, und sie meldet
+sich ausdrücklich — eine volle Platte bricht alles, ein verlorener
+Korpus-Eintrag bricht eine Option.
+
+**Der Horizont, damit sich niemand täuscht:** 1559 GB frei, rund 1.04 GB
+je Aufnahme, Zuwachs etwa 200 Aufnahmen im Monat. Das reicht **6.5
+Monate** bis Stufe 1 — nicht für Jahre. Wer den Korpus dauerhaft
+vollständig halten will, braucht dann mehr Platz.

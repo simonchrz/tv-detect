@@ -5087,3 +5087,83 @@ Solange das Gate ablehnt, deployt nichts — die Produktion ist sicher, aber
 sie steht auch still. Das ist eine Entscheidung, die Simon treffen muss:
 Quarantäne zurücknehmen, oder den Verlust akzeptieren und darauf warten,
 dass neue Aufnahmen ihn ausgleichen.
+
+### Nachtrag 2026-09-08 — drei Diagnosen: Zerlegung, Lernkurve, Spalten-Wichtigkeit
+
+Auf die Frage „was können wir noch optimieren, wissenschaftlich" drei
+Standard-Diagnosen gefahren, die jede eine ganze Klasse von Eingriffen
+deckeln, bevor jemand baut.
+
+#### 1. Zerlegung neu abgeleitet (korrigierte Labels)
+
+5882 Verlust-Sekunden, nach Anker und Logo aufgeschlüsselt:
+
+| Wer | Sekunden | Anteil |
+|---|---|---|
+| Label | 2036 | 34.6 % |
+| Kante | 1937 | 32.9 % |
+| Dekoder | 873 | 14.8 % |
+| unklar | 717 | 12.2 % |
+| **NN** | **319** | **5.4 %** |
+
+Bemerkenswert stabil: die NN-Posten sind mit **319 s exakt so gross wie
+vor Simons neun Korrekturen**. Die Korrekturen haben ausschliesslich den
+Label-Posten geschrumpft (2544 → 2036 s). Das ist die Gegenprobe darauf,
+dass die Zerlegung wirklich trennt, was sie zu trennen behauptet.
+
+#### 2. Lernkurve — ist der Korpus satt?
+
+Derselbe Kopf auf 25 / 50 / 75 / 100 % der Aufnahmen, gezogen nach
+AUFNAHME (nicht nach Zeile — Sekunden derselben Aufnahme sind abhängig,
+zeilenweises Ziehen misst Sättigung viel zu früh), geschachtelt, drei
+Seeds:
+
+| Anteil | Aufnahmen | F1 (Median) | Zuwachs |
+|---|---|---|---|
+| 25 % | 152 | 0.8541 | — |
+| 50 % | 305 | 0.8729 | +0.0188 |
+| 75 % | 458 | 0.8942 | +0.0213 |
+| 100 % | 610 | 0.9022 | +0.0080 |
+
+**Der Korpus ist NICHT gesättigt, aber nah dran.** Der Zuwachs im letzten
+Viertel liegt mit +0.0080 noch über dem Seed-Rauschen (0.0045), hat sich
+gegenüber dem vorigen Viertel aber halbiert. Grob extrapoliert brächte
+eine Verdopplung auf 1220 Aufnahmen noch einmal rund +0.008 F1 — spürbar,
+aber klein gegen die Kosten, und der Gesamtdeckel bleibt 0.027 IoU.
+
+**Damit ist die Beschaffungsfrage beantwortet, ohne ein Label
+anzufassen:** mehr Labels DERSELBEN Art lohnen kaum noch. Wenn Labels,
+dann andersartige (Unterklassen), und deren Nutzen ist mit O20 offen
+geblieben, nicht widerlegt.
+
+#### 3. Spalten-Wichtigkeit am DEPLOYTEN Kopf
+
+Permutations-Wichtigkeit, 51714 Zeilen aus 60 Aufnahmen, nichts trainiert:
+
+| Gruppe | F1 gemischt | Verlust |
+|---|---|---|
+| Backbone (0–1279) | 0.4541 | **0.4481** |
+| Logo (1280) | 0.6069 | **0.2954** |
+| Audio (1281) | 0.9002 | **0.0021** |
+
+⚠️ Die 1280 Backbone-Spalten werden als GRUPPE gemischt. Einzeln misst man
+bei korrelierten Einbettungen nur Redundanz, jede Spalte sähe wertlos aus.
+
+**Die Audio-Spalte ist praktisch tot.** 0.0021 Verlust liegt in derselben
+Größenordnung wie das Rauschen — der Kopf benutzt sie nicht. Das reiht
+sich ein in `tv_detect_mlp4_minute_prior_migration` (Minute-Prior acht
+Nächte inert) und `merkmalsspalte_verschoben_auffueller`.
+
+**Das Logo trägt ein Drittel so viel wie 1280 Backbone-Spalten
+zusammen** — eine einzige Spalte. Das erklärt rückwirkend, warum
+`sixx_logo_washout` und das versteckte Logo bei Let's Dance so teuer
+sind: an diesen Stellen fällt der zweitwichtigste Eingang aus.
+
+#### Was daraus folgt
+
+1. **Audio-Spalte prüfen, nicht ausbauen.** Erst klären, ob sie tot
+   GEMEINT ist oder still kaputt — dieselbe Frage wie beim Minute-Prior.
+2. **Logo-Robustheit ist der grösste Hebel am NN**, den diese Diagnose
+   sichtbar macht: eine Spalte mit 0.295 Wichtigkeit, die bei mindestens
+   zwei bekannten Sendungsklassen ausfällt.
+3. Mehr Labels derselben Art: abgehakt.

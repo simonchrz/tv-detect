@@ -63,6 +63,8 @@ func main() {
 		bumperTemplates  = flag.String("bumper-templates", "", "comma-separated list of PNG paths used as END-of-ad-block reference frames (e.g. sixx 'WIE SIXX IST DAS DENN?' card, RTL 'Mein RTL'). Snaps block END boundaries. All templates are matched per frame; max score wins.")
 		bumperStartTpls  = flag.String("bumper-templates-start", "", "comma-separated list of PNG paths for START-of-ad-block reference frames (e.g. sixx 'WERBUNG'-announcer card). Snaps block START boundaries. Uses the same threshold and snap window as --bumper-templates but a separate per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.")
 		withAudio        = flag.Bool("with-audio", false, "extract per-second audio RMS via ffmpeg and feed it to the NN as the (rms) feature. Required for +AUDIO heads (5132 / 5156 B). Default false — set to true when the deployed head was trained with --with-audio. Adds ~5-10 s overhead per recording for the extra ffmpeg pass.")
+		audioDynamik     = flag.Bool("audio-dynamik", false, "Audio-Spalte durch ihre gleitende Standardabweichung ueber 30 s ersetzen (O22). NUR fuer Koepfe, die mit train-head.py --audio-dynamik trainiert wurden — sonst bekommt der Kopf still eine andere Zahl, als er gelernt hat, und die Bloecke werden schlechter, ohne dass etwas abstuerzt.")
+		audioDynFenster  = flag.Int("audio-dynamik-fenster", 30, "Fensterbreite der Audio-Schwankung in Sekunden")
 		bumperSnapS      = flag.Float64("bumper-snap", 10, "post-refine snap each ad-block END to the latest bumper-match peak within ±this seconds. 0 = off. Strongest deterministic ad-end signal when --bumper-templates is set; overrides logo/scene-cut/I-frame refinement for the END boundary.")
 		bumperEndGuard   = flag.Bool("bumper-end-nn-guard", false, "reject end-bumper snap targets where the smoothed NN already reads show (>0.55). Breaks close with programme trailers whose footage matches ident templates, dragging the block END past the show's return. Opt-in pending corpus A/B.")
 		bumperThresh     = flag.Float64("bumper-threshold", 0.85, "bumper match score required for a snap (default 0.85). Above all observed show-content false positives in validation.")
@@ -294,6 +296,8 @@ func main() {
 		BumperStartTemplates: parseBumperTemplates(*bumperStartTpls),
 		BumperStride:         *bumperStride,
 		WithAudio:            *withAudio,
+		AudioDynamik:         *audioDynamik,
+		AudioDynamikFenster:  *audioDynFenster,
 		NNBackbonePath:       *nnBackbone,
 		NNHeadPath:           *nnHead,
 		NNChannelSlug:        *nnChannelSlug,

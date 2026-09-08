@@ -114,3 +114,75 @@ func ExtractAudioRMSPerSecond(ctx context.Context, src string, nSeconds int) []f
 	}
 	return padded
 }
+
+// AudioDynamik ersetzt die Lautheit durch ihre gleitende
+// Standardabweichung — das Gegenstueck zu audio_dynamik() in
+// scripts/train-head.py. Beide Seiten MUESSEN dieselbe Zahl liefern.
+//
+// # WARUM
+//
+// Der Kommentar an ExtractAudioRMSPerSecond begruendet die Spalte damit,
+// dass Werbung 6 bis 10 dB lauter laufe. Am 2026-09-08 ueber 293576
+// Sekunden aus 98 Aufnahmen gemessen: 1.23 dB. Die EU-Lautheits-
+// regulierung hat den alten Trick erledigt, und die Permutations-
+// Wichtigkeit am deployten Kopf zeigte die Spalte folgerichtig als
+// unbenutzt (Verlust 0.0021 gegen 0.2954 beim Logo).
+//
+// Was traegt, ist die SCHWANKUNG: Werbung ist stark komprimiert und
+// haelt ihren Pegel, Sendung hat Dialog, Musik und Stille. AUC innerhalb
+// jeder Aufnahme, Median ueber 98 Aufnahmen: Lautheit 0.592, Schwankung
+// ueber 30 s 0.726 (nuetzlich in 81 % der Aufnahmen).
+//
+// # DIE DEFINITION, VERBINDLICH FUER BEIDE SEITEN
+//
+//	d[i] = Populations-Standardabweichung von
+//	       rms[max(0, i-fenster/2) : min(n, i+fenster/2+1)]
+//
+// Zentriertes Fenster, an den Raendern BESCHNITTEN statt aufgefuellt,
+// Nenner n und nicht n-1. scripts/test_audio_dynamik.py nagelt genau
+// diese Kanten fest; TestAudioDynamikParitaet prueft sie hier gegen.
+//
+// # UEBER DIE GANZE AUFNAHME, NIE UEBER EIN STUECK
+//
+// Ein Fenster, das an einer Chunk-Grenze abgeschnitten wird, erzeugt
+// dort einen Sprung, den es nicht gibt — dieselbe Klasse wie die
+// Temporal-Deltas, die bis 2026-07-18 an jeder 32-Frame-Grenze auf null
+// fielen. Deshalb steht diese Funktion HIER, wo das Array fuer die ganze
+// Aufnahme entsteht, und nicht im Chunk-Pfad des Dekoders.
+func AudioDynamik(rms []float32, fenster int) []float32 {
+	n := len(rms)
+	out := make([]float32, n)
+	if n == 0 {
+		return out
+	}
+	if fenster < 1 {
+		fenster = 1
+	}
+	// Praefixsummen, damit jedes Fenster in konstanter Zeit faellt.
+	c1 := make([]float64, n+1)
+	c2 := make([]float64, n+1)
+	for i, v := range rms {
+		x := float64(v)
+		c1[i+1] = c1[i] + x
+		c2[i+1] = c2[i] + x*x
+	}
+	half := fenster / 2
+	for i := 0; i < n; i++ {
+		lo := i - half
+		if lo < 0 {
+			lo = 0
+		}
+		hi := i + half + 1
+		if hi > n {
+			hi = n
+		}
+		m := float64(hi - lo)
+		mu := (c1[hi] - c1[lo]) / m
+		v := (c2[hi]-c2[lo])/m - mu*mu
+		if v < 0 {
+			v = 0
+		}
+		out[i] = float32(math.Sqrt(v))
+	}
+	return out
+}

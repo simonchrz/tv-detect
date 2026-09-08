@@ -917,6 +917,54 @@ def extract_audio_yamnet_per_second(src, n_seconds, target_sr=16000):
     return emb_1hz[:n_seconds].astype(np.float32)
 
 
+def audio_dynamik(rms, fenster=30):
+    """Gleitende Standardabweichung der Lautheit — was die Spalte KANN.
+
+    ⚠️ WARUM DIE ROHE LAUTHEIT NICHT TRAEGT. Der Docstring von
+    `extract_audio_rms_per_second` begruendet die Spalte mit „ads ~6-10 dB
+    hotter than show content". Gemessen am 2026-09-08 ueber 293576
+    Sekunden aus 98 Aufnahmen: **1.23 dB.** Die EU-Lautheitsregulierung
+    hat den alten Trick erledigt, und die Spalten-Wichtigkeit am
+    deployten Kopf zeigte sie folgerichtig als unbenutzt
+    (Permutationsverlust 0.0021 gegen 0.2954 beim Logo).
+
+    Was traegt, ist die SCHWANKUNG: Werbung ist stark komprimiert und
+    haelt ihren Pegel; Sendung hat Dialog, Musik und Stille. AUC
+    innerhalb jeder Aufnahme, Median ueber 98 Aufnahmen:
+
+        Lautheit (wie bisher)      0.592   nuetzlich in 43 % der Aufnahmen
+        Schwankung ueber 10 s      0.695   nuetzlich in 80 %
+        Schwankung ueber 30 s      0.726   nuetzlich in 81 %
+
+    ⚠️ Je Aufnahme gerechnet, nicht gepoolt. Gepoolt sieht die Schwankung
+    mit AUC 0.31 wertlos aus — sie ist INVERS informativ, und der
+    gepoolte Wert mischt Unterschiede zwischen Sendern hinein.
+
+    O22 (docs/o22-audio-dynamik-preregistration.md) hat gemessen, dass
+    die ERSETZUNG der Spalte den Kopf besser macht: Median-ΔF1 +0.0024,
+    positiv in 8 von 8 Seeds. Das Hinzufuegen als 1283. Spalte war
+    gleich gross (+0.0028), aber nur 6 von 8 positiv — und haette ein
+    neues Kopf-Format gebraucht. Ersetzen laesst die Breite bei 1282.
+
+    Ueber die GANZE Aufnahme rechnen, nie ueber ein Stueck: ein Fenster,
+    das an einer Chunk-Grenze abgeschnitten wird, erzeugt dort einen
+    Sprung, den es nicht gibt (dieselbe Klasse wie die Temporal-Deltas,
+    die bis 2026-07-18 an jeder 32-Frame-Grenze auf null fielen).
+    """
+    a = np.asarray(rms, dtype=np.float64)
+    n = len(a)
+    if n == 0:
+        return np.zeros(0, dtype=np.float32)
+    c1 = np.cumsum(np.concatenate([[0.0], a]))
+    c2 = np.cumsum(np.concatenate([[0.0], a * a]))
+    lo = np.maximum(0, np.arange(n) - fenster // 2)
+    hi = np.minimum(n, np.arange(n) + fenster // 2 + 1)
+    m = (hi - lo).astype(np.float64)
+    mu = (c1[hi] - c1[lo]) / m
+    var = np.maximum(0.0, (c2[hi] - c2[lo]) / m - mu * mu)
+    return np.sqrt(var).astype(np.float32)
+
+
 def extract_audio_rms_per_second(src, n_seconds, sample_rate=48000):
     """Extract per-second RMS loudness via ffmpeg astats. Returns a
     (n_seconds,) float32 array normalised so very quiet (≤ -60 dB) → 0
@@ -2421,6 +2469,13 @@ def main():
              "keeps training the head after its .ts is deleted/dedup'd. Empty "
              "string disables.")
     ap.add_argument("--fps-extract", type=float, default=1.0)
+    ap.add_argument("--audio-dynamik", action="store_true",
+                    dest="audio_dynamik",
+                    help="Audio-Spalte durch ihre gleitende Standardabweichung "
+                         "ersetzen (O22). AUS, bis die Go-Seite mitzieht.")
+    ap.add_argument("--audio-dynamik-fenster", type=int, default=30,
+                    dest="audio_dynamik_fenster",
+                    help="Fensterbreite der Schwankung in Sekunden")
     ap.add_argument("--reextract-logo-nan-pct", type=float, default=10.0,
                     help="re-extract a cached .npy if its logo column has "
                          "this percent or more NaN-sentinels. Catches stale "
@@ -3502,6 +3557,23 @@ def main():
         _touch_atime(cache_path)
         if feats.shape[0] == 0:
             continue
+        # ⚠️ Audio-Spalte ERSETZEN, nicht anhaengen (O22). Hier und nicht
+        # bei der Extraktion, sonst haette der Cache fuer neue Aufnahmen
+        # die Schwankung und fuer alte den Pegel — ein stiller Bruch
+        # mitten im Korpus. So sehen alle Aufnahmen dasselbe, und der
+        # Cache bleibt unberuehrt und gueltig.
+        #
+        # ⚠️⚠️ WER DIESEN SCHALTER ANSTELLT, MUSS DIE GO-SEITE MITZIEHEN.
+        # Der Dekoder fuellt dieselbe Spalte aus dem RMS-Array; ein Kopf,
+        # der auf Schwankung trainiert ist, aber Pegel gefuettert bekommt,
+        # ist still falsch — kein Absturz, nur schlechtere Bloecke. Der
+        # Schalter ist deshalb standardmaessig AUS und bleibt es, bis
+        # beide Seiten stehen und eine Paritaetspruefung sie gegeneinander
+        # haelt.
+        if getattr(args, "audio_dynamik", False) and feats.shape[1] >= 1282:
+            feats = feats.copy()
+            feats[:, 1281] = audio_dynamik(feats[:, 1281],
+                                           args.audio_dynamik_fenster)
         # NaN sentinel handling: extract_logo_per_second writes NaN
         # for unmeasurable seconds (= corrupt stream chunk, missing
         # template). For the X matrix we substitute 0.5 to keep

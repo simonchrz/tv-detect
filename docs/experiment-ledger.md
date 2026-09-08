@@ -5219,3 +5219,62 @@ Spalten-Wichtigkeit → Prämisse prüfen → alternative Statistik auf
 denselben Rohdaten → registrierter A/B. Vier Schritte, keiner davon
 geraten, und am Ende der erste positive Befund nach drei negativen. Das
 ist der Unterschied zum Vormittag des 07.09.
+
+### Nachtrag 2026-09-08 — O22 gebaut, beide Seiten, Schalter AUS
+
+Simon: „machen." Gebaut, aber **nicht eingeschaltet** — und der Grund
+steht in der Bauform.
+
+#### Eine Messung vor dem Bauen hat die Hälfte der Arbeit gespart
+
+Registriert und gemessen war das HINZUFÜGEN einer 1283. Spalte. Das
+hätte ein neues Kopf-Format gebraucht (MLP6), einen neuen Go-Leser und
+eine neue Spaltenreihenfolge — also genau die Fläche, auf der
+`merkmalsspalte_verschoben_auffueller` entstanden ist.
+
+Vor dem ersten Handgriff die billigere Bauform gegengemessen, acht Seeds:
+
+| Bauform | Median-ΔF1 | positiv |
+|---|---|---|
+| B: zusätzlich, 1283 Spalten | +0.0028 | 6 von 8 |
+| **C: ersetzt, 1282 Spalten** | **+0.0024** | **8 von 8** |
+
+Gleich gross im Effekt, konsistenter im Vorzeichen, und **ohne jede
+Formatänderung**. Gebaut wurde C.
+
+#### Was gebaut ist
+
+* `audio_dynamik()` in train-head.py, angewandt am **Ladepunkt**, nicht
+  bei der Extraktion. Bei der Extraktion hätte der Cache für neue
+  Aufnahmen die Schwankung und für alte den Pegel — ein stiller Bruch
+  mitten im Korpus. So bleibt der Cache unberührt und gültig.
+* `AudioDynamik()` in internal/signals/audio_rms.go, aufgerufen in
+  `parallel.go` genau dort, wo das Array für die GANZE Aufnahme entsteht.
+  Im Chunk-Pfad berechnet erzeugte das Fenster an jeder Stückgrenze einen
+  Sprung, den es nicht gibt — dieselbe Klasse wie die Temporal-Deltas vor
+  dem 2026-07-18.
+* **Paritätstest über 18 Fälle** (`audio_dynamik_paritaet_test.go` gegen
+  eine von Python geschriebene Fixture). Die beiden Rechnungen müssen auf
+  1e-5 übereinstimmen; wer eine ändert, muss die Fixture neu erzeugen und
+  merkt dabei, dass es zwei Seiten sind.
+* Acht Python-Tests, die die Definition festnageln: zentriertes Fenster,
+  Ränder beschnitten statt aufgefüllt, Populations-sd (Nenner n).
+* Zwei Schalter, beide **AUS**: `train-head.py --audio-dynamik` und
+  `tv-detect --audio-dynamik`.
+
+#### Warum die Schalter aus bleiben
+
+Ein Kopf, der auf die Schwankung trainiert ist, aber vom Dekoder den
+Pegel bekommt, **stürzt nicht ab** — er liefert nur stillschweigend
+schlechtere Blöcke. Die beiden Schalter müssen zusammen umgelegt werden,
+und zwar in dieser Reihenfolge: erst eine Nacht mit
+`train-head.py --audio-dynamik` trainieren, das Gate entscheiden lassen,
+und erst wenn ein solcher Kopf deployt IST, den Daemon auf
+`--audio-dynamik` stellen.
+
+Solange nur einer von beiden an ist, ist es schlimmer als vorher.
+
+**Was das kostet, wenn es funktioniert:** +0.0024 F1 gemessen, gegen
+einen Gesamtdeckel von 0.027 IoU. Klein, aber es ist der erste positive
+Befund dieser Serie, und er ist gebaut, ohne einen einzigen
+Merkmals-Cache zu entwerten.

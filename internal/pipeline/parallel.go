@@ -39,6 +39,8 @@ type Opts struct {
 	BumperTemplates      []string               // PNG paths for END-of-ad-block reference frames; nil/empty = skip
 	BumperStartTemplates []string               // PNG paths for START-of-ad-block reference frames; nil/empty = skip. Independent template set + per-frame conf stream so a start-bumper hit can't pull a block end and vice versa.
 	BumperStride         int                    // run bumper IoU every Nth frame (default 1 = every frame). Boundary snap only needs ~200ms precision; stride 5 at 25fps gives 5× speedup on bumper matching.
+	AudioDynamik         bool                   // Audio-Spalte durch ihre gleitende Standardabweichung ersetzen (O22). Muss zum Kopf passen: nur fuer Koepfe, die mit train-head.py --audio-dynamik trainiert wurden. Default aus.
+	AudioDynamikFenster  int                    // Fensterbreite in Sekunden, 0 = 30
 	WithAudio            bool                   // extract per-second audio RMS once at pipeline start and pass into NN.ConfidenceBatch as the (rms) feature. Required for +AUDIO heads (1282/1288 weights). Skipped when the loaded head doesn't have an audio dim — caller can leave this false to save the ffmpeg pass.
 	NNBackbonePath       string                 // "" = skip NN
 	NNHeadPath           string                 // ignored if backbone is empty
@@ -134,6 +136,25 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	if opts.WithAudio {
 		audioRMS = signals.ExtractAudioRMSPerSecond(
 			ctx, opts.Input, int(info.DurationS)+1)
+		// ⚠️ HIER und nirgends sonst. Das Fenster braucht die GANZE
+		// Aufnahme; im Chunk-Pfad berechnet erzeugte es an jeder
+		// Stueckgrenze einen Sprung, den es nicht gibt — dieselbe Klasse
+		// wie die Temporal-Deltas, die bis 2026-07-18 an jeder
+		// 32-Frame-Grenze auf null fielen.
+		//
+		// ⚠️⚠️ MUSS ZUR KOPF-SEITE PASSEN. Ein Kopf, der auf die
+		// Schwankung trainiert wurde (train-head.py --audio-dynamik),
+		// braucht sie auch hier; ein Kopf ohne sie braucht den rohen
+		// Pegel. Falsch herum stuerzt nichts ab, die Bloecke werden nur
+		// still schlechter. Beide Seiten sind deshalb standardmaessig
+		// AUS und werden zusammen umgelegt.
+		if opts.AudioDynamik {
+			f := opts.AudioDynamikFenster
+			if f <= 0 {
+				f = 30
+			}
+			audioRMS = signals.AudioDynamik(audioRMS, f)
+		}
 	}
 
 	resCh := make(chan chunkRes, len(plans))

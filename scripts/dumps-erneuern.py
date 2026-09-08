@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Signal-Dumps des Messsatzes erneuern, ohne ein einziges Label anzufassen.
+
+WARUM
+-----
+Das Fehlerbudget (`fehlerbudget.py`) misst ueber `--replay-signals`, und
+ein Signal-Dump enthaelt die NN-Ausgaben EINGEFROREN. Am 2026-09-08 waren
+58 der 98 Dumps vom 15.08., der Kopf hatte seitdem mehrfach gewechselt.
+Die Aufteilung der Verlustursachen beschrieb also einen Kopf, der nicht
+mehr lief -- und ausgerechnet der groesste Posten ("NN erfindet", 39 %
+von 5882 Verlustsekunden) ist der, an dem noch Spielraum ist.
+
+WARUM NICHT EINFACH NEU DETECTEN
+--------------------------------
+Ein Dump entsteht nur beim Detect, und der Detect schreibt die Bloecke
+neu. Die 98 Aufnahmen des Messsatzes sind genau die MIT menschlichem
+Label. Ein Redetect wuerde unter dem Menschen die Bloecke austauschen,
+gegen die er geurteilt hat. Der Daemon warnt an seiner Dump-Stelle
+woertlich davor. Leitplanke: Labels sind Eingabe, keine Stellschraube.
+
+Deshalb laeuft das hier ueber `process_detect(..., nur_dump=True)` --
+DERSELBE Code, DIESELBE Kommandozeile, aber der Lauf endet vor jeder
+Schreiboperation. Ein nachgebautes Kommando waere der andere Ausweg und
+ist der schlechtere: die nackten Vorgaben des Binaries weichen von der
+Produktion ab, und genau so las die Kanten-Messung vom 2026-07-24 +0.016,
+wo die treue -0.015 las.
+
+WAS DANACH MOEGLICH IST
+-----------------------
+Alt gegen neu auf identischen Labels und identischem Dekoder ist eine
+GEPAARTE Kopf-Messung ueber 98 Aufnahmen. Unverzerrt sind davon nur die
+Testaufnahmen -- der Rest lag im Training des Kopfes. Beides getrennt
+ausweisen, nie zusammen.
+
+⚠️ DER KOPF MUSS UEBER DIE GANZE KAMPAGNE DERSELBE SEIN. Sechs Stunden
+Laufzeit ueberspannen die naechtliche Ausbildung um 03:30. Wechselt der
+Kopf mittendrin, ist der Messsatz eine Mischung aus zwei Modellen und
+sieht trotzdem sauber aus. Deshalb wird der Fingerabdruck von head.bin
+zu Beginn genommen und vor JEDER Aufnahme geprueft.
+"""
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DAEMON = Path(__file__).resolve().parent.parent / "daemon" / "tv-thumbs-daemon.py"
+MESSSATZ = Path.home() / ".cache/tvd-train-archive/messsatz-2026-09-07.json"
+MODELL = Path.home() / ".cache/tv-detect-daemon"
+
+
+PLIST = (Path.home() / "Library/LaunchAgents"
+         / "com.user.tv-thumbs-daemon.plist")
+
+
+def umgebung_vom_daemon():
+    """Die Umgebung des laufenden Daemons uebernehmen, VOR dem Import.
+
+    ⚠️ SELBST HINEINGELAUFEN, 2026-09-08. Der erste Probelauf las
+    "speaker aus (SPEAKER_ENABLE=0)" und teilte in 12 Stuecke; der Daemon
+    laeuft mit SPEAKER_ENABLE=1 und DETECT_PARALLEL=3, also 4 Stuecke.
+    Derselbe Code, dieselbe Kommandozeile -- und trotzdem ein anderer
+    Lauf, weil die Konstanten auf Modulebene beim IMPORT aus der Umgebung
+    gelesen werden. Genau die Sorte Abweichung, gegen die dieses Skript
+    gebaut ist, nur eine Ebene tiefer als erwartet.
+
+    Quelle ist der launchd-Eintrag, nicht eine abgeschriebene Liste:
+    was dort steht, ist per Definition das, womit der Daemon laeuft.
+    """
+    try:
+        aus = subprocess.run(
+            ["/usr/libexec/PlistBuddy", "-c", "Print :EnvironmentVariables",
+             str(PLIST)], capture_output=True, text=True, timeout=10).stdout
+    except Exception as e:
+        print(f"⚠️ launchd-Umgebung nicht lesbar ({e}) — ABBRUCH, ein Lauf "
+              f"mit anderer Umgebung misst etwas anderes als die Produktion.")
+        raise SystemExit(3)
+    gesetzt = {}
+    for ln in aus.splitlines():
+        if "=" not in ln:
+            continue
+        k, _, v = ln.partition("=")
+        k, v = k.strip(), v.strip()
+        if k and not k.startswith("{") and not k.startswith("}"):
+            os.environ[k] = v
+            gesetzt[k] = v
+    if not gesetzt:
+        print("⚠️ launchd-Eintrag nennt keine Umgebung — ABBRUCH.")
+        raise SystemExit(3)
+    return gesetzt
+
+
+def daemon_laden():
+    """Den Daemon als Modul laden, ohne seine Schleifen zu starten.
+
+    Sicher, weil alle Threads in main() unter `if __name__ == "__main__"`
+    haengen; auf Modulebene stehen nur Konstanten und zwei mkdir.
+    """
+    spec = importlib.util.spec_from_file_location("tvthumbs", DAEMON)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def kopf_abdruck():
+    p = MODELL / "head.bin"
+    if not p.is_file():
+        return None
+    h = hashlib.sha1(p.read_bytes()).hexdigest()[:12]
+    beilage = MODELL / "head.audio.json"
+    ad = " ".join(beilage.read_text().split()) if beilage.is_file() else "(keine)"
+    return h, ad
+
+
+def andere_arbeit_laeuft():
+    """Laeuft gerade ein Detect oder eine Ausbildung? Dann warten.
+
+    Die Kampagne ist Forschung und hat Vorrang vor NICHTS. Sie darf weder
+    die naechtliche Ausbildung noch einen echten Detect verlangsamen.
+    """
+    try:
+        out = subprocess.run(["ps", "-eo", "command"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return False        # im Zweifel weiterlaufen, nicht haengenbleiben
+    eigen = f"dumps-erneuern"
+    for ln in out.splitlines():
+        if eigen in ln:
+            continue
+        if "/tv-detect " in ln or ln.rstrip().endswith("/tv-detect"):
+            return "ein Detect"
+        if "train-head.py" in ln:
+            return "die Ausbildung"
+    return False
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ziel", default=str(MODELL / "emit-signals-neu"),
+                    help="Verzeichnis fuer die neuen Dumps")
+    ap.add_argument("--messsatz", default=str(MESSSATZ))
+    ap.add_argument("--limit", type=int, default=0,
+                    help="nur die ersten N Aufnahmen (Probelauf)")
+    ap.add_argument("--ruecksichtslos", action="store_true",
+                    help="nicht auf Detects/Ausbildung warten")
+    ap.add_argument("--trocken", action="store_true",
+                    help="nur zeigen, was liefe")
+    a = ap.parse_args()
+
+    umg = umgebung_vom_daemon()
+    print("Umgebung vom Daemon:",
+          " ".join(f"{k}={v}" for k, v in sorted(umg.items())))
+
+    satz = json.loads(Path(a.messsatz).read_text())
+    uuids = satz["uuids"]
+    ziel = Path(a.ziel)
+    ziel.mkdir(parents=True, exist_ok=True)
+
+    abdruck = kopf_abdruck()
+    if not abdruck:
+        print("head.bin fehlt im Modell-Cache — nichts zu messen.")
+        return 1
+    h0, ad0 = abdruck
+    print(f"Kopf {h0}, Audio-Beilage {ad0}")
+    print(f"Messsatz {satz.get('name')} ({satz.get('hash')}), {len(uuids)} Aufnahmen")
+    print(f"Ziel {ziel}")
+
+    # Fortsetzbar: was schon da ist, wird nicht neu gerechnet.
+    offen = [u for u in uuids if not (ziel / f"{u}.json").is_file()]
+    print(f"offen: {len(offen)}, fertig: {len(uuids)-len(offen)}")
+    if a.limit:
+        offen = offen[:a.limit]
+    if a.trocken:
+        for u in offen[:10]:
+            print("  wuerde:", u)
+        print(f"  ... insgesamt {len(offen)}")
+        return 0
+    if not offen:
+        print("nichts zu tun.")
+        return 0
+
+    mod = daemon_laden()
+    ok = fehl = 0
+    t_start = time.time()
+    for i, u in enumerate(offen, 1):
+        jetzt = kopf_abdruck()
+        if jetzt != abdruck:
+            # NICHT weitermachen. Ein gemischter Messsatz sieht sauber aus
+            # und ist es nicht.
+            print(f"\n⚠️ ABBRUCH: der Kopf hat sich geaendert "
+                  f"({h0} -> {jetzt[0] if jetzt else 'weg'}). "
+                  f"{ok} Dumps sind vom alten Kopf und muessen weg, "
+                  f"sonst mischt der Messsatz zwei Modelle:\n"
+                  f"    rm -rf {ziel}\n"
+                  f"Danach neu starten.", flush=True)
+            return 2
+        if not a.ruecksichtslos:
+            gewartet = 0
+            while True:
+                was = andere_arbeit_laeuft()
+                if not was:
+                    break
+                if gewartet == 0:
+                    print(f"  warte, {was} laeuft…", flush=True)
+                time.sleep(30)
+                gewartet += 30
+                if gewartet > 4 * 3600:
+                    print("  wartet seit 4 h — mache trotzdem weiter",
+                          flush=True)
+                    break
+        rest = ""
+        if ok:
+            je = (time.time() - t_start) / ok
+            rest = f", Rest ~{je*(len(offen)-i+1)/3600:.1f} h"
+        print(f"[{i}/{len(offen)}] {u}{rest}", flush=True)
+        try:
+            gut = mod.process_detect(u, nur_dump=True, dump_ziel=str(ziel))
+        except Exception as e:
+            print(f"  Ausnahme: {e}", flush=True)
+            gut = False
+        ok, fehl = (ok + 1, fehl) if gut else (ok, fehl + 1)
+
+    print(f"\nfertig: {ok} Dumps, {fehl} Fehlschlaege, "
+          f"{(time.time()-t_start)/3600:.1f} h")
+    print(f"Kopf am Ende: {kopf_abdruck()[0]} (Start {h0})")
+    return 0 if fehl == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

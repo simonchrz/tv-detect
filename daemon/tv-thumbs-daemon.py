@@ -2182,9 +2182,24 @@ def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
     return csv_path
 
 
-def process_detect(uuid):
+def process_detect(uuid, nur_dump=False, dump_ziel=None):
     """Run tv-detect on a recording (HTTP-streamed source) and POST
-    the cutlist back. Always passes --nn-backbone + --nn-head + the
+    the cutlist back.
+
+    NUR-DUMP-MODUS (2026-09-08)
+    ---------------------------
+    `nur_dump=True` laeuft dieselbe Erkennung mit derselben Kommandozeile,
+    laedt aber NICHTS hoch und meldet weder Erfolg noch Misserfolg. Der
+    Lauf schreibt ausschliesslich den Signal-Dump.
+
+    ⚠️ WARUM DAS EIN MODUS IST UND KEIN ZWEITES SKRIPT. Das Fehlerbudget
+    braucht frische Dumps, aber ein Dump entsteht nur beim Detect, und der
+    Detect schreibt sonst die Bloecke neu -- unter 98 Aufnahmen, die ein
+    Mensch reviewt hat. Ein nachgebautes Kommando waere der andere Ausweg
+    und ist der schlechtere: die nackten Vorgaben des Binaries weichen von
+    der Produktion ab, und genau so las die Kanten-Messung vom 2026-07-24
+    +0.016, wo die treue -0.015 las. Ein Modus im selben Code kann nicht
+    auseinanderlaufen, ein Nachbau schon. Always passes --nn-backbone + --nn-head + the
     full per-channel knob set — Pi-side tv-detect doesn't currently
     pass NN flags so this offload also fixes the NN-not-actually-used
     bug in production detection."""
@@ -2675,7 +2690,10 @@ def process_detect(uuid):
     # (agent-review.py wartet darauf, dass die .json erscheint — das
     # funktioniert unveraendert weiter, nur schneller, weil sie meist schon
     # da ist).
-    emit_dir = MODEL_CACHE / "emit-signals"
+    # Im Nur-Dump-Modus in ein eigenes Verzeichnis, damit der ALTE Dump
+    # stehen bleibt: alt gegen neu auf identischen Labels und identischem
+    # Dekoder ist die gepaarte Kopf-Messung, um die es ueberhaupt geht.
+    emit_dir = Path(dump_ziel) if dump_ziel else (MODEL_CACHE / "emit-signals")
     try:
         emit_dir.mkdir(parents=True, exist_ok=True)
         cmd += ["--emit-signals-json", str(emit_dir / f"{uuid}.json")]
@@ -2728,8 +2746,12 @@ def process_detect(uuid):
         # on the first failure instead of burning 3×FAIL_COOLDOWN_S (30 min).
         corrupt = ("cannot plan chunks" in stderr
                    or "duration=0.000000" in stderr)
-        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
-        _record_detect_failure(uuid, force=corrupt)
+        # Ein Nur-Dump-Lauf darf die Zaehler der echten Erkennung nicht
+        # anfassen. Sonst kann eine Messkampagne eine Aufnahme auf
+        # "aufgegeben" setzen, mit der produktiv nichts falsch ist.
+        if not nur_dump:
+            _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+            _record_detect_failure(uuid, force=corrupt)
         return False
     # Surface tv-detect's per-phase wall-time line to the daemon log
     # (= even with --quiet the binary emits "pipeline-timing: ..."
@@ -2755,6 +2777,18 @@ def process_detect(uuid):
             except (IndexError, ValueError):
                 pass
     cutlist = result.stdout
+    if nur_dump:
+        # HIER endet der Nur-Dump-Lauf, VOR jeder Schreiboperation. Der
+        # Dump ist zu diesem Zeitpunkt fertig -- das Binary hat ihn
+        # waehrend des Laufs geschrieben. Was danach kaeme, veraendert
+        # Zustand: die Whisper-Verfeinerung schreibt die Cutlist um, der
+        # Upload ersetzt die Bloecke, und _record_detect_success ruehrt
+        # die Zaehler an. Nichts davon kann den Dump noch beeinflussen.
+        ziel = emit_dir / f"{uuid}.json"
+        print(f"  nur-dump {uuid}: {time.time()-t0:.0f}s -> {ziel}"
+              f"{'' if ziel.is_file() else '  ⚠️ NICHT GESCHRIEBEN'}",
+              flush=True)
+        return ziel.is_file()
     # Optional Whisper post-processor (no-op when WHISPER_ENABLE=0).
     # Re-fetch `local` via get_source: the bumper download loop above
     # rebinds `local` to the LAST bumper PNG path it processed, which

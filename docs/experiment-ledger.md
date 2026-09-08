@@ -5278,3 +5278,44 @@ Solange nur einer von beiden an ist, ist es schlimmer als vorher.
 einen Gesamtdeckel von 0.027 IoU. Klein, aber es ist der erste positive
 Befund dieser Serie, und er ist gebaut, ohne einen einzigen
 Merkmals-Cache zu entwerten.
+
+### Nachtrag 2026-09-08 — O22 eingeschaltet, mit der Kopplung, die vorher fehlte
+
+Beim Umsetzen fiel auf, dass die billige Bauform ein Loch hat, das der
+Plan nicht hatte: **weil die Spalte ERSETZT und nicht angehängt wird,
+bleibt die Eingabebreite 1282 — der Kopf-Header verrät also nicht, welche
+Audio-Semantik er erwartet.** Ohne Signal hätte das Gate heute Nacht
+einen Schwankungs-Kopf deployen können, während der Dekoder weiter den
+Pegel liefert. Kein Absturz, nur still schlechtere Blöcke.
+
+Die Formatänderung zu vermeiden war trotzdem richtig — sie hätte MLP6,
+einen neuen Go-Leser und eine neue Spaltenreihenfolge gekostet. Statt
+dessen die Kopplung über eine **Beilage**, dem Muster von
+`head.calibration.json`, `head.channel-map.json` und
+`head.minute-prior.json` folgend:
+
+* Der Trainer schreibt `head.audio.json` bei **jedem** Lauf, auch mit
+  `false`. Nur bei true zu schreiben hätte einen alten true-Stand stehen
+  lassen, wenn jemand den Schalter wieder ausmacht.
+* Das Bundle nimmt sie über die bestehende `head.*`-Whitelist mit; auf
+  der tv-recorder-Seite war nichts zu ändern.
+* Der Daemon lädt sie und setzt `--audio-dynamik` danach. Fehlt sie oder
+  ist sie unlesbar, gilt „alter Kopf, Pegel" — der sichere Rückfall für
+  jeden Kopf von vor dieser Änderung.
+
+**Damit erklärt der Kopf seine eigene Semantik**, und die beiden Seiten
+können nicht auseinanderlaufen. Das Zurückdrehen ist eine Zeile: die
+nächste Beilage trägt dann `false`, und der Daemon fällt von selbst
+zurück.
+
+`--audio-dynamik` steht jetzt im Nightly. Elf Tests halten die Rechnung,
+die Schalterstellung und die Kopplung fest, dazu der Paritätstest über 18
+Fälle zwischen Python und Go.
+
+**Was heute Nacht zu erwarten ist.** Der Kandidat wird auf der Schwankung
+trainiert; ob er deployt, entscheidet das Gate wie immer. Der Golden-Wert
+liegt nach der Let's-Dance-Quarantäne bei 0.949 gegen einen Boden von
+0.953, das Gate steht also ohnehin auf Ablehnung — der gemessene
++0.0024-Effekt ist kleiner als dieser Rückstand. Erwartbar ist eine
+zweite Ablehnung, und das wäre kein Widerspruch zu O22, sondern die
+Quarantäne, die weiterwirkt.

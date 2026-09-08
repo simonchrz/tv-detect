@@ -2372,6 +2372,37 @@ def process_detect(uuid):
     # feature in NN inference.
     if cfg.get("with_audio"):
         cmd += ["--with-audio"]
+        # ── Audio-Semantik aus der Kopf-Beilage (O22) ──────────────────
+        # ⚠️ DER KOPF SAGT, WAS ER ERWARTET. Seit 2026-09-08 kann die
+        # Audio-Spalte zweierlei tragen: den Lautheits-Pegel (wie immer)
+        # oder seine gleitende Standardabweichung. Die Bauform laesst die
+        # Eingabebreite bei 1282, also verraet der Header es NICHT — die
+        # Beilage head.audio.json ist die einzige Kopplung.
+        #
+        # Falsch herum stuerzt nichts ab: ein Kopf, der auf die
+        # Schwankung trainiert wurde, aber den Pegel bekommt, liefert
+        # still schlechtere Bloecke. Deshalb wird hier NICHT geraten —
+        # fehlt die Beilage, gilt "alter Kopf, Pegel", und das ist der
+        # sichere Rueckfall fuer jeden Kopf, der vor dieser Aenderung
+        # deployt wurde.
+        _ad_pfad = MODEL_CACHE / "head.audio.json"
+        try:
+            http_download(f"{GATEWAY}/api/internal/detect-models/head.audio.json",
+                          _ad_pfad)
+        except Exception as _e:
+            if "404" not in str(_e):
+                print(f"  detect {uuid}: audio-Beilage nicht geholt "
+                      f"({_e}) -- fahre mit Pegel", flush=True)
+        try:
+            if _ad_pfad.is_file():
+                _ad = json.loads(_ad_pfad.read_text())
+                if _ad.get("dynamik"):
+                    cmd += ["--audio-dynamik",
+                            "--audio-dynamik-fenster",
+                            str(int(_ad.get("fenster") or 30))]
+        except Exception as _e:
+            print(f"  detect {uuid}: audio-Beilage unlesbar ({_e}) "
+                  f"-- fahre mit Pegel", flush=True)
     # Per-recording whisper-prob feed for MLP2 v2 heads. tv-detect
     # only consumes this when the loaded head has n_whisper>0; for
     # MLP1 / LogReg heads the flag is silently ignored. The Mac-

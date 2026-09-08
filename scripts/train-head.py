@@ -7389,6 +7389,30 @@ def main():
             calib_out["ts"] = ts
             calib_path.write_text(json.dumps(calib_out, indent=2))
             print(f"  calibration sidecar: {calib_path.name}")
+        # ── Audio-Semantik-Beilage (O22) ────────────────────────────────
+        # ⚠️ DIESE DATEI IST DIE KOPPLUNG, und ohne sie ist die ganze
+        # Aenderung gefaehrlich. Der Kopf kann nicht selbst sagen, ob er
+        # auf der Lautheit oder auf ihrer Schwankung trainiert wurde —
+        # die Bauform "Spalte ersetzen" laesst die Breite bei 1282, also
+        # gibt es keinen Header, der es verriete. Ohne Beilage koennte
+        # das Gate einen Schwankungs-Kopf deployen, waehrend der Dekoder
+        # weiter Pegel liefert: kein Absturz, nur still schlechtere
+        # Bloecke.
+        #
+        # Der Daemon liest sie und setzt --audio-dynamik entsprechend.
+        # Damit erklaert der Kopf seine eigene Semantik, und die beiden
+        # Seiten koennen nicht auseinanderlaufen.
+        #
+        # IMMER schreiben, auch bei false — eine fehlende Datei muss
+        # "alter Kopf, Pegel" heissen duerfen, und eine vorhandene mit
+        # false muss einen frueheren true-Stand ueberschreiben.
+        audio_path = Path(args.output).with_suffix(".audio.json")
+        audio_path.write_text(json.dumps(
+            {"dynamik": bool(getattr(args, "audio_dynamik", False)),
+             "fenster": int(getattr(args, "audio_dynamik_fenster", 30)),
+             "ts": ts}, indent=2))
+        print(f"  audio sidecar: {audio_path.name} "
+              f"(dynamik={bool(getattr(args, 'audio_dynamik', False))})")
         # Test-set UUIDs sidecar — read by the gateway's prewarm loop
         # to scope post-deploy bulk re-detect to ONLY the test
         # recordings (= what the per-show IoU snapshot needs to be

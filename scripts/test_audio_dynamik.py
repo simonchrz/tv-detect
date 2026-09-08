@@ -118,5 +118,57 @@ class Schalter(unittest.TestCase):
                          "in der Extraktion darf sie NICHT stehen")
 
 
+class Kopplung(unittest.TestCase):
+    """Die Beilage head.audio.json ist die EINZIGE Kopplung.
+
+    Die Bauform „Spalte ersetzen" laesst die Eingabebreite bei 1282, also
+    verraet der Kopf-Header nicht, ob er auf dem Pegel oder auf der
+    Schwankung trainiert wurde. Ohne Beilage koennte das Gate einen
+    Schwankungs-Kopf deployen, waehrend der Dekoder weiter Pegel
+    liefert — kein Absturz, nur still schlechtere Bloecke.
+    """
+
+    def test_trainer_schreibt_die_beilage_immer(self):
+        q = (_HIER / "train-head.py").read_text()
+        self.assertIn('with_suffix(".audio.json")', q,
+                      "der Trainer muss die Beilage schreiben")
+        i = q.index('with_suffix(".audio.json")')
+        block = q[i:i + 400]
+        self.assertIn('"dynamik"', block)
+        # ⚠️ IMMER schreiben, auch bei false: eine vorhandene Datei mit
+        # true muss ueberschrieben werden koennen, wenn jemand den
+        # Schalter wieder ausmacht.
+        self.assertNotIn("if args.audio_dynamik:", q[max(0, i - 200):i],
+                         "die Beilage darf nicht nur bei true entstehen")
+
+    def test_daemon_liest_die_beilage_und_raet_nicht(self):
+        d = (_HIER.parent / "daemon" / "tv-thumbs-daemon.py").read_text()
+        self.assertIn("head.audio.json", d,
+                      "der Daemon muss die Beilage lesen")
+        i = d.index('_ad_pfad = MODEL_CACHE / "head.audio.json"')
+        block = d[i:i + 900]
+        self.assertIn('"--audio-dynamik"', block)
+        self.assertIn('.get("dynamik")', block,
+                      "die Entscheidung haengt am Feld, nicht an einer Heuristik")
+        # Fehlende oder kaputte Beilage MUSS auf den Pegel zurueckfallen.
+        self.assertIn("except Exception", block)
+
+    def test_go_und_python_haben_dieselbe_fixture(self):
+        fix = (_HIER.parent / "internal" / "signals" / "testdata"
+               / "audio_dynamik_paritaet.json")
+        self.assertTrue(fix.is_file(),
+                        "die Paritaets-Fixture fehlt — ohne sie kann die "
+                        "Go-Seite nicht gegen die Python-Rechnung pruefen")
+        import json as _j
+        faelle = _j.loads(fix.read_text())
+        self.assertGreaterEqual(len(faelle), 10)
+        for f in faelle[:3]:
+            ist = dyn(np.array(f["ein"], np.float32), f["fenster"])
+            self.assertTrue(np.allclose(ist, f["soll"], atol=1e-5),
+                            f"Fixture {f['name']} passt nicht mehr zur "
+                            f"Python-Rechnung — neu erzeugen und die "
+                            f"Go-Seite pruefen")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

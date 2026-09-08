@@ -236,8 +236,36 @@ done
     $TVH_HEAD_ARCH_OVERRIDE \
     --prod-seeds 3 \
     --herkunft-belegt \
+    --audio-dynamik \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-08: --audio-dynamik AN (O22). Die Audio-Spalte trug bis heute
+# den Lautheits-PEGEL und war damit praktisch unbenutzt: die
+# Permutations-Wichtigkeit am deployten Kopf misst 0.0021 Verlust gegen
+# 0.2954 beim Logo. Die Spalte ist nicht kaputt, ihre Praemisse ist es --
+# der Docstring behauptet 6 bis 10 dB Unterschied zwischen Werbung und
+# Sendung, gemessen sind es 1.23 dB. Die EU-Lautheitsregulierung hat den
+# alten Trick erledigt.
+#
+# Dieselben Rohdaten als SCHWANKUNG (gleitende Standardabweichung ueber
+# 30 s) tragen dagegen: AUC innerhalb jeder Aufnahme 0.726 gegen 0.592,
+# nuetzlich in 81 % statt 43 % der Aufnahmen. O22 hat gemessen, dass die
+# Ersetzung den Kopf besser macht: Median-DeltaF1 +0.0024, positiv in
+# 8 von 8 Seeds.
+#
+# ⚠️ DIE KOPPLUNG HAENGT AN head.audio.json. Weil die Spalte ERSETZT und
+# nicht angehaengt wird, bleibt die Eingabebreite 1282 -- der Kopf-Header
+# verraet also nicht, welche Semantik er erwartet. Der Trainer schreibt
+# die Beilage bei JEDEM Lauf (auch mit false), das Bundle nimmt sie ueber
+# die head.*-Whitelist mit, und der Daemon setzt --audio-dynamik danach.
+# Wer diese Zeile wieder entfernt, muss NICHTS weiter tun: die naechste
+# Beilage traegt dann false und der Daemon faellt automatisch auf den
+# Pegel zurueck.
+#
+# Falsch herum stuerzt nichts ab -- ein Kopf auf Schwankung trainiert,
+# aber mit Pegel gefuettert, liefert nur still schlechtere Bloecke.
+# Deshalb die Beilage und nicht eine Absprache.
+
 # 2026-09-06: --herkunft-belegt SCHARF (O17). `has_user` entstand bis heute
 # aus der blossen EXISTENZ von ads_user.json -- und autoConfirmApply im
 # tv-recorder legt genau so eine Datei an, mit der Detektorausgabe darin.

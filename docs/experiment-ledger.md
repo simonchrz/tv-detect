@@ -5167,3 +5167,55 @@ sind: an diesen Stellen fällt der zweitwichtigste Eingang aus.
    sichtbar macht: eine Spalte mit 0.295 Wichtigkeit, die bei mindestens
    zwei bekannten Sendungsklassen ausfällt.
 3. Mehr Labels derselben Art: abgehakt.
+
+### Nachtrag 2026-09-08 — die Audio-Spalte: nicht kaputt, falsch ausgewertet (O22 ERFÜLLT)
+
+Erste erfüllte Registrierung dieser Serie. O19, O20 und O21 sind verfehlt.
+
+**Der Weg dorthin war eine Kette aus drei Messungen, keine Idee.** Die
+Spalten-Wichtigkeit zeigte die Audio-Spalte als unbenutzt
+(Permutationsverlust 0.0021 gegen 0.2954 beim Logo). Die naheliegende
+Deutung wäre „tot, ausbauen" gewesen. Stattdessen zuerst geprüft, ob die
+Spalte oder ihre PRÄMISSE kaputt ist.
+
+Ihr Docstring begründet sie mit „ads ~6-10 dB hotter than show content".
+Gemessen an 293576 Sekunden: **1.23 dB.** Die EU-Lautheitsregulierung hat
+den alten Trick erledigt — `audio_hardcut_signals_weak` hielt das schon
+fest, ohne dass es je in die Spalte zurückgeflossen wäre.
+
+**Dieselben Rohdaten, andere Statistik.** Werbung ist stark komprimiert
+und schwankt kaum; Sendung hat Dialog, Musik und Stille. AUC innerhalb
+jeder Aufnahme, Median über 98:
+
+| Statistik | AUC | nützlich in |
+|---|---|---|
+| Lautheit (wie heute) | 0.592 | 43 % |
+| Schwankung über 10 s | 0.695 | 80 % |
+| Schwankung über 30 s | **0.726** | 81 % |
+
+Gepoolt sah die Schwankung mit AUC 0.31 zunächst wertlos aus — sie ist
+INVERS informativ, und erst je Aufnahme gerechnet zeigt sich die wahre
+Grösse. Dieselbe Häufungsfalle wie beim Faktor 1.8 gegen 3.3.
+
+**O22, registriert vor dem Versuchsarm:** Median-ΔF1 **+0.0040**, 4 von 5
+Seeds positiv. Erfüllt. Robustheitsprüfung mit 12 Seeds, ausdrücklich
+nachträglich: +0.0028, 10 von 12 positiv, p = 0.039. Der Effekt hält die
+Richtung, schrumpft aber auf eine halbe Standardabweichung des Rauschens.
+
+**Der Vorschlag ist billiger als befürchtet.** `zusatzspalten()` baut
+Zusatzspalten ohnehin zur Trainingszeit aus den gecachten Merkmalen; die
+gleitende Standardabweichung braucht nur Spalte 1281, die überall schon
+da ist. **Kein Cache-Bruch, keine Quelle, keine Neu-Extraktion.** Zu
+ändern wären ein Header-Flag, `zusatzspalten()` und die Go-Seite, die die
+Werte zur Inferenzzeit ohnehin hält.
+
+**Nicht umgesetzt.** Die Registrierung sagt „vorschlagen", und +0.0028 ist
+wenig für eine koordinierte Änderung über zwei Repos und einen
+Kopf-Header. Das ist eine Abwägung für Simon.
+
+#### Was die Diagnose-Kette als Muster taugt
+
+Spalten-Wichtigkeit → Prämisse prüfen → alternative Statistik auf
+denselben Rohdaten → registrierter A/B. Vier Schritte, keiner davon
+geraten, und am Ende der erste positive Befund nach drei negativen. Das
+ist der Unterschied zum Vormittag des 07.09.

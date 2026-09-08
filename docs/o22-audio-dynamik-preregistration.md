@@ -1,6 +1,23 @@
 # O22 — Hilft die Lautheits-SCHWANKUNG, wo die Lautheit selbst nichts bringt?
 (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-09-08 — REGEL ERFÜLLT.** Median-ΔF1 **+0.0040**
+> gegen die Schwelle +0.002, **4 von 5** Seeds positiv gegen 4. Erste
+> erfüllte Registrierung dieser Serie (O19, O20, O21 sind verfehlt).
+>
+> **Robustheitsprüfung mit 12 Seeds, ausdrücklich nachträglich:**
+> Median +0.0028, **10 von 12** positiv, Vorzeichentest p = 0.039. Der
+> Effekt hält, wird aber kleiner — er liegt zwischen einer halben und
+> einer ganzen Standardabweichung des Seed-Rauschens.
+>
+> **Konsequenz laut Registrierung: VORSCHLAGEN, nicht umsetzen.** Und der
+> Vorschlag ist billiger als vorher gedacht: `zusatzspalten()` rechnet
+> Zusatzspalten ohnehin zur Trainingszeit aus den gecachten Merkmalen.
+> Die gleitende Standardabweichung braucht nur Spalte 1281, die schon da
+> ist. **Kein Merkmals-Cache wird ungültig, keine Quelle wird gebraucht.**
+> Zu ändern wären der Kopf-Header (ein Flag), `zusatzspalten()` und die
+> Go-Seite, die dieselbe Spalte zur Inferenzzeit bauen muss.
+
 **Geschrieben 2026-09-08, nachdem der Kontrollarm lief und BEVOR der
 Versuchsarm gerechnet wurde.**
 
@@ -92,3 +109,56 @@ BESTEHENDEN Spalte 1281 rechnen, ohne die Quelle — die gleitende
 Standardabweichung braucht nur die schon gespeicherten Werte. Das ist der
 entscheidende Unterschied und der Grund, warum dieser Versuch ueberhaupt
 lohnt.
+
+
+---
+
+## Ergebnis (2026-09-08, nach dem Lauf eingetragen)
+
+| Seed | ohne | mit | Δ |
+|---|---|---|---|
+| 0 | 0.8981 | 0.9022 | +0.0041 |
+| 1 | 0.9060 | 0.9109 | +0.0049 |
+| 2 | 0.9022 | 0.9002 | −0.0020 |
+| 3 | 0.9015 | 0.9027 | +0.0012 |
+| 4 | 0.9015 | 0.9083 | +0.0068 |
+| **Median** | **0.9015** | **0.9027** | **+0.0040** |
+
+| Bedingung | Ergebnis |
+|---|---|
+| Median ≥ +0.002 | **JA** (+0.0040) |
+| 4 von 5 Seeds positiv | **JA** (4) |
+
+**==> O22 ERFÜLLT.**
+
+### Robustheitsprüfung, 12 Seeds (nachträglich, nicht registriert)
+
+Median **+0.0028**, positiv in **10 von 12**, Vorzeichentest **p = 0.039**.
+
+Der Effekt hält die Richtung über zwölf unabhängige Ziehungen, schrumpft
+aber von +0.0040 auf +0.0028. Das ist ehrlicher als die registrierten
+fünf Seeds: die Grössenordnung liegt bei einer halben Standardabweichung
+des Seed-Rauschens (0.0039–0.0048). **Ein realer, kleiner Effekt.**
+
+Die Prüfung lief NACH dem registrierten Lauf und hätte das Ergebnis nur
+schwächen können — sie ist keine Suche nach einer besseren Zahl, sondern
+eine Vorsichtsmassnahme vor einem Vorschlag an die Produktion.
+
+### Der Vorschlag
+
+Eine Spalte `audio_dynamik` = gleitende Standardabweichung der
+Audio-Spalte über 30 s, je Aufnahme gerechnet.
+
+**Warum das billig ist:** `zusatzspalten()` (train-head.py:1965) baut
+Kanal-, Whisper-, Temporal- und Minute-Prior-Spalten schon heute zur
+Trainingszeit aus den gecachten Merkmalen. Die neue Spalte folgt exakt
+diesem Muster und braucht nur Spalte 1281, die in jeder gecachten Datei
+steht. Kein Cache-Bruch, keine Quelle, keine Neu-Extraktion.
+
+**Was zu ändern wäre:** ein Flag im Kopf-Header (das Muster steht),
+`zusatzspalten()`, und die Go-Seite, die zur Inferenzzeit dieselbe Spalte
+bauen muss — die Werte hat sie bereits (`parallel.go`, `WithAudio`).
+
+**Was dagegen spricht:** +0.0028 ist wenig für eine koordinierte Änderung
+über zwei Repos und einen Kopf-Header. Und der Gesamtdeckel bleibt
+0.027 IoU. Das ist eine Abwägung für einen Menschen, kein Automatismus.

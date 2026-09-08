@@ -162,6 +162,16 @@ class Kopplung(unittest.TestCase):
         # das installierte war einen Tag alt und haette hart abgebrochen).
         self.assertIn("_binary_kennt_audio_dynamik", block,
                       "vor dem Setzen pruefen, ob tv-detect das Flag kennt")
+        # ⚠️ Und der Lauf muss eine Spur hinterlassen. Das Kommando wird
+        # nirgends protokolliert; ohne diese Zeile laesst sich hinterher
+        # nicht zeigen, WELCHE Zahl die Audio-Spalte getragen hat.
+        k = d.index("Audio-Spalte =", i)
+        self.assertGreater(k, j, "erst setzen, dann melden")
+        self.assertIn('_audio_semantik = "Pegel"', d[:i],
+                      "der Rueckfall muss vor dem Lesen stehen, damit ihn "
+                      "jeder Weg durch den Block ueberschreiben MUSS")
+        self.assertIn('_audio_semantik = f"Schwankung/', d[i:k],
+                      "der Schwankungs-Weg muss die Meldung umstellen")
 
     def test_go_und_python_haben_dieselbe_fixture(self):
         fix = (_HIER.parent / "internal" / "signals" / "testdata"

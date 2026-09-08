@@ -2475,6 +2475,10 @@ def process_detect(uuid):
         # fehlt die Beilage, gilt "alter Kopf, Pegel", und das ist der
         # sichere Rueckfall fuer jeden Kopf, der vor dieser Aenderung
         # deployt wurde.
+        # Was die Spalte in DIESEM Lauf traegt. Der Rueckfall steht hier
+        # oben, damit jeder Weg durch den Block ihn ueberschreiben muss,
+        # statt ihn zu vergessen.
+        _audio_semantik = "Pegel"
         _ad_pfad = MODEL_CACHE / "head.audio.json"
         try:
             http_download(f"{GATEWAY}/api/internal/detect-models/head.audio.json",
@@ -2502,12 +2506,22 @@ def process_detect(uuid):
                               f"kopieren. Detect wird uebersprungen.",
                               flush=True)
                         return
+                    _f = int(_ad.get("fenster") or 30)
                     cmd += ["--audio-dynamik",
-                            "--audio-dynamik-fenster",
-                            str(int(_ad.get("fenster") or 30))]
+                            "--audio-dynamik-fenster", str(_f)]
+                    _audio_semantik = f"Schwankung/{_f}s"
         except Exception as _e:
             print(f"  detect {uuid}: audio-Beilage unlesbar ({_e}) "
                   f"-- fahre mit Pegel", flush=True)
+        # ⚠️ DIE EINZIGE SPUR. Am 2026-09-08 liefen drei Detects durch die
+        # neue Verzweigung, und hinterher liess sich nicht direkt zeigen,
+        # WELCHE Zahl die Audio-Spalte getragen hatte — das Kommando wird
+        # nirgends protokolliert, und falsch herum stuerzt nichts ab. Der
+        # Beleg musste aus vier indirekten Stellen zusammengesetzt werden.
+        # Diese Zeile kostet nichts und macht es fuer immer nachlesbar:
+        #   grep "Audio-Spalte" ~/Library/Logs/tv-thumbs-daemon.log
+        print(f"  detect {uuid}: Audio-Spalte = {_audio_semantik}",
+              flush=True)
     # Per-recording whisper-prob feed for MLP2 v2 heads. tv-detect
     # only consumes this when the loaded head has n_whisper>0; for
     # MLP1 / LogReg heads the flag is silently ignored. The Mac-

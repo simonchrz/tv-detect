@@ -21,6 +21,19 @@ irgendetwas zu bauen:
   * echtes NN -> kein Dekoder: das geglaettete NN wird nur geschwellt.
     Der Abstand zur Produktion zeigt, was der Dekoder heute beitraegt.
 
+⚠️ BLINDE STELLE: KOPF-AENDERUNGEN SIEHT DIESES SKRIPT NICHT
+------------------------------------------------------------
+Gemessen wird ueber --replay-signals, und ein Signal-Dump enthaelt die
+NN-Ausgaben EINGEFROREN. Das Budget misst also den DEKODER auf festen
+Kopf-Ausgaben. Wird ein neuer Kopf deployt, aendert sich hier nichts --
+am 2026-09-08 stand folgerichtig 0.9726 gegen 0.9726, obwohl der Kopf
+gewechselt hatte.
+
+Fuer Label- und Dekoderfragen ist genau das die Staerke: der Kopf ist
+konstant gehalten, und was sich bewegt, kommt von der Frage. Fuer
+Kopffragen ist es blind. Wer den Trend als "das Modell wird besser"
+liest, liest falsch -- dafuer taugt der Golden-Median im Nightly.
+
 MESSSATZ
 --------
 messsatz-2026-09-07.json: 98 Aufnahmen mit menschlichem Label, geprueft

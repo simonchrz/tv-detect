@@ -5419,3 +5419,42 @@ in die Whitelist und entwertet sie.
 
 Eine Kopplung ueber zwei Repos hat DREI Stellen, nicht zwei: Schreiber,
 Transport, Leser. Beide Enden zu testen reicht nicht.
+
+### Nachtrag 2026-09-08 (Abend) — Handlauf-Detect: die Kette steht, und der Fehlfall ist vorgeführt
+
+Der neue Kopf war deployt, aber noch nie mit einem echten Detect
+gelaufen. Statt auf den nächsten Mitschnitt zu warten, von Hand geprüft:
+dieselbe Aufnahme zweimal, mit und ohne `--audio-dynamik`, gegen den
+deployten Schwankungs-Kopf. Rührt nichts an, Ausgabe nach stdout.
+
+`dvr-comedy-central-1778617500`, Menschenlabel `[839, 1087]`:
+
+| | Blöcke | Abweichung |
+|---|---|---|
+| **ohne** Flag | `[797, 1089]` | Start **42 s zu früh** |
+| **mit** Flag | `[841, 1088]` | Start 2 s, Ende 1 s |
+
+**Drei Dinge auf einmal bestätigt.** Die Kette Kopf plus Flag plus
+Dekoder läuft in Produktion. Das Flag hat eine reale Wirkung. Und sie
+zeigt in die erwartete Richtung.
+
+**Und der Fehlfall ist damit nicht mehr Theorie.** „Ohne Flag" IST der
+Zustand, in dem der Daemon ohne die Beilage gewesen wäre — deployter
+Schwankungs-Kopf, gefüttert mit dem Pegel. Ergebnis: ein Blockstart 42
+Sekunden zu früh, kein Fehler im Log, kein Absturz. Genau das, was die
+404 auf `head.audio.json` heute Nachmittag angerichtet hätte, wenn
+zwischen Deploy und Fix ein Detect gelaufen wäre.
+
+⚠️ **Eine Aufnahme ist eine Anekdote, keine Messung.** Der Betrag von
+42 s sagt nichts über den Korpus; gemessen ist der Effekt mit +0.0024 F1
+(O22). Was diese eine Aufnahme zeigt, ist die Funktion der Kette und die
+Richtung — nicht die Größe.
+
+#### Blinde Stelle des Fehlerbudgets, hier benannt
+
+Das Budget wiederholt eingefrorene Signal-Dumps. Es misst damit den
+DEKODER auf festen NN-Ausgaben und kann eine Kopf-Änderung prinzipiell
+nicht sehen — heute stand dort folgerichtig 0.9726 gegen 0.9726, obwohl
+ein neuer Kopf deployt wurde. Für Label- und Dekoderfragen ist das
+richtig so; für Kopffragen ist es blind, und wer es dafür liest, liest
+falsch.

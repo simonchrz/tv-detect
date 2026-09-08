@@ -5361,3 +5361,61 @@ Ein Tagesdurchgang hätte sie sonst als wartende Warteschlange gelesen.
 **Heute Nacht** ist damit weiterhin eine Ablehnung wahrscheinlich
 (Golden-Rückstand 0.014 > gemessener O22-Effekt), aber jetzt aus dem
 richtigen Grund und ohne den Aufstiegs-Waiver auf falscher Grundlage.
+
+### Nachtrag 2026-09-08 (Nachmittag) — O22 deployt, und die Kopplung riss in der Mitte
+
+Training vorgezogen, von Hand um 15:43 gestartet. **DEPLOYED**, und damit
+war die Kopplung zum ersten Mal scharf.
+
+| | Golden-Median |
+|---|---|
+| vor der Quarantäne (07.09.) | 0.964 |
+| nach der Quarantäne (08.09. nachts) | 0.949 |
+| **mit Audio-Dynamik (08.09. nachmittags)** | **0.960** |
+
+Der Golden-Boden liess mit −0.004 durch. Simons Absicherung vom Vormittag
+griff sichtbar: das head-to-head setzte aus, weil deployter Kopf
+(dynamik=False) und Kandidat (dynamik=True) verschiedene Audio-Semantik
+tragen. Deployt wurde ueber den Waiver „test-set composition changed
+(119→120)".
+
+⚠️ Damit ging dieser Deploy durch **zwei** gelockerte Wege: kein
+Champion-Vergleich und ein Kompositions-Waiver. Der Golden-Boden hat als
+einziger scharf geprueft.
+
+#### Der Fehler, der fast durchgegangen waere
+
+Beide Enden der Kopplung waren gebaut und getestet — der Trainer schreibt
+`head.audio.json`, der Daemon liest sie. **Die Kette riss in der Mitte:**
+
+* Upload-Whitelist im tv-recorder (`training.go`): `head.*` — die Datei
+  wurde mitgeliefert.
+* Download-Whitelist (`main.go`, `detectModelWhitelist`): **explizit**,
+  und kannte sie nicht.
+
+`GET /api/internal/detect-models/head.audio.json` → **404**. Der Kopf war
+deployt, die Beilage nicht abrufbar, und der Daemon waere auf „Pegel"
+zurueckgefallen — ein auf der Schwankung trainierter Kopf haette still
+die falsche Spalte bekommen. Genau der Fehler, gegen den die Beilage
+gebaut wurde, eine Ebene tiefer.
+
+**Gefunden nur, weil nach dem Deploy von Hand nachgesehen wurde.** Kein
+Test hat ihn gefangen, weil beide Seiten je fuer sich richtig waren.
+
+**Kein Schaden:** zwischen Deploy (15:43) und Fix (16:45) lief kein
+einziger Detect (`detect_running` 0, juengster Signal-Dump vom 06.09.).
+
+**Behoben:** `head.audio.json` in `detectModelWhitelist`, tv-recorder neu
+gebaut und deployt, Abruf verifiziert (HTTP 200, `dynamik: true`).
+
+**Gesichert:** `scripts/test_beilagen_whitelist.py` liest die Namen, die
+der DAEMON herunterzuladen versucht, und prueft jeden gegen die
+Gateway-Whitelist. Bewusst nicht „jede Beilage, die der Trainer
+schreibt" — `head.per-rec-iou.json` liest nur der naechtliche Lauf
+selbst, und ein Test, der auch die einfordert, zwingt jede lokale Datei
+in die Whitelist und entwertet sie.
+
+#### Die Lehre
+
+Eine Kopplung ueber zwei Repos hat DREI Stellen, nicht zwei: Schreiber,
+Transport, Leser. Beide Enden zu testen reicht nicht.

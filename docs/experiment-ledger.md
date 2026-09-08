@@ -5034,3 +5034,56 @@ Zusammensetzung verschiebt, und in welche Richtung. Der Messsatz enthält
 zwei der fünf quarantänierten Aufnahmen weiterhin — bewusst, denn die
 Sendung läuft ja weiter und das Modell trifft sie in Produktion. Nur
 lernen darf es nicht mehr von ihr.
+
+### Nachtrag 2026-09-08 — der erste Nightly mit Quarantäne und Budget
+
+**Der Deploy wurde ABGELEHNT.** Golden-Median 0.964 → **0.949**, also
+0.014 unter dem höchsten zweimal erreichten Wert bei einem Boden von
+0.010. Head-to-head 2 besser / 10 schlechter auf 120 Aufnahmen.
+Produktion behält den alten Kopf, der Pi bekam nichts.
+
+Die Ursache ist die Let's-Dance-Quarantäne, und sie kostet **mehr als die
+Offline-Messung erwarten liess**: dort waren es −0.0087 F1, hier sind es
+−0.015 auf dem Golden-Median. Das Gate hat getan, wofür es da ist. Der
+Korpus ging von 2257232 auf 2241383 Frames.
+
+#### Das Budget meldet Besserung — und das ist eine FALLE
+
+Erster Lauf im Ablauf, und er widerspricht dem Gate:
+
+| | vorher | jetzt |
+|---|---|---|
+| Produktion | 0.9689 | 0.9726 |
+| NN ohne Dekoder | 0.9353 | 0.9507 |
+| Verlust-Sekunden | 6570 | 5882 |
+
+**Das Modell ist daran unbeteiligt.** Geprüft: kein einziger der 98
+Signal-Dumps ist jünger als 30 Stunden, das Binary ist unverändert, und
+der Deploy war ohnehin abgelehnt. Die NN-Ausgaben, die das Budget
+wiederholt, sind byte-gleich.
+
+Was sich geändert hat, sind die **Labels**. Simon hat am 07.09. neun
+Aufnahmen korrigiert; **acht davon liegen im Messsatz** und trugen dort
+1353 Verlust-Sekunden. Der Rückgang um 688 Sekunden ist seine Arbeit,
+nicht die des Modells.
+
+**Das ist ein Konstruktionsfehler in dem, was ich gestern gebaut habe.**
+Der Trend kann sich aus drei Gründen bewegen — Modell, Dekoder, Labels —
+und die Zeile sagte nicht, welcher es war. `train-head.py` führt aus
+genau diesem Grund seit langem `golden_label_hash`.
+
+**Behoben:** die Trendzeile trägt jetzt einen Label-Fingerabdruck, und
+der Vergleich sagt ausdrücklich „DIE LABELS HABEN SICH GEÄNDERT" oder
+„Labels unverändert — Bewegung kommt vom Modell oder Dekoder".
+
+#### Was daraus für die Quarantäne folgt
+
+Zwei Zahlen zeigen in verschiedene Richtungen, und beide sind echt: das
+Golden-Maß fällt um 0.015, weil dem Modell Trainingsmaterial fehlt. Das
+Budget steigt um 0.004, weil die Labels besser wurden. Die Quarantäne
+bleibt damit ein Verlust, der bisher nicht gedeckt ist.
+
+Solange das Gate ablehnt, deployt nichts — die Produktion ist sicher, aber
+sie steht auch still. Das ist eine Entscheidung, die Simon treffen muss:
+Quarantäne zurücknehmen, oder den Verlust akzeptieren und darauf warten,
+dass neue Aufnahmen ihn ausgleichen.

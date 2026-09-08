@@ -67,6 +67,27 @@ def _lade(name, datei):
     return m
 
 
+def label_fingerabdruck(ub, uuids):
+    """Kurzer Hash ueber die Labels des Messsatzes.
+
+    ⚠️ WARUM DAS SEIN MUSS. Der Trend kann sich aus DREI Gruenden bewegen:
+    das Modell aendert sich, der Dekoder aendert sich, oder die LABELS
+    aendern sich. Am 2026-09-08 fiel der Verlust von 6570 auf 5882
+    Sekunden, und der erste Blick las das als besseres Modell. Es war
+    keines: Signal-Dumps und Binary waren unveraendert, der Deploy war
+    sogar abgelehnt. Simon hatte am Vortag neun Aufnahmen korrigiert, und
+    acht davon liegen im Messsatz. Ohne diesen Fingerabdruck haette der
+    Trend eine Labelkorrektur als Modellfortschritt ausgewiesen — genau
+    die Verwechslung, gegen die train-head.py `golden_label_hash` fuehrt.
+    """
+    import hashlib
+    h = hashlib.sha1()
+    for u in sorted(uuids):
+        for s_, e_ in (ub.get(u) or []):
+            h.update(f"{u}:{int(s_)}-{int(e_)};".encode())
+    return h.hexdigest()[:12]
+
+
 def block_iou(pred, gt):
     """Definition aus eval_production_cutlists.py = train-head.py."""
     if not pred and not gt:
@@ -285,7 +306,9 @@ def main():
     # sonst vergleicht man spaeter Aepfel mit einer Teilmenge Aepfel.
     if not a.kein_trend and not a.limit and not ohne_dump:
         zeile = {"ts": __import__("time").strftime("%Y%m%dT%H%M%S"),
-                 "messsatz": ms["hash"], "n": len(zeilen),
+                 "messsatz": ms["hash"],
+                 "label_hash": label_fingerabdruck(ub, [z["uuid"] for z in zeilen]),
+                 "n": len(zeilen),
                  "iou_prod": round(med("iou_prod"), 4),
                  "iou_orakel_nn": round(med("iou_orakel_nn"), 4),
                  "iou_nn_nur": round(med("iou_nn_nur"), 4),
@@ -303,6 +326,16 @@ def main():
             fh.write(json.dumps(zeile) + "\n")
         if vorher:
             print(f"\n=== gegen den vorigen Lauf ({vorher['ts']}) ===")
+            lv = vorher.get("label_hash")
+            if lv and lv != zeile["label_hash"]:
+                print(f"  ⚠ DIE LABELS HABEN SICH GEAENDERT ({lv} -> "
+                      f"{zeile['label_hash']}). Jede Bewegung unten kann daher "
+                      f"kommen und NICHT vom Modell.")
+            elif lv:
+                print(f"  Labels unveraendert ({lv}) — Bewegung kommt vom "
+                      f"Modell oder Dekoder.")
+            else:
+                print("  (voriger Lauf ohne Label-Fingerabdruck, nicht vergleichbar)")
             for k, name in (("iou_prod", "Produktion"),
                             ("iou_orakel_nn", "Orakel-NN"),
                             ("iou_nn_nur", "NN ohne Dekoder")):

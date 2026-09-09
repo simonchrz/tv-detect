@@ -509,10 +509,50 @@ echo "=== label audit end ==="
 # Aendert NICHTS. Liest Dumps, Labels und Anker, schreibt eine Zeile in
 # fehlerbudget-trend.jsonl. Bei unvollstaendigem Satz wird der Trend
 # bewusst NICHT fortgeschrieben (dieselbe Regel wie golden_boden).
+#
+# ⚠️ WELCHE DUMPS. Bis zum 2026-09-09 las das Budget das
+# Standardverzeichnis, und darin lagen Dumps vom 15.08. — es beschrieb
+# also drei Wochen lang einen Kopf, der nicht mehr lief. Aufgefallen ist
+# das erst, als der Modell-Cache des Mac selbst als veraltet auffiel.
+# Seitdem misst das Budget gegen `emit-signals-neu`, und die Kampagne
+# unten haelt dieses Verzeichnis am deployten Kopf.
+#
+# Bei unvollstaendigem Satz schreibt fehlerbudget.py KEINE Trendzeile.
+# Genau darauf verlaesst sich die Reihenfolge hier: laeuft die Kampagne
+# noch, misst das Budget nicht halb fertig, sondern gar nicht.
+BUDGET_DUMPS="$HOME/.cache/tv-detect-daemon/emit-signals-neu"
 echo "=== fehlerbudget (misst, aendert nichts) ==="
-"$VENV_PY" "$HOME/src/tv-detect/scripts/fehlerbudget.py" 2>&1 \
+"$VENV_PY" "$HOME/src/tv-detect/scripts/fehlerbudget.py" \
+  --dumps "$BUDGET_DUMPS" 2>&1 \
   | tail -40 || echo "fehlerbudget failed (non-fatal)"
 echo "=== fehlerbudget end ==="
+
+# ── Messsatz dem deployten Kopf nachfuehren ──────────────────────────────
+#
+# Simons Entscheidung 2026-09-09: der Messsatz soll nach jedem Kopf-Deploy
+# mitwandern, statt eingefroren zu bleiben.
+#
+# Der Aufruf ist ABSICHTLICH bedingungslos. `dumps-erneuern.py` haelt den
+# Fingerabdruck des Kopfes neben den Dumps: stimmt er, ist nichts zu tun
+# und das Skript endet in Sekunden; hat er gewechselt, raeumt es die alten
+# Dumps weg und baut neu auf. Damit muss diese Stelle nicht wissen, ob
+# heute Nacht deployt wurde.
+#
+# Im Hintergrund und mit Ruecksicht: das Skript wartet, solange ein echter
+# Detect oder eine Ausbildung laeuft, und haelt bei Netzausfaellen an
+# statt Aufnahmen zu verbrennen. Ein voller Durchlauf sind rund fuenf
+# Stunden; schafft er es nicht bis zur naechsten Nacht, faellt keine
+# falsche Zahl an, sondern gar keine (siehe Trend-Regel oben).
+#
+# ⚠️ NICHT auf dieselbe Nacht warten. Das Budget oben misst den Stand von
+# GESTERN Nacht, die Kampagne erzeugt den fuer MORGEN. Ein Nachlauf von
+# einer Nacht ist der Preis dafuer, dass die Ausbildung nicht fuenf
+# Stunden blockiert. Die Trendzeile nennt Kopf und Dump-Satz, die
+# Zuordnung bleibt also eindeutig.
+echo "=== Messsatz nachfuehren (Hintergrund) ==="
+nohup "$VENV_PY" "$HOME/src/tv-detect/scripts/dumps-erneuern.py" \
+  > "$HOME/Library/Logs/dumps-erneuern.log" 2>&1 &
+echo "  gestartet, Protokoll: ~/Library/Logs/dumps-erneuern.log"
 
 # ── O13-Schattenlauf ─────────────────────────────────────────────────────
 # Schreibt mit, was die OCR-Regel an den Kanten GETAN HAETTE. Wendet nichts

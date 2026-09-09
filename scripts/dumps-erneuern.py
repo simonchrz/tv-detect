@@ -195,6 +195,32 @@ def main():
     print(f"Messsatz {satz.get('name')} ({satz.get('hash')}), {len(uuids)} Aufnahmen")
     print(f"Ziel {ziel}")
 
+    # ⚠️ WECHSELT DER KOPF, IST DER GANZE SATZ WERTLOS. Ein Dump friert
+    # die NN-Ausgaben ein; ein Verzeichnis mit Dumps aus zwei Modellen
+    # sieht vollstaendig aus und ist eine Mischung. Deshalb steht der
+    # Fingerabdruck NEBEN den Dumps, und bei Abweichung wird geraeumt
+    # statt ergaenzt. Das macht den Aufruf idempotent: das Skript kann
+    # jede Nacht blind starten, tut bei unveraendertem Kopf nichts und
+    # baut nach einem Deploy neu auf.
+    kopf_datei = ziel / ".kopf"
+    frueher = kopf_datei.read_text().strip() if kopf_datei.is_file() else None
+    if frueher and frueher != h0:
+        weg = sorted(ziel.glob("*.json"))
+        if a.trocken:
+            # ⚠️ Ein Trockenlauf fasst NICHTS an. Der erste Entwurf
+            # raeumte auch hier, weil der Ausstieg fuer --trocken weiter
+            # unten steht — ein Probelauf haette den Satz geloescht.
+            print(f"Kopf hat gewechselt ({frueher} -> {h0}) — "
+                  f"WUERDE {len(weg)} Dumps raeumen (Trockenlauf)")
+        else:
+            for f in weg:
+                try: f.unlink()
+                except Exception: pass
+            print(f"Kopf hat gewechselt ({frueher} -> {h0}) — "
+                  f"{len(weg)} Dumps des alten Kopfes geraeumt")
+    if not a.trocken:
+        kopf_datei.write_text(h0)
+
     # Fortsetzbar: was schon da ist, wird nicht neu gerechnet.
     offen = [u for u in uuids if not (ziel / f"{u}.json").is_file()]
     print(f"offen: {len(offen)}, fertig: {len(uuids)-len(offen)}")

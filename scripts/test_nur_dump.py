@@ -105,6 +105,33 @@ class NurDump(unittest.TestCase):
         self.assertIn("for versuch in range(1, 4):", m,
                       "dieselbe Aufnahme mehrfach versuchen")
 
+    def test_kopfwechsel_raeumt_statt_zu_ergaenzen(self):
+        # Ein Verzeichnis mit Dumps aus ZWEI Modellen sieht vollstaendig
+        # aus und ist eine Mischung. Simons Entscheid 2026-09-09: der
+        # Messsatz wandert mit dem Kopf mit, also muss der Wechsel
+        # raeumen und nicht ergaenzen.
+        self.assertIn('kopf_datei = ziel / ".kopf"', SKRIPT,
+                      "der Fingerabdruck gehoert NEBEN die Dumps")
+        i = SKRIPT.index("if frueher and frueher != h0:")
+        blk = SKRIPT[i:i + 900]
+        self.assertIn("f.unlink()", blk, "alte Dumps muessen weg")
+        # ⚠️ Aber NIE im Trockenlauf. Der erste Entwurf raeumte auch dort,
+        # weil der Ausstieg fuer --trocken weiter unten steht.
+        self.assertIn("if a.trocken:", blk,
+                      "ein Probelauf darf den Satz nicht loeschen")
+
+    def test_nightly_fuehrt_den_messsatz_nach(self):
+        sh = (HIER.parent / "daemon" / "tv-train-head.sh").read_text()
+        self.assertIn("dumps-erneuern.py", sh,
+                      "der naechtliche Lauf muss den Messsatz nachfuehren")
+        self.assertIn("--dumps", sh,
+                      "das Budget muss die frischen Dumps lesen, nicht das "
+                      "Standardverzeichnis mit dem alten Kopf")
+        self.assertLess(sh.index("fehlerbudget.py"), sh.index("dumps-erneuern.py"),
+                        "erst messen (Stand von gestern), dann nachfuehren "
+                        "(Stand fuer morgen) — sonst blockiert die Kampagne "
+                        "die Ausbildung fuenf Stunden")
+
     def test_fortsetzbar(self):
         self.assertIn('if not (ziel / f"{u}.json").is_file()', SKRIPT,
                       "ein Abbruch nach 4 h darf nicht alles wiederholen")

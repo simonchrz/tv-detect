@@ -5505,3 +5505,39 @@ Korpus-Eintrag bricht eine Option.
 je Aufnahme, Zuwachs etwa 200 Aufnahmen im Monat. Das reicht **6.5
 Monate** bis Stufe 1 — nicht für Jahre. Wer den Korpus dauerhaft
 vollständig halten will, braucht dann mehr Platz.
+
+### Nachtrag 2026-09-09 (Tagesdurchgang) — Nightly deployt, keine Serie, ein Defekt im Ledger nachgetragen
+
+**Nightly 09-09 (03:30): DEPLOYED.** Golden 0.9625 gegen Bestwert 0.9635
+(−0.001, passiert), paarweise 7 besser / 4 schlechter auf 123 Aufnahmen,
+Champion-Quelle `head.gate.bin`, Audio-Beilage beidseitig `dynamik=True`
+— der Champion-Vergleich läuft nach der Umschalt-Nacht wieder. Audit
+exit 0, keine verworfenen Nächte, set_hash `c8727e8266a8` und Decoder
+unverändert (38/38 gepinnt). Die beiden Nacht-Warnungen (9 Archiv-Einträge
+mit Breite 1281, 1 Zeitachsen-Versatz `dvr-rtl-1781199600` +40 s) stehen
+seit fünf Nächten mit identischer Zahl — bekannt, nicht neu.
+
+**Keine Serie läuft, nichts ist reif, nichts wird eingereiht.** O19–O22
+sind in ihren Dateien entschieden, O18 wartet auf den Ein-Prozess-Trainer
+(Code, keine Registrierung). §3a ist leer. O4 bleibt Beobachtung.
+
+**Defekt, heute 06:56 von Simon behoben (Commit `971b7c7`), hier nur
+verbucht:** der Modell-Cache des Mac-Daemons erneuerte nur bei geänderter
+Content-Length. Der MLP-Kopf ist größenstabil, also lief jeder Detect vom
+28.08. bis heute früh auf dem Kopf vom 28.08. — jede Nacht deployte ins
+Leere. Am 08.09. kam dazu die frische `head.audio.json` (Erstabruf lädt
+immer) neben den alten Pegel-Kopf: genau die Fehlpaarung, gegen die die
+Beilage gebaut war. Gemessen am Messsatz: 64/98 schlechter, Median −0.0089,
+Kinderkanäle bis auf 0.
+
+Was das für die Zahlen der Schleife heißt, damit niemand falsch liest:
+* **Unberührt:** Golden-Verlauf, Head-to-Head, alle Tagesserien (O17,
+  O18, O20–O22) — die rechnen im Trainer, nicht über den Daemon-Cache.
+* **Auf dem 28.08.-Kopf gemessen:** alle Signal-Dumps seit 08-27, damit
+  das Fehlerbudget (das ohnehin den Dekoder auf festen NN-Ausgaben misst),
+  der O19-Prüfsatz (Dekoder-A/B auf diesen Dumps; das Urteil hängt an der
+  Regel, nicht am Kopf) und der Handlauf vom 08.09. abends. Ebenso der
+  Korrekturaufwand (O4) für alles, was in dem Fenster reviewt wurde: er
+  misst dort den alten Kopf, nicht den deployten.
+* Seit heute trägt jede Budget-Zeile `kopf` (SHA1 des Daemon-Kopfes);
+  die 06:34-Zeile von heute ist noch ohne. Erste Zeile mit Abdruck: morgen.

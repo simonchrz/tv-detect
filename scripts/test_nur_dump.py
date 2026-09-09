@@ -93,6 +93,18 @@ class NurDump(unittest.TestCase):
         self.assertIn("raise SystemExit(3)", SKRIPT,
                       "unlesbare Umgebung muss abbrechen, nicht raten")
 
+    def test_haelt_netzausfaelle_aus(self):
+        # 2026-09-09, 08:26: drei Minuten ohne Internet. Der erste
+        # Entwurf hakte in der Zeit 54 Aufnahmen im Fuenf-Sekunden-Takt
+        # als Fehlschlag ab. Ein Lauf ueber Stunden muss Aussetzer
+        # aushalten, sonst misst die Netzqualitaet mit.
+        self.assertIn("gateway_wartet", SKRIPT)
+        self.assertIn("healthz", SKRIPT,
+                      "Erreichbarkeit am Gesundheitsendpunkt pruefen")
+        m = SKRIPT[SKRIPT.index("def main():"):]
+        self.assertIn("for versuch in range(1, 4):", m,
+                      "dieselbe Aufnahme mehrfach versuchen")
+
     def test_fortsetzbar(self):
         self.assertIn('if not (ziel / f"{u}.json").is_file()', SKRIPT,
                       "ein Abbruch nach 4 h darf nicht alles wiederholen")

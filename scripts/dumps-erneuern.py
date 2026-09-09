@@ -139,6 +139,31 @@ def andere_arbeit_laeuft():
     return False
 
 
+def gateway_wartet(mod, hoechstens_s=1800):
+    """Warten, bis das Gateway wieder antwortet. False = aufgegeben."""
+    import urllib.request
+    gewartet = 0
+    while gewartet < hoechstens_s:
+        try:
+            with urllib.request.urlopen(f"{mod.GATEWAY}/healthz", timeout=10,
+                                        context=mod.CTX) as r:
+                if r.status == 200:
+                    if gewartet:
+                        print(f"  Gateway wieder da nach {gewartet}s",
+                              flush=True)
+                    return True
+        except Exception:
+            pass
+        if gewartet == 0:
+            print("  Gateway stumm — warte, statt Aufnahmen zu verbrennen",
+                  flush=True)
+        time.sleep(20)
+        gewartet += 20
+    print(f"  Gateway seit {hoechstens_s}s stumm — Abbruch dieser Aufnahme",
+          flush=True)
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ziel", default=str(MODELL / "emit-signals-neu"),
@@ -218,11 +243,21 @@ def main():
             je = (time.time() - t_start) / ok
             rest = f", Rest ~{je*(len(offen)-i+1)/3600:.1f} h"
         print(f"[{i}/{len(offen)}] {u}{rest}", flush=True)
-        try:
-            gut = mod.process_detect(u, nur_dump=True, dump_ziel=str(ziel))
-        except Exception as e:
-            print(f"  Ausnahme: {e}", flush=True)
-            gut = False
+        # ⚠️ WARTEN STATT DURCHBRENNEN. Am 2026-09-09 um 08:26 war das
+        # Gateway drei Minuten weg. Der erste Entwurf hat in dieser Zeit
+        # 54 Aufnahmen im Fuenf-Sekunden-Takt als Fehlschlag abgehakt --
+        # aus einem Aussetzer wurde ein halber Messsatz. Ein Lauf ueber
+        # Stunden MUSS Aussetzer aushalten, sonst misst am Ende die
+        # Netzqualitaet mit.
+        gut = False
+        for versuch in range(1, 4):
+            try:
+                gut = mod.process_detect(u, nur_dump=True, dump_ziel=str(ziel))
+                break
+            except Exception as e:
+                print(f"  Ausnahme ({versuch}/3): {e}", flush=True)
+                if not gateway_wartet(mod):
+                    break
         ok, fehl = (ok + 1, fehl) if gut else (ok, fehl + 1)
 
     print(f"\nfertig: {ok} Dumps, {fehl} Fehlschlaege, "

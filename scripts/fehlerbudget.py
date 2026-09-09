@@ -207,7 +207,17 @@ def label_seite(truth, n, uuid):
     return c
 
 
+def kopf_abdruck():
+    """Fingerabdruck des DEPLOYTEN Kopfes, oder None."""
+    p = Path.home() / ".cache/tv-detect-daemon/head.bin"
+    if not p.is_file():
+        return None
+    import hashlib
+    return hashlib.sha1(p.read_bytes()).hexdigest()[:12]
+
+
 def main():
+    global DUMPS
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json")
@@ -215,7 +225,13 @@ def main():
     ap.add_argument("--trend", default=str(Path.home() / ".cache/tvd-train-archive/fehlerbudget-trend.jsonl"),
                     help="Zeile je Lauf anhaengen, damit sich Naechte vergleichen lassen")
     ap.add_argument("--kein-trend", action="store_true", dest="kein_trend")
+    ap.add_argument("--dumps", default=str(DUMPS),
+                    help="Verzeichnis der Signal-Dumps. Ein anderer Satz "
+                         "bedeutet ein anderer KOPF — siehe die blinde "
+                         "Stelle oben. Die Trend-Zeile haelt fest, welcher.")
     a = ap.parse_args()
+
+    DUMPS = Path(a.dumps)
 
     ms = json.loads(MESSSATZ.read_text())
     uuids = ms["uuids"][:a.limit] if a.limit else ms["uuids"]
@@ -320,6 +336,15 @@ def main():
     if not a.kein_trend and not a.limit and not ohne_dump:
         zeile = {"ts": __import__("time").strftime("%Y%m%dT%H%M%S"),
                  "messsatz": ms["hash"],
+                 # ⚠️ OHNE DIESE ZWEI FELDER MISCHT DER TREND ZWEI KOEPFE.
+                 # Der Dump friert die NN-Ausgaben ein; ein anderes
+                 # Verzeichnis ist ein anderer Kopf, und die Zeilen saehen
+                 # trotzdem vergleichbar aus. Der Fingerabdruck ist der von
+                 # head.bin zum Zeitpunkt der Messung -- er beschreibt den
+                 # DEPLOYTEN Kopf, nicht zwingend den, der die Dumps
+                 # erzeugt hat; "dumps" sagt, welcher Satz gemeint war.
+                 "dumps": Path(a.dumps).name,
+                 "kopf": kopf_abdruck(),
                  "label_hash": label_fingerabdruck(ub, [z["uuid"] for z in zeilen]),
                  "n": len(zeilen),
                  "iou_prod": round(med("iou_prod"), 4),

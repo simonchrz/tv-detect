@@ -1514,23 +1514,67 @@ def http_post_stream(url, fileobj, content_type="application/x-tar",
 
 
 def http_download(url, dest_path):
-    """Download URL → file. Refreshes only if the remote
-    Content-Length differs from the local size — head.bin nightly
-    retrain bumps size when feature dim changes (5128 ↔ 5152 B)
-    and content otherwise; for backbone.onnx the size never moves."""
-    headers = {}
+    """Download URL → file, erneuert an `Last-Modified`.
+
+    ⚠️ WARUM NICHT MEHR AN DER GROESSE, 2026-09-09
+    ----------------------------------------------
+    Die alte Fassung erneuerte nur, wenn sich die Content-Length aendert.
+    Die Begruendung stand daneben: "head.bin nightly retrain bumps size
+    when feature dim changes (5128 <-> 5152 B) and content otherwise."
+    Das galt fuer den LogReg-Kopf von ~5 KB. Der MLP-Kopf ist 493096 Byte
+    GROSS UND GROESSENSTABIL: jede Nacht neuer Inhalt, identische Zahl.
+
+    Folge, gemessen am 2026-09-09: der Modell-Cache des Mac hielt einen
+    Kopf vom **28.08.**, waehrend der Pi den vom 09.09. auslieferte. Zwoelf
+    Tage lang hat jede naechtliche Ausbildung ins Leere deployt -- das Tor
+    mass Verbesserungen, die den Detect nie erreichten.
+
+    Schlimmer wurde es am 08.09.: die Beilage head.audio.json wird bei
+    JEDEM Detect frisch geholt (andere Groesse, also erneuert sie sich),
+    der Kopf daneben nicht. Damit lief die Audio-Schwankung in einen Kopf,
+    der auf den Pegel trainiert war -- genau die stille Fehlpaarung, gegen
+    die die Beilage gebaut wurde. Belegt an dvr-nick-1778578800, gleiches
+    Binary, gleiches Kommando, ein Flag Unterschied:
+        mit  --audio-dynamik   keine Bloecke
+        ohne --audio-dynamik   [0, 186]   (Mensch: [0.3, 185.54])
+
+    `Last-Modified` liefert der Pi fuer diese Route; danach wird
+    verglichen, gespeichert in einer `.stand`-Beilage. Fehlt der Header,
+    bleibt die Groessenpruefung als Rueckfall -- schlechter als nichts,
+    aber nie wieder die einzige Regel fuer eine Datei, deren Groesse
+    konstant ist.
+
+    LEHRE: eine Frische-Pruefung, die den INHALT nicht anfasst, ist eine
+    Wette auf eine Eigenschaft, die niemand garantiert. Als die Wette
+    verfiel (LogReg -> MLP), blieb der Kommentar stehen und die Pruefung
+    schwieg. Dieselbe Klasse wie `je_ist_nicht_noch`.
+    """
+    stand_pfad = dest_path.with_suffix(dest_path.suffix + ".stand")
     if dest_path.exists():
-        # Cheap check: HEAD request, compare size
         try:
             req = urllib.request.Request(url, method="HEAD")
             with urllib.request.urlopen(req, timeout=15, context=CTX) as r:
+                remote_lm = r.headers.get("Last-Modified")
                 remote_size = int(r.headers.get("Content-Length", 0))
-            if remote_size > 0 and remote_size == dest_path.stat().st_size:
-                return  # cache hit
+            if remote_lm:
+                lokal = (stand_pfad.read_text().strip()
+                         if stand_pfad.is_file() else None)
+                if lokal == remote_lm.strip():
+                    return                      # unveraendert
+            elif remote_size > 0 and remote_size == dest_path.stat().st_size:
+                return                          # Rueckfall ohne Header
         except Exception:
             pass
     with urllib.request.urlopen(url, timeout=120, context=CTX) as r:
+        lm = r.headers.get("Last-Modified")
         dest_path.write_bytes(r.read())
+    try:
+        if lm:
+            stand_pfad.write_text(lm.strip())
+        elif stand_pfad.is_file():
+            stand_pfad.unlink()   # kein Header mehr -> keine falsche Zusage
+    except Exception:
+        pass
 
 
 def _parse_logo_header(path):

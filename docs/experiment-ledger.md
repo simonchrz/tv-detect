@@ -5541,3 +5541,61 @@ Was das für die Zahlen der Schleife heißt, damit niemand falsch liest:
   misst dort den alten Kopf, nicht den deployten.
 * Seit heute trägt jede Budget-Zeile `kopf` (SHA1 des Daemon-Kopfes);
   die 06:34-Zeile von heute ist noch ohne. Erste Zeile mit Abdruck: morgen.
+
+### Nachtrag 2026-09-10 (Tagesdurchgang) — Nightly deployt, keine Serie; ein zweiter Lauf um 07:15, den niemand bestellt hat
+
+**Nightly 09-10 (03:30): DEPLOYED.** Golden 0.9598 gegen Bestwert 0.9635
+(−0.004, passiert), paarweise 2 besser / 5 schlechter auf 123 Aufnahmen,
+Champion-Quelle `head.gate.bin`, Ensemble aus drei Seeds (Golden je Seed
+0.950 / 0.964 / 0.959). Audit exit 0, keine verworfenen Nächte, set_hash
+`c8727e8266a8` und Decoder unverändert (38/38 gepinnt). Zeitachsen-Wache
+wie seit sechs Nächten: `dvr-rtl-1781199600` +40 s ausgelassen. Schwanz
+unverändert dieselben vier Beharrlichen (14/14 Nächte) — Sendungs- oder
+Label-Sache, nicht der Kopf.
+
+**Keine Serie läuft, nichts ist reif, nichts wird eingereiht.** §3a ist
+leer, O18 wartet auf den Ein-Prozess-Trainer, O4 bleibt Beobachtung.
+
+**Defekt (nur verbucht, nichts angefasst): ein zweiter voller Nightly um
+07:15:54.** Gestartet von launchd (Elternprozess 1, `launchctl print` führt
+ihn als Lauf des Agenten), ohne Kalendergrund — die plist kennt nur 03:30,
+und 03:30 lief. Der Mac war 07:02–07:13 in Schlaf/DarkWake-Zyklen
+(„Thermal Emergency Sleep", pmset-Log) und wurde 07:13:47 per Tastatur
+geweckt; zwei Minuten später stand der Lauf. Kein Handstart nachweisbar:
+keine Claude-Sitzung mit `kickstart`/`tv-train-head` heute früh, die
+zsh-History ist seit 05.09. nicht geschrieben worden. Ob launchd nach dem
+Wecken den Kalenderjob nachgefeuert hat oder Simon ihn angestoßen hat,
+bleibt offen — beides passt zur Uhrzeit.
+
+Was dabei sichtbar wurde und schwerer wiegt als der Lauf selbst: die
+**Sperre gegen sinnlose Doppel-Läufe hat nie gegriffen.** Der Wrapper
+überspringt, wenn seit dem letzten Deploy weniger als 10 neue Reviews da
+sind — liest den Deploy-Zeitstempel aber aus
+`$SNAPSHOT_DIR/.tvd-models/head.history.json`, das der Snapshot-Fetch nicht
+anlegt. `LAST_DEPLOY_TS` ist damit immer leer, und im gesamten Log
+(seit 04-2026) steht kein einziges Mal „conditional check". Der zweite
+Lauf trainiert also auf identischem Korpus (0 neue Reviews seit 06:16)
+denselben Kopf noch einmal.
+
+Folgen, damit morgen niemand falsch liest:
+* Der Sensor zeigt heute „läuft noch" und die 07:15-Zeile als „letzte
+  Nacht"; die 03:30-Zeile ist die Nacht. Es wird zwei 20260910-Zeilen
+  geben wie am 09-08 — der Boden zählt ohnehin höchstens einen Wert je
+  Kalendertag.
+* Deployt der 07:15-Lauf (das Gate entscheidet, R5), folgt ein zweiter
+  Drain-Zyklus, und die Kampagne baut den Messsatz erneut auf. Die
+  laufende Kampagne (Kopf `14e59b6f`, 16 von 98 Dumps) steht seit 07:18
+  auf „warte, die Ausbildung läuft" — der Wächter aus `3405a99` hält sie
+  sauber an, kein Mischsatz. Einen Wächter gegen ZWEI Kampagnen gibt es
+  nicht; heute braucht es ihn nicht, weil die erste wartet.
+* Nicht getan: den Lauf abbrechen. Ein laufender Nightly ist Produktion,
+  die Schleife fasst ihn nicht an.
+
+Für Simon, kein Auftrag der Schleife: (1) die Skip-Sperre auf
+`$TRAIN_OUT/head.history.json` zeigen lassen oder streichen — als toter
+Code täuscht sie einen Schutz vor, den es nicht gibt; (2) beim nächsten
+ungeplanten Lauf `launchctl print` und pmset-Log SOFORT sichern, das
+Unified-Log hält launchd-Starts nicht lange genug. Nebenfund:
+`com.user.eval-post-deploy` endet seit dem Neustart vom 02.09. mit Exit 78 —
+sein Skript `/tmp/eval_after_drain.sh` ist ein Mai-Relikt und weg. Er tut
+nichts, er schadet nichts, er gehört entladen oder ins Repo.

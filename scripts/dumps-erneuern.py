@@ -95,6 +95,39 @@ def umgebung_vom_daemon():
     return gesetzt
 
 
+def modelle_frisch(mod):
+    """Kopf und Beilagen vom Gateway holen, BEVOR der Abdruck faellt.
+
+    ⚠️ SELBST HINEINGELAUFEN, 2026-09-10, erste Nacht mit dieser
+    Kampagne. Sie las den Fingerabdruck aus dem MODELL-CACHE des Mac,
+    und der erneuert sich nur beim naechsten Detect. Der Pi trug um
+    04:16 den frisch deployten Kopf, der Cache um 06:17 noch den von
+    gestern — die Kampagne meldete folgerichtig "nichts zu tun" und tat
+    damit genau das Falsche. Ein Nachfuehren, das seine Referenz aus
+    einem Zwischenspeicher zieht, fuehrt nichts nach.
+
+    Der Abruf ist ausserdem nuetzlich: er waermt denselben Cache, aus
+    dem die Detects gleich lesen.
+    """
+    geholt = []
+    for name in ("head.bin", "head.audio.json", "head.calibration.json",
+                 "head.channel-map.json", "head.minute-prior.json"):
+        ziel = mod.MODEL_CACHE / name
+        vorher = ziel.stat().st_mtime if ziel.is_file() else 0
+        try:
+            mod.http_download(
+                f"{mod.GATEWAY}/api/internal/detect-models/{name}", ziel)
+        except Exception as e:
+            if "404" not in str(e):
+                print(f"  {name} nicht geholt ({e})")
+            continue
+        if ziel.is_file() and ziel.stat().st_mtime != vorher:
+            geholt.append(name)
+    if geholt:
+        print("frisch vom Gateway geholt:", ", ".join(geholt))
+    return geholt
+
+
 def daemon_laden():
     """Den Daemon als Modul laden, ohne seine Schleifen zu starten.
 
@@ -186,6 +219,17 @@ def main():
     ziel = Path(a.ziel)
     ziel.mkdir(parents=True, exist_ok=True)
 
+    # ⚠️ REIHENFOLGE. Modul laden, Modelle holen, DANN den Abdruck
+    # nehmen. Andersherum beschreibt der Abdruck den Cache-Stand von
+    # gestern (siehe modelle_frisch).
+    mod = daemon_laden()
+    if a.trocken:
+        # Ein Trockenlauf fasst den Modell-Cache nicht an. Dann kann der
+        # Abdruck unten aber der von gestern sein — sagen statt schweigen.
+        print("⚠️ Trockenlauf: Modelle werden NICHT geholt, der "
+              "Kopf-Abdruck unten kann veraltet sein.")
+    else:
+        modelle_frisch(mod)
     abdruck = kopf_abdruck()
     if not abdruck:
         print("head.bin fehlt im Modell-Cache — nichts zu messen.")
@@ -235,7 +279,6 @@ def main():
         print("nichts zu tun.")
         return 0
 
-    mod = daemon_laden()
     ok = fehl = 0
     t_start = time.time()
     for i, u in enumerate(offen, 1):

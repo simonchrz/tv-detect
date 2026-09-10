@@ -132,6 +132,31 @@ class NurDump(unittest.TestCase):
                         "(Stand fuer morgen) — sonst blockiert die Kampagne "
                         "die Ausbildung fuenf Stunden")
 
+    def test_kampagne_holt_den_kopf_bevor_sie_ihn_liest(self):
+        # ⚠️ 2026-09-10, erste Nacht: die Kampagne las den Abdruck aus
+        # dem Modell-Cache, und der erneuert sich erst beim naechsten
+        # Detect. Der Pi trug 04:16 den neuen Kopf, der Cache 06:17 noch
+        # den von gestern — "nichts zu tun" war die Folge und falsch.
+        self.assertIn("def modelle_frisch", SKRIPT)
+        m = SKRIPT[SKRIPT.index("def main():"):]
+        self.assertLess(m.index("modelle_frisch"), m.index("kopf_abdruck()"),
+                        "erst holen, dann den Abdruck nehmen")
+        self.assertIn("if a.trocken:", m[:m.index("kopf_abdruck()")],
+                      "ein Trockenlauf holt nichts und muss das sagen")
+
+    def test_budget_prueft_die_herkunft(self):
+        q = (HIER / "fehlerbudget.py").read_text()
+        self.assertIn('"dump_kopf"', q,
+                      "die Trendzeile muss nennen, welcher Kopf die Dumps "
+                      "erzeugt hat — nicht nur welcher deployt war")
+        self.assertIn("ANDERER DUMP-SATZ", q,
+                      "ein Wechsel der Messgrundlage darf nicht als "
+                      "Modellbewegung durchgehen")
+        self.assertIn("Kopf gewechselt", q)
+        self.assertIn("NENNT SEINE HERKUNFT NICHT", q,
+                      "alte Zeilen ohne Herkunft muessen als solche "
+                      "kenntlich sein statt stillschweigend zu vergleichen")
+
     def test_fortsetzbar(self):
         self.assertIn('if not (ziel / f"{u}.json").is_file()', SKRIPT,
                       "ein Abbruch nach 4 h darf nicht alles wiederholen")

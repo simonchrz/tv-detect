@@ -207,6 +207,14 @@ def label_seite(truth, n, uuid):
     return c
 
 
+def dump_kopf(verzeichnis):
+    """Fingerabdruck des Kopfes, der DIESE Dumps erzeugt hat, oder None."""
+    try:
+        return (verzeichnis / ".kopf").read_text().strip() or None
+    except Exception:
+        return None
+
+
 def kopf_abdruck():
     """Fingerabdruck des DEPLOYTEN Kopfes, oder None."""
     p = Path.home() / ".cache/tv-detect-daemon/head.bin"
@@ -345,6 +353,15 @@ def main():
                  # erzeugt hat; "dumps" sagt, welcher Satz gemeint war.
                  "dumps": Path(a.dumps).name,
                  "kopf": kopf_abdruck(),
+                 # ⚠️ DER ENTSCHEIDENDE FINGERABDRUCK. "kopf" oben ist der
+                 # DEPLOYTE Kopf zum Messzeitpunkt -- der kann laengst ein
+                 # anderer sein als der, dessen Ausgaben in den Dumps
+                 # eingefroren sind. Am 2026-09-10 lagen zwischen beiden
+                 # zwei Tage, und der Trend meldete daraufhin eine Bewegung
+                 # "vom Modell", die in Wahrheit ein Wechsel des
+                 # Dump-Satzes war. dumps-erneuern.py legt .kopf neben die
+                 # Dumps; DAS ist die Herkunft der gemessenen Zahlen.
+                 "dump_kopf": dump_kopf(Path(a.dumps)),
                  "label_hash": label_fingerabdruck(ub, [z["uuid"] for z in zeilen]),
                  "n": len(zeilen),
                  "iou_prod": round(med("iou_prod"), 4),
@@ -374,6 +391,27 @@ def main():
                       f"Modell oder Dekoder.")
             else:
                 print("  (voriger Lauf ohne Label-Fingerabdruck, nicht vergleichbar)")
+            # ⚠️ Und die zweite Frage, die genauso laut gestellt gehoert:
+            # stammen beide Zeilen vom SELBEN Kopf? Wenn nicht, ist die
+            # Bewegung ein Modellwechsel und keine Nachtdrift. Ohne diese
+            # Pruefung meldete der Lauf vom 2026-09-10 eine Bewegung "vom
+            # Modell", die ein Wechsel der Messgrundlage war.
+            kv, kn = vorher.get("dump_kopf"), zeile["dump_kopf"]
+            dv, dn = vorher.get("dumps"), zeile["dumps"]
+            if kv is None or dv is None:
+                print("  ⚠ DER VORIGE LAUF NENNT SEINE HERKUNFT NICHT "
+                      "(Zeile aus der Zeit vor der Herkunftspflicht). Ob "
+                      "beide dasselbe Modell messen, ist NICHT belegt.")
+            elif dv != dn:
+                print(f"  ⚠ ANDERER DUMP-SATZ ({dv} -> {dn}). Die Bewegung "
+                      f"unten ist ein Wechsel der Messgrundlage, nicht die "
+                      f"Entwicklung eines Modells.")
+            elif kv != kn:
+                print(f"  Kopf gewechselt ({kv} -> {kn}) — die Bewegung "
+                      f"unten IST der Modellunterschied.")
+            else:
+                print(f"  Selber Kopf ({kn}) — Bewegung kaeme vom Dekoder "
+                      f"oder von den Ankern, nicht vom Modell.")
             for k, name in (("iou_prod", "Produktion"),
                             ("iou_orakel_nn", "Orakel-NN"),
                             ("iou_nn_nur", "NN ohne Dekoder")):

@@ -157,6 +157,31 @@ class NurDump(unittest.TestCase):
                       "alte Zeilen ohne Herkunft muessen als solche "
                       "kenntlich sein statt stillschweigend zu vergleichen")
 
+    def test_nur_eine_kampagne_je_verzeichnis(self):
+        # ⚠️ 2026-09-10: eine von Hand gestartete und die des naechtlichen
+        # Laufs arbeiteten gleichzeitig auf demselben Verzeichnis. Die
+        # zweite raeumte die Dumps der ersten weg, beide schrieben in
+        # dieselbe Protokolldatei — am Ende stand 1 Dump von 98 da, ohne
+        # dass etwas abgestuerzt waere.
+        self.assertIn("def einzelstueck", SKRIPT)
+        self.assertIn('".laeuft"', SKRIPT, "die Sperre gehoert ins Ziel")
+        self.assertIn("os.kill(pid, 0)", SKRIPT,
+                      "eine Sperre mit totem Prozess muss uebernehmbar sein")
+        m = SKRIPT[SKRIPT.index("def main():"):]
+        self.assertLess(m.index("einzelstueck(ziel)"), m.index("modelle_frisch"),
+                        "erst sperren, dann Modelle holen — sonst holen zwei "
+                        "Laeufe gleichzeitig und raeumen sich gegenseitig ab")
+
+    def test_abbruch_verlangt_keine_handarbeit(self):
+        # Der Startpfad raeumt selbst, wenn die Kopf-Marke nicht passt.
+        # Ein Abbruch darf deshalb NICHT zum Loeschen von Hand auffordern.
+        i = SKRIPT.index("⚠️ ABBRUCH")
+        blk = SKRIPT[i:i + 600]
+        self.assertNotIn("rm -rf", blk,
+                         "kein Loeschbefehl fuer den Menschen — der "
+                         "naechste Start raeumt selbst")
+        self.assertIn("raeumt sie selbst weg", blk)
+
     def test_fortsetzbar(self):
         self.assertIn('if not (ziel / f"{u}.json").is_file()', SKRIPT,
                       "ein Abbruch nach 4 h darf nicht alles wiederholen")

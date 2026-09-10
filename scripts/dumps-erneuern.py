@@ -95,6 +95,42 @@ def umgebung_vom_daemon():
     return gesetzt
 
 
+def einzelstueck(ziel):
+    """Nur EINE Kampagne je Zielverzeichnis. Gibt die Sperrdatei zurueck.
+
+    ⚠️ SELBST HINEINGELAUFEN, 2026-09-10. Ich hatte um 06:34 von Hand
+    eine Kampagne gestartet; um 08:2x startete der naechtliche Lauf eine
+    zweite auf demselben Verzeichnis. Die zweite raeumte die Dumps der
+    ersten weg (aus ihrer Sicht hatte der Kopf gewechselt), beide
+    schrieben in dieselbe Protokolldatei und ueberschrieben sich, und am
+    Ende stand ein Dump von 98 da, ohne dass etwas abgestuerzt waere.
+
+    Der Lock ist bewusst eine Datei mit PID und nicht flock: er soll
+    auch nach einem harten Abbruch lesbar sein und sagen, WER hier
+    arbeitet. Eine Sperre mit totem Prozess wird uebernommen.
+    """
+    sperre = ziel / ".laeuft"
+    if sperre.is_file():
+        try:
+            pid = int(sperre.read_text().split()[0])
+        except Exception:
+            pid = None
+        lebt = False
+        if pid:
+            try:
+                os.kill(pid, 0)
+                lebt = True
+            except OSError:
+                lebt = False
+        if lebt:
+            print(f"Es laeuft bereits eine Kampagne auf diesem Verzeichnis "
+                  f"(PID {pid}). Nichts zu tun.")
+            return None
+        print(f"Verwaiste Sperre von PID {pid} uebernommen.")
+    sperre.write_text(f"{os.getpid()} {time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+    return sperre
+
+
 def modelle_frisch(mod):
     """Kopf und Beilagen vom Gateway holen, BEVOR der Abdruck faellt.
 
@@ -218,6 +254,11 @@ def main():
     uuids = satz["uuids"]
     ziel = Path(a.ziel)
     ziel.mkdir(parents=True, exist_ok=True)
+    sperre = None
+    if not a.trocken:
+        sperre = einzelstueck(ziel)
+        if sperre is None:
+            return 0
 
     # ⚠️ REIHENFOLGE. Modul laden, Modelle holen, DANN den Abdruck
     # nehmen. Andersherum beschreibt der Abdruck den Cache-Stand von
@@ -286,12 +327,16 @@ def main():
         if jetzt != abdruck:
             # NICHT weitermachen. Ein gemischter Messsatz sieht sauber aus
             # und ist es nicht.
+            if sperre:
+                try: sperre.unlink()
+                except Exception: pass
+            # Kein Aufraeum-Befehl mehr fuer den Menschen: der naechste
+            # Start raeumt selbst, weil .kopf nicht mehr passt.
             print(f"\n⚠️ ABBRUCH: der Kopf hat sich geaendert "
-                  f"({h0} -> {jetzt[0] if jetzt else 'weg'}). "
-                  f"{ok} Dumps sind vom alten Kopf und muessen weg, "
-                  f"sonst mischt der Messsatz zwei Modelle:\n"
-                  f"    rm -rf {ziel}\n"
-                  f"Danach neu starten.", flush=True)
+                  f"({h0} -> {jetzt[0] if jetzt else 'weg'}). Die {ok} "
+                  f"Dumps sind vom alten Kopf. Einfach neu starten — der "
+                  f"naechste Lauf raeumt sie selbst weg, weil die "
+                  f"Kopf-Marke nicht mehr passt.", flush=True)
             return 2
         if not a.ruecksichtslos:
             gewartet = 0
@@ -329,6 +374,9 @@ def main():
                     break
         ok, fehl = (ok + 1, fehl) if gut else (ok, fehl + 1)
 
+    if sperre:
+        try: sperre.unlink()
+        except Exception: pass
     print(f"\nfertig: {ok} Dumps, {fehl} Fehlschlaege, "
           f"{(time.time()-t_start)/3600:.1f} h")
     print(f"Kopf am Ende: {kopf_abdruck()[0]} (Start {h0})")

@@ -2457,7 +2457,62 @@ nur um zu prüfen, ob die Kurve am Golden-Satz sich anderswo wiederfindet.
 **Kosten:** rund ein Fünftel der neuen Aufnahmen fehlt dem Training.
 Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
-## 3ar. O18: die Streuung war die REIHENFOLGE (2026-09-11)
+## 3ar. O18: die Reihenfolge ist EINE Quelle, nicht die Quelle (2026-09-11)
+
+⚠️ **KORRIGIERT am selben Abend, nach der Gegenprobe.** Die urspruengliche
+Ueberschrift lautete „die Streuung war die REIHENFOLGE". Das ist zu stark.
+Die Gegenprobe auf echten Daten hat die Streuung NICHT beseitigt:
+
+| seed | Lauf A (20:08) | Lauf B (22:36) | Δ |
+|---|---|---|---|
+| 4711 | 0.9309 | 0.9339 | +0.0030 |
+| 5813 | 0.9342 | 0.9399 | +0.0057 |
+| 6917 | 0.9346 | 0.9406 | +0.0060 |
+| 7013 | 0.9355 | 0.9364 | +0.0009 |
+
+Median |Δ| = **0.0057** gegen historisch 0.0073 — praktisch unveraendert,
+obwohl `per_rec.sort` aktiv war. Und **alle vier Vorzeichen sind gleich**,
+was gegen reinen Fit-Zufall spricht.
+
+Aufbau der Gegenprobe: derselbe eingefrorene Schnappschuss, Archiv-KOPIE
+(`~/.cache/tvd-gegenprobe`), gleiche Flags und Seeds, 16 Merkmalsdateien
+vorher beiseitegelegt, damit Lauf A sie nachrechnen muss und Lauf B sie
+fertig vorfindet — genau die Asymmetrie vom 06.09.
+
+**Vier Erklaerungen ausgeschlossen, jede gemessen:**
+
+* *Split-Ledger gewandert.* Nein — beide Laeufe melden 948 uuids und
+  dieselbe Aufteilung je Sender, bis auf die Stelle.
+* *Archiv veraendert.* Nein — 836 Eintraege in beiden, keiner dazu, keiner
+  weg, und Lauf A hat zwischen 20:00 und 22:30 keine einzige `.npz`
+  geschrieben.
+* *Andere Auswertungsgrundlage.* Nein — beide werten 93 von 126 ueber die
+  echte Verarbeitung aus, 33 ueber den Rueckfall.
+* *Die Uhrzeit.* Nein — 2,5 h senken `age_mult` um 0.058 % fuer die
+  Aufnahmen unter 90 Tagen. Synthetisch nachgestellt bewegt das den
+  Verlust im Median um **0.0006**, ein Zehntel des Beobachteten.
+
+**Was weiterhin gilt.** Die Reihenfolge IST eine Quelle: 0.0034-0.0072 je
+nach Seed, unabhaengig vom Anteil verschobener Bloecke (schon 2 von 120
+reichen). `per_rec.sort` bleibt richtig und bleibt drin. Nur erklaert es
+die Gesamtstreuung nicht.
+
+**Was daraus folgt.** Der Fit verstaerkt JEDE kleine Stoerung auf ~0.005.
+Damit ist die Frage nicht mehr „welche Stoerung", sondern ob zwei Laeufe
+ueberhaupt stoerungsfrei zu bekommen sind. Das gleichsinnige Vorzeichen
+ist die naechste Spur: es deutet auf etwas Gerichtetes zwischen den
+Laeufen, nicht auf Chaos. Noch nicht untersucht: Merkmalsdateien,
+Whisper-Transkripte und Spot-Anker liegen AUSSERHALB des eingefrorenen
+Schnappschusses und koennen sich zwischen zwei Laeufen aendern.
+
+**O18 bleibt damit zurueckgestellt.** Der urspruengliche Satz „der
+Trainer-Umbau ist nicht mehr die Voraussetzung" ist zurueckgenommen, bis
+die Streuung erklaert ist.
+
+---
+
+### Der urspruengliche Eintrag (Messungen gelten, Schlussfolgerung nicht)
+
 
 Zwei identische Laeufe streuten mit Median |Δ| 0.0073, waehrend der zu
 messende Effekt 0.0032 war (§3aq). Damit war O18 nicht messbar. Die

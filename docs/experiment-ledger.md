@@ -5599,3 +5599,54 @@ Unified-Log hält launchd-Starts nicht lange genug. Nebenfund:
 `com.user.eval-post-deploy` endet seit dem Neustart vom 02.09. mit Exit 78 —
 sein Skript `/tmp/eval_after_drain.sh` ist ein Mai-Relikt und weg. Er tut
 nichts, er schadet nichts, er gehört entladen oder ins Repo.
+
+### Nachtrag 2026-09-11 (Tagesdurchgang) — Nightly deployt, neuer Bestwert; keine Serie; die Kampagne lässt den Nightly jede Nacht 1.7 h umsonst rechnen
+
+**Nightly 09-11 (03:30): DEPLOYED.** Golden 0.9653 gegen Bestwert 0.9635
+(+0.002, passiert — neuer Bestwert), paarweise 14 besser / 1 schlechter auf
+125 Aufnahmen, Champion-Quelle `head.gate.bin`, Audio-Beilage
+`dynamik=True`, Ensemble aus drei Seeds (Golden je Seed 0.959 / 0.963 /
+0.961, Spanne 0.004). Audit exit 0, keine verworfenen Nächte, set_hash
+`c8727e8266a8` und Decoder `hsmm --hsmm-dur-w 15` unverändert (38/38
+gepinnt). Genau EIN Lauf heute — der ungeplante 07:15-Lauf von gestern hat
+sich nicht wiederholt. Bekannte Warnungen unverändert (9 × Breite 1281,
+`dvr-rtl-1781199600` +40 s). Schwanz: dieselben vier Beharrlichen, 14/14.
+
+**Keine Serie läuft, nichts ist reif, nichts wird eingereiht.** §3a ist
+leer, O18 wartet auf den Ein-Prozess-Trainer, O4 bleibt Beobachtung. Die
+Schattenreihe im Sensor zeigt weiterhin nur die 09-06-Zeilen der
+O17/O18-Tagesserie — seit 09-02 abgeschaltet, kein neuer Lauf.
+
+**Kampagne (Simons Fix von 07:03, `7b8c0dd`) greift:** eigener
+launchd-Dienst `com.user.dumps-erneuern`, läuft seit dem Nightly-Ende
+durch, 20/98 um 08:04, Rest ~4.3 h — der erste Lauf, der das Ende des
+Nightly überlebt hat.
+
+**Defekt (nur verbucht, nichts angefasst): die Kampagne invalidiert jede
+Nacht ~100 Merkmalsdateien.** Kette, an `dvr-kabel-eins-1779810974`
+belegt:
+
+* `get_source()` im Daemon macht `cache_path.touch()` („update atime for
+  LRU") — das setzt auf APFS auch die **mtime**. Quelle trägt 07:56:08,
+  exakt den Kampagnen-Zeitpunkt des Detects.
+* `train-head.py` schlüsselt den Feature-Cache als
+  `<uuid>-<source_mtime>-<key>.npy`. Neue mtime → neuer Stand → Extraktion.
+* `features-aufraeumen.py` räumt den Vorabend-Stand weg. Nichts sammelt
+  sich an, es rechnet nur umsonst.
+
+Gemessen im Nightly-Log: „parallel extract" 105 / 104 / 103 Aufnahmen in
+6389 / 6233 / 5851 s (09-09, 09-10, 09-11), vorher 6 Aufnahmen in 283 s;
+der 07:15-Lauf gestern, ohne Kampagne dazwischen, brauchte 16 / 826 s. Die
+Zahl der Neu-Extraktionen entspricht der Zahl der Kampagnen-Dumps (98).
+Am Ende „cache cleanup: gelöscht 98/99". Das ist ein Kreis: Deploy →
+Kampagne → mtime-Touch → 1.7 h Neu-Extraktion → Deploy.
+
+**Ergebnisneutral:** die Extraktion ist deterministisch, set_hash und
+Golden sind unberührt, die Archiv-Referenzen (`feature_npy`) bleiben
+stehen. Kosten sind Wanduhr und Platten-Schreiblast, nicht Zahlen.
+
+Für Simon, kein Auftrag der Schleife: die Auslagerung des Quellen-Caches
+sortiert nach `st_atime` (Zeile ~605), braucht die mtime also nicht. Der
+Touch kann atime-only werden — dieselbe Form wie `_touch_atime` in
+`train-head.py`: `os.utime(p, (now, st.st_mtime))`. Danach fällt der
+Nightly auf die echten Neuzugänge zurück.

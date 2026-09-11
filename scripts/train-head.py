@@ -3887,6 +3887,34 @@ def main():
     #
     # 0.5 ist der dokumentierte Logo-Sentinel (s. logo_sentinel_05_silent_fail),
     # also der richtige Fuellwert — nur eben an Position 1280.
+    # ⚠️ REIHENFOLGE FESTNAGELN, BEVOR DARAUS EINE MATRIX WIRD.
+    #
+    # per_rec entsteht als `cached + todo` (Pass 1) plus die Archiv-
+    # Nachzuegler. Welche Aufnahme in welcher Liste landet, haengt allein
+    # davon ab, ob ihre Merkmalsdatei zum Startzeitpunkt schon existierte.
+    # Zwei Laeufe zu verschiedenen Zeiten sehen denselben Korpus, dieselben
+    # Labels und dieselben Gewichte -- aber in anderer BLOCKREIHENFOLGE.
+    #
+    # Das ist nicht kosmetisch. Der Fit schiebt ein gesetztes
+    # `rng.permutation(n)` ueber die Matrix; liegen die Zeilen anders, sind
+    # die Batches anders besetzt, und der Fit landet woanders. Gemessen
+    # 2026-09-11 an 60 synthetischen Aufnahmen, identische Daten, nur zwoelf
+    # Bloecke ans Ende geschoben:
+    #
+    #     seed 4711   0.496108 -> 0.500947   Δ +0.0048
+    #     seed 5813   0.498457 -> 0.492893   Δ -0.0056
+    #     seed 6917   0.496954 -> 0.489794   Δ -0.0072
+    #
+    # Das ist die Groessenordnung, an der O18 gescheitert ist (Median |Δ|
+    # 0.0073 zwischen zwei identischen Laeufen, waehrend der zu messende
+    # Effekt 0.0032 war). Die beiden im Ledger genannten Verdaechtigen
+    # tragen NICHT: der Fit-Kern ist prozessuebergreifend bit-gleich, ein-
+    # wie mehrfaedig (geprueft), und an den Alters-Kanten (90 d Knick,
+    # 180 d Abbruch) liegt in zwei Stunden keine einzige Aufnahme.
+    #
+    # Sortiert wird nach uuid, weil die als einzige stabil ist: der Titel
+    # kann sich aendern, die Cache-mtime wandert bei jeder Neu-Extraktion.
+    per_rec.sort(key=lambda r: r[0])
     if per_rec:
         target_dim = max(r[3].shape[1] for r in per_rec)
         eingesetzt = []

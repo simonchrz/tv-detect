@@ -2457,6 +2457,69 @@ nur um zu prüfen, ob die Kurve am Golden-Satz sich anderswo wiederfindet.
 **Kosten:** rund ein Fünftel der neuen Aufnahmen fehlt dem Training.
 Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
+## 3ar. O18: die Streuung war die REIHENFOLGE (2026-09-11)
+
+Zwei identische Laeufe streuten mit Median |Δ| 0.0073, waehrend der zu
+messende Effekt 0.0032 war (§3aq). Damit war O18 nicht messbar. Die
+Ursache ist gefunden, und sie stand nicht auf der Verdaechtigenliste.
+
+**Die beiden genannten Verdaechtigen tragen nicht.**
+
+* *Fliesskomma-Nichtdeterminismus aus mehrfaedigem BLAS.* Widerlegt: der
+  Fit-Kern (`WeightedMLP`) liefert bei identischen Eingaben bit-gleiche
+  Gewichte -- zweimal im selben Prozess, dreimal in getrennten Prozessen,
+  und ebenso mit `OMP_NUM_THREADS=1`. Gleicher SHA1 ueber alle Gewichte,
+  gleicher Verlust bis zur zehnten Stelle.
+* *Die Uhrzeit in `rec_age_days`.* Der Betrag war schon im Ledger als
+  winzig verbucht. Nachgesehen, wo er springen KOENNTE: an der 180-Tage-
+  Kante (`age_mult = 0`, Aufnahme faellt ganz raus) liegt derzeit keine
+  einzige Aufnahme, die aelteste ist ~149 Tage; am 90-Tage-Knick queren in
+  zwei Stunden null Aufnahmen, und der Knick ist ohnehin stetig.
+
+**Es ist die Blockreihenfolge der Trainingsmatrix.** `per_rec` entsteht
+in Pass 1 als `cached + todo`. Beide Listen sind je fuer sich sortiert,
+aber welche Aufnahme in WELCHER Liste landet, haengt allein davon ab, ob
+ihre Merkmalsdatei zum Startzeitpunkt schon existierte. Zwei Laeufe zu
+verschiedenen Zeiten sehen denselben Korpus, dieselben Labels, dieselben
+Gewichte -- und eine andere Zeilenreihenfolge.
+
+Das ist nicht kosmetisch: der Fit schiebt ein gesetztes
+`rng.permutation(n)` ueber die Matrix. Liegen die Zeilen anders, sind die
+Batches anders besetzt.
+
+Gemessen an 60 synthetischen Aufnahmen a 700 Sekunden, identische Daten
+und Gewichte, nur zwoelf Bloecke ans Ende geschoben (genau das, was
+`cached + todo` tut):
+
+| seed | sortiert | cached+todo | Δ |
+|---|---|---|---|
+| 4711 | 0.496108 | 0.500947 | +0.0048 |
+| 5813 | 0.498457 | 0.492893 | −0.0056 |
+| 6917 | 0.496954 | 0.489794 | −0.0072 |
+
+Dieselbe Groessenordnung wie die beobachtete Streuung.
+
+**Fix:** `per_rec.sort(key=lambda r: r[0])` vor dem Matrixbau, sortiert
+nach uuid -- dem einzigen stabilen Feld (Titel aendern sich, Cache-mtimes
+wandern bei jeder Neu-Extraktion). Gesichert durch
+`scripts/test_reihenfolge_stabil.py`, das auch verlangt, dass die
+Begruendung mit Zahlen daneben stehenbleibt.
+
+**Was das fuer O18 heisst.** Der Trainer-Umbau (`sw_train_parts` je Arm
+im EINEN Prozess), auf den O18 wartete, ist damit NICHT mehr die
+Voraussetzung -- die Zwei-Prozess-Streuung hatte eine andere Ursache.
+Bevor O18 wieder aufgenommen wird, gehoert die Gegenprobe an den Anfang:
+zwei getrennte Laeufe mit gleichen Flags und Seeds, jetzt mit stabiler
+Reihenfolge. Erst wenn die Streuung unter dem zu messenden Effekt liegt,
+ist die Frage messbar. Die alten Zeilen der Serie wurden unter dem Defekt
+gemessen und zaehlen nicht.
+
+**Lehre.** Die Streuung war die ganze Zeit im Datenpfad, nicht im
+Rechenkern. Ich habe zuerst dort gesucht, wo die Vermutung stand
+(BLAS, Uhrzeit), und beide in je zwei Minuten widerlegt. Danach war die
+Frage offen genug, um die richtige Stelle zu finden.
+
+
 ## 4. Friedhof — entschieden, nicht neu vorschlagen
 
 **Verhaltensbasierte Labels (Wiedergabe-Signale) — beerdigt 2026-08-13,

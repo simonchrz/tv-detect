@@ -549,10 +549,20 @@ echo "=== fehlerbudget end ==="
 # einer Nacht ist der Preis dafuer, dass die Ausbildung nicht fuenf
 # Stunden blockiert. Die Trendzeile nennt Kopf und Dump-Satz, die
 # Zuordnung bleibt also eindeutig.
-echo "=== Messsatz nachfuehren (Hintergrund) ==="
-nohup "$VENV_PY" "$HOME/src/tv-detect/scripts/dumps-erneuern.py" \
-  > "$HOME/Library/Logs/dumps-erneuern.log" 2>&1 &
-echo "  gestartet, Protokoll: ~/Library/Logs/dumps-erneuern.log"
+#
+# ⚠️ NICHT als Hintergrund-Kind starten. Genau das stand hier bis zum
+# 11.09.2026 (nohup ... &), und launchd raeumte die Kampagne Sekunden
+# nach dem Ende dieses Skripts mit ab -- es beendet die ganze
+# Prozessgruppe seines Jobs. Zwei Naechte in Folge blieb je ein Dump
+# von 98 zurueck, ohne Fehlermeldung. Die Kampagne ist deshalb ein
+# eigener launchd-Dienst (daemon/launchd/com.user.dumps-erneuern.plist)
+# und wird hier nur angestossen. Ohne -k: laeuft sie schon, bleibt sie.
+echo "=== Messsatz nachfuehren (eigener launchd-Dienst) ==="
+if launchctl kickstart gui/501/com.user.dumps-erneuern 2>/dev/null; then
+  echo "  angestossen, Protokoll: ~/Library/Logs/dumps-erneuern.log"
+else
+  echo "  ⚠️ com.user.dumps-erneuern nicht registriert -- Plist aus daemon/launchd nach ~/Library/LaunchAgents kopieren und bootstrappen"
+fi
 
 # ── O13-Schattenlauf ─────────────────────────────────────────────────────
 # Schreibt mit, was die OCR-Regel an den Kanten GETAN HAETTE. Wendet nichts

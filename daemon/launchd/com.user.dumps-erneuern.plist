@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.user.dumps-erneuern</string>
+  <!-- Messsatz des Fehlerbudgets dem deployten Kopf nachfuehren.
+       KEIN Zeitplan: der naechtliche Lauf (com.user.tv-train-head) stoesst
+       ihn per `launchctl kickstart` an, wenn er fertig ist.
+
+       WARUM EIN EIGENER DIENST (11.09.2026): vorher startete der naechtliche
+       Lauf die Kampagne als Hintergrund-Kind mit nohup. launchd raeumt beim
+       Ende eines Jobs dessen ganze Prozessgruppe ab (AbandonProcessGroup ist
+       aus), also starb die Kampagne Sekunden nach ihrem Start -- zweimal in
+       Folge, jeweils nach dem ersten Dump, ohne jede Fehlermeldung. Als
+       eigener Job hat sie ihren eigenen Lebenszyklus. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/simon/ml/tv-classifier/.venv/bin/python</string>
+    <string>/Users/simon/src/tv-detect/scripts/dumps-erneuern.py</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key>
+  <string>/Users/simon/Library/Logs/dumps-erneuern.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/simon/Library/Logs/dumps-erneuern.log</string>
+</dict>
+</plist>

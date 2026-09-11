@@ -122,12 +122,20 @@ class NurDump(unittest.TestCase):
 
     def test_nightly_fuehrt_den_messsatz_nach(self):
         sh = (HIER.parent / "daemon" / "tv-train-head.sh").read_text()
-        self.assertIn("dumps-erneuern.py", sh,
-                      "der naechtliche Lauf muss den Messsatz nachfuehren")
+        self.assertIn("com.user.dumps-erneuern", sh,
+                      "der naechtliche Lauf muss den Messsatz nachfuehren, "
+                      "und zwar ueber den eigenen launchd-Dienst")
+        # ⚠️ 11.09.2026: als nohup-Kind starb die Kampagne Sekunden nach
+        # dem Ende des Nightly, weil launchd die Prozessgruppe abraeumt.
+        self.assertNotIn("nohup", sh[sh.index("Messsatz nachfuehren"):][:1200],
+                         "kein Hintergrund-Kind -- launchd raeumt es ab")
+        self.assertTrue((HIER.parent / "daemon" / "launchd"
+                         / "com.user.dumps-erneuern.plist").is_file(),
+                        "der Dienst muss im Repo versioniert sein")
         self.assertIn("--dumps", sh,
                       "das Budget muss die frischen Dumps lesen, nicht das "
                       "Standardverzeichnis mit dem alten Kopf")
-        self.assertLess(sh.index("fehlerbudget.py"), sh.index("dumps-erneuern.py"),
+        self.assertLess(sh.index("fehlerbudget.py"), sh.index("com.user.dumps-erneuern"),
                         "erst messen (Stand von gestern), dann nachfuehren "
                         "(Stand fuer morgen) — sonst blockiert die Kampagne "
                         "die Ausbildung fuenf Stunden")

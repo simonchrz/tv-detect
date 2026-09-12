@@ -2769,6 +2769,11 @@ def main():
                          "--tagesserie-ts — und der Weg, einen Parallel-Lauf "
                          "gegen einen seriellen auf identische Zahlen zu "
                          "pruefen.")
+    ap.add_argument("--stichtag", default=None, metavar="EPOCH|ISO",
+                    help="Referenzzeit fuer rec_age_days statt der Uhr. "
+                         "Zwei Laeufe mit demselben Stichtag rechnen "
+                         "bit-gleiche Gewichte — ohne ihn sind sie nicht "
+                         "vergleichbar (s. --help-Text unten und §3ar).")
     ap.add_argument("--serie-archiv", default=None,
                     help="Wohin die Tagesserie-Zeilen geschrieben werden "
                          "(Vorgabe: --train-archive). Getrennt, damit ein "
@@ -2927,6 +2932,32 @@ def main():
     # so laesst sich spaeter "welche Schattenvariante gehoerte zu welchem
     # deployten Kopf" ueber die Dateien hinweg verbinden. Vor 2026-08-09
     # entstand er erst im Deploy-Block, also nach den Schattenlaeufen.
+    # ⚠️ EINE Referenzzeit fuer den ganzen Lauf, nicht time.time() an jeder
+    # Stelle. Gemessen 2026-09-12 mit dem Matrix-Fingerabdruck: zwei Laeufe
+    # 20 Minuten auseinander hatten BIT-GLEICHE Merkmale und Labels, aber
+    # bei 602 von 681 Aufnahmen abweichende Gewichte — alle minimal, alle
+    # negativ. Das ist die Signatur der Altersrampe (age_mult sinkt stetig
+    # mit der Zeit). Ueber die Golden-Auswertung schlug das mit 0.0116
+    # durch, mehr als die 0.0073, an denen O18 gescheitert ist.
+    #
+    # Die frueher im Ledger stehende Einschaetzung "der Betrag ist winzig,
+    # erklaert die Groessenordnung also nicht" war falsch: der Fit
+    # verstaerkt ihn. Wer zwei Laeufe vergleichen will, MUSS denselben
+    # Stichtag setzen.
+    if args.stichtag:
+        try:
+            JETZT = float(args.stichtag)
+        except ValueError:
+            from datetime import datetime as _dt
+            JETZT = _dt.fromisoformat(args.stichtag).timestamp()
+        print(f"stichtag: {JETZT:.0f} "
+              f"({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(JETZT))}) "
+              f"— Gewichte sind damit zwischen Laeufen vergleichbar")
+    else:
+        JETZT = time.time()
+        print(f"stichtag: keiner gesetzt, Uhr = {JETZT:.0f} "
+              f"— zwei Laeufe sind NICHT vergleichbar (--stichtag)")
+    args._jetzt = JETZT
     ts = time.strftime("%Y%m%dT%H%M%S")
     cache_dir = Path(args.feature_cache)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -3699,7 +3730,7 @@ def main():
             elif args.herkunft_streng and mensch_belegt is None:
                 has_user = False
                 herkunft_unentscheidbar.append(uuid)
-        rec_age_days = (time.time() - src_mt) / 86400.0
+        rec_age_days = (args._jetzt - src_mt) / 86400.0
         # Cluster-anchored ad spots from the gateway snapshot (= spots
         # whose audio+visual fingerprint matches a known ≥3-member
         # family). For reviewed recordings: redundant with ads_user
@@ -3806,7 +3837,7 @@ def main():
                     logo_nan_mask_by_uuid[u] = nm
             a_which = a_meta.get("which", "")
             a_start = a_meta.get("start_ts", 0)
-            a_age = (time.time() - a_start) / 86400.0 if a_start else 0.0
+            a_age = (args._jetzt - a_start) / 86400.0 if a_start else 0.0
             # Dead recs aren't in the gateway grid, so uuid_start (used
             # by the minute-prior feature paths) would miss them — the
             # frozen start_ts serves the same purpose.
@@ -4740,6 +4771,44 @@ def main():
     X_train = np.concatenate(X_train_parts) if X_train_parts else np.empty((0, per_rec[0][3].shape[1]))
     y_train = np.concatenate(y_train_parts) if y_train_parts else np.empty(0)
     sw_train = np.concatenate(sw_train_parts) if sw_train_parts else np.empty(0)
+    # ⚠️ FINGERABDRUCK DER TRAININGSMATRIX. Zwei Laeufe mit identischem
+    # Korpus, Labels, Gewichten, Lehrer und Auswertungsgrundlage lagen am
+    # 2026-09-12 trotzdem 0.0116 auseinander (§3ar). Der Fit-Kern ist
+    # prozessuebergreifend bit-gleich — der Zufall muss also ZWISCHEN
+    # Einlesen und Fit stecken. Diese drei Hashes entscheiden das in einem
+    # Zug: sind sie in beiden Laeufen gleich, liegt es am Fit-Aufruf; sind
+    # sie verschieden, sagt der erste abweichende, WO.
+    #
+    # Kostet einen SHA1 ueber die Matrix (~2 s auf 2,3 Mio Zeilen) und
+    # laeuft deshalb immer mit: ohne ihn sucht die naechste Sitzung wieder
+    # zwei Tage lang an der falschen Stelle.
+    try:
+        import hashlib as _hl
+        def _fp(a):
+            return _hl.sha1(np.ascontiguousarray(a).tobytes()).hexdigest()[:12]
+        print(f"matrix-fingerprint: X={_fp(X_train)} y={_fp(y_train)} "
+              f"sw={_fp(sw_train)} shape={X_train.shape} "
+              f"sw_summe={float(sw_train.sum()):.6f}", flush=True)
+        # ⚠️ Und je Aufnahme, damit ein Unterschied eine ADRESSE hat.
+        # Am 2026-09-12 waren X und y bit-gleich und nur sw verschieden
+        # (Summe 3003004 gegen 3002999) — ohne diese Aufschluesselung
+        # weiss man, DASS die Gewichte wandern, aber nicht bei welcher
+        # Aufnahme. Eine Zeile je Aufnahme, ~950 Zeilen, neben der
+        # Ausgabe. Kostet nichts und beantwortet die Anschlussfrage.
+        try:
+            _gew = Path(args.output).with_suffix(".gewichte.tsv")
+            with _gew.open("w") as _fh:
+                _i = 0
+                for _r, _m, _w in zip(train_recs, keep_masks, sw_train_parts):
+                    _fh.write(f"{_r[0]}\t{len(_w)}\t{float(np.sum(_w)):.6f}\n")
+                    _i += 1
+            print(f"matrix-fingerprint: Gewichte je Aufnahme -> {_gew.name} "
+                  f"({_i} Zeilen)", flush=True)
+        except Exception as _e2:
+            print(f"matrix-fingerprint: Gewichte je Aufnahme nicht "
+                  f"schreibbar ({_e2})", flush=True)
+    except Exception as _e:
+        print(f"matrix-fingerprint: nicht berechenbar ({_e})", flush=True)
     # O17: sichtbar machen, was der Schalter bewirkt hat -- ein stiller
     # Schalter ist von einem kaputten nicht zu unterscheiden.
     if args.herkunft_belegt:

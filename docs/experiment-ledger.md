@@ -2459,6 +2459,85 @@ Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
 ## 3ar. O18: die Reihenfolge ist EINE Quelle, nicht die Quelle (2026-09-11)
 
+✅ **GELOEST, 2026-09-12 nachmittags. Es IST die Uhrzeit — die
+Einschaetzung „zu klein" war falsch, nicht der Befund.**
+
+Entschieden hat ein Fingerabdruck ueber die fertige Trainingsmatrix
+(`matrix-fingerprint:` in train-head.py, bleibt dauerhaft drin). Zwei
+Laeufe, 20 Minuten auseinander, identische Flags:
+
+    X  = b61ccd42f141   (gleich)
+    y  = 289640d48e16   (gleich)
+    sw = 0bc847f4c283 / 10d72baed6ee   ← VERSCHIEDEN
+
+Merkmale und Labels bit-gleich, nur die Gewichte wandern. Die
+Aufschluesselung je Aufnahme (`*.gewichte.tsv`) zeigt: **602 von 681
+Aufnahmen** weichen ab, alle minimal, alle negativ, groesste Abweichung
+0.05 auf ein Gewicht von 31857. Das ist die Signatur von `age_mult` —
+jede Aufnahme unter 90 Tagen wird mit jeder Minute ein bisschen leichter.
+Die Bilderzahl je Aufnahme ist ueberall identisch.
+
+**Fix: `--stichtag`.** Eine Referenzzeit je Lauf statt `time.time()` an
+zwei Stellen (`rec_age_days`, `a_age`). Bewiesen:
+
+    mit --stichtag 1789200000, zwei Laeufe:
+    X=b61ccd42f141  y=289640d48e16  sw=421bd142b344   ← ALLE DREI gleich
+
+Ohne Stichtag sagt der Lauf im Protokoll ausdruecklich, dass er nicht
+vergleichbar ist. Gesichert durch `scripts/test_stichtag.py`, das u.a.
+verbietet, dass eine Altersrechnung wieder direkt die Uhr liest.
+
+**Damit ist O18 wieder messbar**, und der Trainer-Umbau (`sw_train_parts`
+je Arm im EINEN Prozess), der als Voraussetzung galt, ist NICHT noetig —
+beide Arme in zwei Prozessen genuegen, solange sie denselben Stichtag
+teilen. Vor der Wiederaufnahme: Gegenprobe mit Stichtag an den Anfang.
+
+**Was zweimal in die Irre fuehrte.** (1) Der Ledger hielt die Uhrzeit
+seit dem 06.09. fuer „belegt, aber zu klein" — eine Schaetzung, keine
+Messung. (2) Meine synthetische Gegenprobe vom 11.09. (0.058 %
+Gewichtsaenderung → 0.0006) hat die Empfindlichkeit des ECHTEN Fits
+unterschaetzt. Beide Male ersetzte eine Plausibilitaet eine Messung.
+Der Fingerabdruck an der richtigen Stelle entschied es in einem Zug,
+nachdem acht Hypothesen einzeln geprueft worden waren.
+
+---
+
+⚠️⚠️ **ZWEITE KORREKTUR, 2026-09-12.** Die erste Gegenprobe war UNGUELTIG:
+`--output` war je Lauf verschieden, und der Lehrer der Label-Hygiene wird
+genau von dort geladen. Lauf A fand einen (aus einem frueheren
+Fehlversuch), Lauf B nicht — 20826 Bilder Unterschied im Training, 22.7 %
+gegen 23.1 % Werbeanteil. Daher auch das gleichsinnige Vorzeichen.
+
+**Die WIEDERHOLTE Gegenprobe mit identischem Lehrer** (beide Laeufe auf
+denselben Ausgabepfad, Lehrer vor jedem Lauf zurueckgespielt; beide
+melden 681 Aufnahmen, 2311328 Bilder, 22.6 % Werbeanteil, Label-Hygiene
+in beiden):
+
+| seed | A | B | Δ |
+|---|---|---|---|
+| 4711 | 0.9384 | 0.9439 | +0.0055 |
+| 5813 | 0.9489 | 0.9346 | −0.0143 |
+| 6917 | 0.9206 | 0.9155 | −0.0051 |
+| 7013 | 0.9382 | 0.9266 | −0.0116 |
+
+**Median |Δ| = 0.0116 — GROESSER als die historischen 0.0073.** Vorzeichen
+gemischt (1 positiv, 3 negativ), also das Bild von Zufall.
+
+**Damit ist die Reihenfolgen-These endgueltig erledigt.** Mit fester
+Sortierung, identischem Korpus, identischen Labels, identischen
+Gewichten, identischem Lehrer und identischer Auswertungsgrundlage liegen
+zwei Laeufe um 0.0116 auseinander.
+
+**Und die Frage verschiebt sich.** Bisher wurde gesucht, WELCHER
+Unterschied zwischen den Laeufen die Streuung erzeugt. Das Ergebnis legt
+nahe, dass es keinen geben muss: der Fit landet bei gleichen Eingaben an
+verschiedenen Stellen. Der Rechenkern ist nachweislich bit-gleich (s.u.),
+also steckt der Zufall ZWISCHEN Einlesen und Fit. Naechster Schritt: ein
+Fingerabdruck ueber die fertige Trainingsmatrix (X, y, sw) in beiden
+Laeufen — das entscheidet in EINEM Zug, ob die Eingaben gleich sind.
+
+---
+
 ⚠️ **KORRIGIERT am selben Abend, nach der Gegenprobe.** Die urspruengliche
 Ueberschrift lautete „die Streuung war die REIHENFOLGE". Das ist zu stark.
 Die Gegenprobe auf echten Daten hat die Streuung NICHT beseitigt:

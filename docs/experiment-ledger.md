@@ -5768,3 +5768,33 @@ sortiert nach `st_atime` (Zeile ~605), braucht die mtime also nicht. Der
 Touch kann atime-only werden — dieselbe Form wie `_touch_atime` in
 `train-head.py`: `os.utime(p, (now, st.st_mtime))`. Danach fällt der
 Nightly auf die echten Neuzugänge zurück.
+
+### Nachtrag 2026-09-12 (Tagesdurchgang) — Nightly deployt, keine Serie; der Kampagnen-Kreis von gestern trat NICHT ein
+
+**Nightly 09-12 (03:30): DEPLOYED.** Golden 0.9628 gegen Bestwert 0.9635
+(−0.001, passiert), Kopf-an-Kopf auf 127 Aufnahmen Median Δ +0.000 (2
+besser / 4 schlechter, keine belegte Verschlechterung), Champion-Quelle
+`head.gate.bin`, Audio-Beilage `dynamik=True`, drei Seeds 0.955 / 0.963 /
+0.961. Audit exit 0, keine verworfenen Nächte, set_hash `c8727e8266a8` und
+Decoder `hsmm --hsmm-dur-w 15` unverändert (38/38). Genau EIN Lauf. Schwanz:
+dieselben vier Beharrlichen, 14/14.
+
+**Keine Serie läuft, nichts ist reif, nichts wird eingereiht.** §3a leer,
+O18 zurückgestellt (§3ar), O4 Beobachtung.
+
+**Gestrige Kette widerlegt, nicht bestätigt.** Der Nachtrag vom 09-11
+sagte voraus: Kampagnen-Touch → neue Quellen-mtime → ~100 Neu-Extraktionen
+im nächsten Nightly. Beobachtet heute: Kampagne 09-11 lief 06:56–15:18,
+98 Dumps, 55 der 98 Quellen tragen noch jetzt mtime 09-11 (43 wurden
+heute ab 04:48 erneut berührt) — und der Nightly extrahierte **5
+Aufnahmen in 240 s**, nicht ~100. Der `touch()` in `get_source()` (Zeile
+1313) ist unverändert. Die 105/104/103 der Vornächte haben also mindestens
+noch eine andere Ursache; die Empfehlung an Simon (Touch → atime-only)
+ist damit nicht dringlich und als Erklärung unbelegt. Nicht weiter
+verfolgt — Wanduhr-Kosten, keine Zahlen; wer es aufnimmt, beginnt bei der
+Frage, warum der Cache-Schlüssel (`<uuid>-<src_mtime>`) trotz neuer mtime
+nicht neu gerechnet hat (Archiv-Referenz `feature_npy`?).
+
+Nebenbeobachtung: die Kampagne startete heute 04:48, also nach dem Deploy,
+aber noch während der Nightly-Nachphase (Messsatz, Kanten-Schatten). Ob
+das die Nachphase stört, ist nicht geprüft.

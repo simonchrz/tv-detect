@@ -5877,3 +5877,22 @@ nicht neu gerechnet hat (Archiv-Referenz `feature_npy`?).
 Nebenbeobachtung: die Kampagne startete heute 04:48, also nach dem Deploy,
 aber noch während der Nightly-Nachphase (Messsatz, Kanten-Schatten). Ob
 das die Nachphase stört, ist nicht geprüft.
+
+### Nachtrag 2026-09-13 (Tagesdurchgang) — Nightly deployt, keine Serie; O18 noch NICHT wieder einreihbar
+
+**Nightly 09-13 (03:30): DEPLOYED.** Golden 0.9598 gegen Bestwert 0.9644
+(−0.004, passiert), Kopf-an-Kopf auf 127 Aufnahmen Median Δ +0.000 (2
+besser / 6 schlechter, keine belegte Verschlechterung). Audit exit 0, keine
+verworfenen Nächte, n=38. Schwanz: dieselben vier Beharrlichen, 14/14.
+
+**Keine Serie läuft, nichts ist reif.** §3a leer, O4 Beobachtung.
+
+**O18 bleibt zurückgestellt, obwohl `--stichtag` (09-12) die Voraussetzung
+geliefert hat.** Belegt ist bisher nur, dass X, y und sw bei gleichem
+Stichtag bit-gleich sind — nicht, dass zwei Läufe dann auch im
+Golden-Median übereinstimmen. §3ar verlangt genau diese Gegenprobe vor der
+Wiederaufnahme, und `daemon/tv-tagesserie.sh` reicht `--stichtag` noch
+nicht an die Arme durch. Beides zuerst; erst danach `serie_ab` neu setzen.
+
+Kosmetik: die Schatten-Tabelle in `loop-status.py` zeigt nur noch die
+O18-Läufe vom 09-06 (alle Spalten „0906"), kein Datenfehler.

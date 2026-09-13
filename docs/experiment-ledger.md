@@ -5972,3 +5972,62 @@ Beleg stehen. Sicherung: `shadow-trend.jsonl.bak.20260913`.
 Prozesse, dieselben fünf Seeds (1411, 2408, 3405, 4402, 5399), derselbe
 Stichtag 1789282800. Die Regel ist unverändert und bleibt es: Median
 ≥ 0.010 **und** mindestens 4 von 5 Paaren positiv.
+
+## §3at. O18, zweiter Anlauf: gemessen, NICHT ERFÜLLT — aber integritäts-geflaggt
+
+Zuerst der Befund, der beide vorherigen Anläufe entwertet hat:
+**`--herkunft-streng` hat seine Zielgruppe nie gesehen.** Die
+Archiv-Einspeisung hängt ihre Aufnahmen direkt an `per_rec` und lief an
+der Herkunftsprüfung im Live-Durchgang vorbei. Der Schalter meldete
+deshalb „0 weitere ohne lesbare Quelle" — was wie ein sauberes
+Nullergebnis aussah und ein blinder Schalter war. Nach dem Fix (`db47008`)
+greift er auf **412 Aufnahmen**, alle aus dem Archiv; im Trainingssatz
+sinken die doppelt gewichteten von 426 auf 115.
+
+Zweitens speicherte der Archiv-Eintrag `mensch_belegt` überhaupt nicht.
+Eine beim Einfrieren nachweislich menschlich geprüfte Aufnahme war einen
+Tag später dauerhaft „nicht entscheidbar". Auch das ist gefixt; alte
+Einträge tragen den Schlüssel nicht und bleiben ehrlich `None`.
+
+**Die Messung (ts 20260913T1745, fünf Paare, gleicher Stichtag):**
+
+| Paar | Seed | streng | belegt | Δ |
+|---|---|---|---|---|
+| p00 | 1411 | 0.9409 | 0.9360 | **+0.0049** |
+| p01 | 2408 | 0.9391 | 0.9415 | −0.0024 |
+| p02 | 3405 | 0.9357 | 0.9470 | −0.0113 |
+| p03 | 4402 | 0.9415 | 0.9403 | **+0.0012** |
+| p04 | 5399 | 0.9292 | 0.9437 | −0.0145 |
+
+Median **−0.0024**, positiv **2 von 5**. Bedingung 1 (Median ≥ +0.010)
+nicht erfüllt, Bedingung 2 (≥ 4 von 5 positiv) nicht erfüllt.
+**→ REGEL NICHT ERFÜLLT.**
+
+Bemerkenswert ist die Streuung: seit `--stichtag` reproduzieren zwei
+identische Läufe auf vier Stellen genau. Die Spanne von −0.0145 bis
++0.0049 ist also **kein Lauf-Rauschen**, sondern die echte Wechselwirkung
+des Eingriffs mit dem Seed. Die drei größten Beträge sind negativ.
+
+**Die Flagge.** Das Audit beanstandet: die Registrierung wurde um 17:53:51
+geändert, die Serie trägt den Zeitstempel 17:45. Der Vermerk beschrieb die
+Instrument-Reparatur und änderte an Regel, Armen, Schwelle und Konsequenz
+nichts — das ist im Diff nachlesbar. Zum Zeitpunkt des Vermerks existierte
+auch noch keine Zahl: Arm 1 lief von 17:45 bis 18:35, der erste Fit war
+weit nach 17:53 fertig. Das Audit kann diesen Unterschied nicht sehen, und
+es soll ihn auch nicht sehen müssen — es vergleicht Dateistand gegen
+Serien-Zeitstempel, und das ist die richtige, unbestechliche Prüfung.
+
+**Konsequenz: die Serie wird wiederholt**, mit demselben Stichtag,
+denselben fünf Seeds und der bereits festgeschriebenen Registrierung. Eine
+Entscheidung, die dauerhaft gilt, soll nicht auf einer geflaggten Serie
+ruhen.
+
+**Vorab festgehalten, damit hier nichts zu wählen ist:** die obigen Zahlen
+sind das Ergebnis. Die Wiederholung wird erwartungsgemäß „nicht erfüllt"
+reproduzieren; falls sie das nicht tut, ist das ein Befund über die
+Stabilität des Eingriffs und wird als solcher untersucht — es ist kein
+Freibrief, sich eine der beiden Serien auszusuchen.
+
+Die zehn Zeilen von 17:45 tragen `-VERWORFEN-INTEGRITAETSFLAGGE` im
+arch-Feld, damit das Audit die Wiederholung überhaupt lesen kann (es hält
+nach dem fünften gültigen Paar an). Sie bleiben als Beleg stehen.

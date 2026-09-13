@@ -2459,6 +2459,32 @@ Bei ~37 Reviews im Monat sind das ~7, in einem halben Jahr ~40.
 
 ## 3ar. O18: die Reihenfolge ist EINE Quelle, nicht die Quelle (2026-09-11)
 
+✅✅ **BESTAETIGT, 2026-09-13. Die Gegenprobe MIT Stichtag ist exakt.**
+
+Zwei volle Laeufe, gleiche Seeds, gleicher Stichtag (1789236934):
+
+| seed | A | B | Δ |
+|---|---|---|---|
+| 4711 | 0.9423 | 0.9423 | 0.0000 |
+| 5813 | 0.9374 | 0.9374 | 0.0000 |
+| 6917 | 0.9316 | 0.9316 | 0.0000 |
+| 7013 | 0.9337 | 0.9337 | 0.0000 |
+
+**Median |Δ| = 0.0000** gegen 0.0116 ohne Stichtag und 0.0073 historisch.
+Nicht „kleiner als die Schwelle", sondern IDENTISCH auf vier Stellen. Der
+Zwei-Prozess-Modus ist damit reproduzierbar, und die Bedingung des
+Ledgers fuer die Wiederaufnahme von O18 ist erfuellt.
+
+Offen bleibt nur die Buchfuehrung: `zurueckgestellt` aus
+`serien-abschluss.json` entfernen und `serie_ab` neu setzen — die vier
+Zeilen vom 06.09. entstanden unter dem Defekt und zaehlen nicht.
+
+⚠️ **Der Nightly setzt den Stichtag noch NICHT** und meldet das seit dem
+12.09. in jeder Nacht („keiner gesetzt … NICHT vergleichbar"). Solange
+das so ist, traegt die Nacht-zu-Nacht-Kurve diese Rauschquelle weiter.
+
+---
+
 ✅ **GELOEST, 2026-09-12 nachmittags. Es IST die Uhrzeit — die
 Einschaetzung „zu klein" war falsch, nicht der Befund.**
 

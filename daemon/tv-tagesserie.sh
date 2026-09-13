@@ -36,7 +36,14 @@ SEEDS=$("$PY" -c "
 import hashlib
 b = int(hashlib.sha256('$TS'.encode()).hexdigest()[:8], 16) % 10000
 print(','.join(str((b + 1 + 997*i) % 10000) for i in range($N)))")
-echo "Tagesserie $TS — Arme: $ARME, $N Paare, Seeds: $SEEDS"
+# ⚠️ EIN Stichtag fuer BEIDE Arm-Prozesse. Ohne ihn liest jeder Prozess
+# beim Bauen der Gewichte seine eigene Uhr; age_mult faellt dann pro Lauf
+# anders aus, und zwei Prozesse mit identischer Konfiguration und gleichem
+# Seed weichen um Median 0.0073 im golden_median ab (2026-09-06, Ledger
+# §3ar) — mehr als jeder Effekt, den dieses Skript je gemessen hat. Auf
+# die volle Stunde gerundet, dieselbe Konvention wie im Nightly.
+STICHTAG=$(( $(date +%s) / 3600 * 3600 ))
+echo "Tagesserie $TS — Arme: $ARME, $N Paare, Seeds: $SEEDS, Stichtag: $STICHTAG"
 
 "$PY" "$HOME/bin/tv-train-snapshot-fetch.py" \
   --gateway-url https://raspberrypi5lan:8443 --out /tmp/tv-train-snapshot \
@@ -78,6 +85,7 @@ for ARM in "${ARMLISTE[@]}"; do
       --tagesserie-nur-arm "$ARM" \
       --tagesserie-ts "$TS" \
       --tagesserie-seeds "$SEEDS" \
+      --stichtag "$STICHTAG" \
       >"$D/lauf.log" 2>&1 || RC=1
 done
 echo ""

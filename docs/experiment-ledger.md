@@ -5922,3 +5922,53 @@ nicht an die Arme durch. Beides zuerst; erst danach `serie_ab` neu setzen.
 
 Kosmetik: die Schatten-Tabelle in `loop-status.py` zeigt nur noch die
 O18-Läufe vom 09-06 (alle Spalten „0906"), kein Datenfehler.
+
+## §3as. O18, erster Anlauf 13.09.: ENTWERTET — beide Arme in einem Prozess
+
+Die Serie lief 09:21–10:48 durch und lieferte fünf Paare mit Delta **exakt
+0.0000**, fünfmal hintereinander. Das ist kein Nullergebnis, sondern der
+Beweis, dass die beiden Arme denselben Fit gemessen haben.
+
+Ursache: `--herkunft-streng` wirkt beim **Aufbau des Korpus**, also *vor*
+dem Armlauf. Ein Prozess kann deshalb nicht zwei Herkunfts-Regime fahren —
+er baut die Matrix einmal und fittet sie dann unter beiden Armnamen. Dazu
+kam, dass `--herkunft-streng` im Kommando überhaupt fehlte; gelaufen sind
+zwei identische `--herkunft-belegt`-Fits.
+
+Die Warnung stand wörtlich im Quelltext, fünf Zeilen über der Zeile, die
+den Arm registriert (`train-head.py`, O17-Kommentar an `_ts_arme`): *„Wer
+beide in EINEM Prozess faehrt, misst zweimal dasselbe — der Schalter wirkt
+vor dem Armlauf."* Ich habe den Arm aus dieser Tabelle geholt und den
+Absatz darüber nicht gelesen.
+
+**Was das Ergebnis fast entschieden hätte.** Die zehn Zeilen standen im
+echten `shadow-trend.jsonl`, vollständig gepaart, gleicher Seed, gleiche
+Quelle, gleiche Gate-Felder — für das Audit fünf *gültige* Paare. Es
+sortiert nach Zeitstempel und hält nach dem fünften gültigen Punkt an
+(`n_soll`-Stopp). Ein korrekter zweiter Lauf wäre nie gelesen worden: O18
+wäre mit Median 0.0000 als „nicht erfüllt" geschlossen worden, aus einer
+Messung, die nichts gemessen hat. Ein Lauf, der falsch misst, ist
+gefährlicher als einer, der abstürzt.
+
+**Entwertung.** `arch` der zehn Zeilen trägt jetzt den Zusatz
+`-VERWORFEN-EINPROZESS` plus ein Feld `verworfen` mit dem Grund. Damit
+kennt das Audit keinen der beiden Armnamen mehr und überspringt die Gruppe
+still (der Zweig für „Gruppe gehört keiner Regel"); die Zeilen bleiben als
+Beleg stehen. Sicherung: `shadow-trend.jsonl.bak.20260913`.
+
+**Zwei Lehren, beide im Code verankert statt hier.**
+
+1. `--tagesserie-nur-arm` ist für einen Gewichtungs-Unterschied nicht
+   Notbehelf, sondern **Pflicht**. Der Hilfetext behauptete das Gegenteil
+   („Ein Gewichtungs-Unterschied gehoert NICHT hierher") — er stammte von
+   vor `--stichtag` und ist nachgeschrieben.
+2. `daemon/tv-tagesserie.sh` fährt seine Arme seit jeher in zwei
+   Prozessen, reichte aber keinen Stichtag durch — genau die Kombination
+   mit der 0.0073-Streuung. Ergänzt: ein `STICHTAG` auf die volle Stunde,
+   für beide Arme derselbe. Damit ist die letzte offene Forderung aus
+   §3ar erledigt.
+
+**Zweiter Anlauf** läuft seit 11:15 unter `ts=20260913T1115`, zwei
+Prozesse, dieselben fünf Seeds (1411, 2408, 3405, 4402, 5399), derselbe
+Stichtag 1789282800. Die Regel ist unverändert und bleibt es: Median
+≥ 0.010 **und** mindestens 4 von 5 Paaren positiv.

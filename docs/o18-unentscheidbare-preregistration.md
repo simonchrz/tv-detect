@@ -1,7 +1,20 @@
 # O18 — Sollen auch die nicht entscheidbaren Aufnahmen ihr Privileg verlieren?
 (Vorab-Registrierung)
 
-> **ZURÜCKGESTELLT 2026-09-06, bevor die Serie voll war.** Nach 4 von 10
+> ✅ **WIEDER AUFGENOMMEN 2026-09-13.** Die Sperre ist
+> aufgehoben: der Zwei-Prozess-Modus ist reproduzierbar, seit `--stichtag`
+> eine feste Referenzzeit für die Altersgewichte setzt. Gegenprobe mit
+> Stichtag, zwei volle Läufe, vier Seeds: **alle vier identisch auf vier
+> Stellen** (Median |Δ| = 0.0000 gegen vorher 0.0116 und historisch
+> 0.0073, Ledger §3ar).
+>
+> ⚠️ **`serie_ab` ist auf 20260913 gesetzt.** Die vier Zeilen vom 06.09.
+> entstanden unter dem Defekt und zählen NICHT. Regel, Arme, Schwelle und
+> Konsequenz bleiben unverändert — sie standen fest, bevor die erste Zahl
+> existierte, und das gilt weiter.
+>
+> **Die ursprüngliche Zurückstellung, zur Nachvollziehbarkeit:**
+> ZURÜCKGESTELLT 2026-09-06, bevor die Serie voll war. Nach 4 von 10
 > Zeilen abgebrochen: der Zwei-Prozess-Modus, in dem diese Frage gemessen
 > werden müsste, ist nicht reproduzierbar (Median 0.0073 zwischen
 > identischen Läufen, Ledger §3aq) — mehr als jeder hier erwartbare
@@ -72,7 +85,7 @@ nicht auseinanderzuhalten.
   "id": "O18",
   "frage": "Sollen auch die nicht entscheidbaren Aufnahmen has_user verlieren?",
   "serie_art": "tagesserie",
-  "serie_ab": "20260906",
+  "serie_ab": "20260913",
   "naechte": 5,
   "arme": {"mit": "mlp32-cwtmpwm-streng", "ohne": "mlp32-cwtmpwm-belegt"},
   "delta": "streng minus belegt, auf golden_median, beide Arme gleicher Seed",

@@ -219,6 +219,19 @@ for f in head.bin head.gate.bin head.channel-map.json \
       "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
 done
 
+# ⚠️ REFERENZZEIT AUF DIE VOLLE STUNDE. Die Altersgewichte (age_mult)
+# haengen stetig an der Uhr; zwei Laeufe zu verschiedenen Zeiten rechnen
+# verschiedene Gewichte. Innerhalb EINES Prozesses ist das egal (die Zeit
+# wird einmal genommen), zwischen Naechten aber nicht: mit der nackten Uhr
+# liegt der Abstand bei 24 h plus/minus Anlaufzeit, mit der vollen Stunde
+# bei exakt 24 h. Gemessen 2026-09-12: ohne Stichtag streuten zwei Laeufe
+# im Golden-Median um 0.0116, mit Stichtag um 0.0000 (Ledger §3ar).
+#
+# Nicht fest verdrahten: der Wert muss je Nacht WEITERLAUFEN, sonst
+# altert der Korpus nie und alte Aufnahmen behalten ihr Gewicht ewig.
+STICHTAG=$(( $(date +%s) / 3600 * 3600 ))
+echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
+
 "$VENV_PY" "$SCRIPT" \
     --workers 4 \
     --backbone "$LOCAL_BACKBONE" \
@@ -237,6 +250,7 @@ done
     --prod-seeds 3 \
     --herkunft-belegt \
     --audio-dynamik \
+    --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
 # 2026-09-08: --audio-dynamik AN (O22). Die Audio-Spalte trug bis heute

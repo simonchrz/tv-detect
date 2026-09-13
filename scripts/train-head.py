@@ -3603,6 +3603,7 @@ def main():
     per_rec = []  # list of (uuid, title, ads, X, y, has_user)
     herkunft_entzogen = []       # O17: belegt maschinell → has_user weg
     herkunft_unentscheidbar = []  # O18: keine Quelle mehr → has_user weg
+    herkunft_aus_archiv = (0, 0)  # Anteil beider Gruppen aus der Einspeisung
     dropped_high = []
     logo_nan_offenders = []  # (uuid, title, miss_pct) for log summary
     logo_nan_mask_by_uuid = {}  # uuid → bool array, True where logo was NaN
@@ -3778,6 +3779,14 @@ def main():
                              "confirmed_ad_skips": confirmed_ad_skips,
                              "cluster_anchored": cluster_anchored,
                              "feature_npy": str(cache_path),
+                             # O17/O18: die Herkunft MUSS mit eingefroren
+                             # werden. Ohne sie ist ein Archiv-Eintrag nach
+                             # dem Tod der Aufnahme dauerhaft "nicht
+                             # entscheidbar" — und genau das war der Zustand,
+                             # in dem beide Schalter 645 Eintraege gar nicht
+                             # erst sahen. Alte Eintraege haben den Schluessel
+                             # nicht; `None` ist dort die ehrliche Antwort.
+                             "mensch_belegt": mensch_belegt,
                              # Frozen while the uuid is still live in
                              # uuid_cohort (= gateway dvr/entry/grid). Series-
                              # retention (dvr_series_retention) can delete the
@@ -3814,6 +3823,7 @@ def main():
         live_uuids = ({ri[0] for ri, _ in cached}
                       | {ri[0] for ri, _, _ in todo})
         injected = 0
+        _herk_vor = (len(herkunft_entzogen), len(herkunft_unentscheidbar))
         for npz_path in sorted(archive_dir.glob("*.npz")):
             u = npz_path.stem
             if u in live_uuids:
@@ -3894,12 +3904,30 @@ def main():
             # the DB state it was read from. Drop it rather than
             # re-injecting a month-old (possibly wrong) label=1 anchor
             # into every training run indefinitely.
+            # O17/O18: dieselbe Herkunftspruefung wie im Live-Durchgang.
+            # Sie stand bis 2026-09-13 NUR dort — eingespeiste Eintraege
+            # haengen hier direkt an per_rec und liefen an Zeile 3733
+            # vorbei. Folge: --herkunft-streng meldete "0 weitere ohne
+            # lesbare Quelle", waehrend 584 eingespeiste Aufnahmen genau
+            # das waren. Die Frage O18 war damit unmessbar, nicht
+            # wirkungslos — der Schalter sah seine eigene Zielgruppe nie.
+            a_has_user = a_which in ("user", "merged")
+            a_mensch = a_meta.get("mensch_belegt")  # fehlt = None = unklar
+            if args.herkunft_belegt and a_has_user:
+                if a_mensch is False:
+                    a_has_user = False
+                    herkunft_entzogen.append(u)
+                elif args.herkunft_streng and a_mensch is None:
+                    a_has_user = False
+                    herkunft_unentscheidbar.append(u)
             per_rec.append((u, a_meta.get("title", ""), a_meta.get("ads", []),
-                            a_feats, a_labels, a_which in ("user", "merged"),
+                            a_feats, a_labels, a_has_user,
                             a_meta.get("confirmed_show", []),
                             a_meta.get("confirmed_ad_skips", []), a_age,
                             [], None, False, a_is_bootstrap, []))
             injected += 1
+        herkunft_aus_archiv = (len(herkunft_entzogen) - _herk_vor[0],
+                               len(herkunft_unentscheidbar) - _herk_vor[1])
         if injected:
             print(f"train-archive: injected {injected} deleted/dedup'd "
                   f"recording(s) (trained via frozen label + cached features)")
@@ -4823,13 +4851,16 @@ def main():
         # versiegelt -- gemessen 2026-09-06: 65 / 13 / 17. Wer sie fuer die
         # train-Zahl haelt, vergleicht sie mit einer anderen Groesse (mir
         # selbst am 2026-09-06 passiert: 65 registriert, 92 gemeldet).
+        _ha = herkunft_aus_archiv
         print(f"  --herkunft-belegt: {len(herkunft_entzogen)} Aufnahme(n) "
               f"verlieren has_user, KORPUSWEIT (train+test+versiegelt), "
-              f"maschinell oder agenten-gelabelt")
+              f"maschinell oder agenten-gelabelt "
+              f"(davon {_ha[0]} aus dem Archiv)")
         if args.herkunft_streng:
             print(f"  --herkunft-streng:  {len(herkunft_unentscheidbar)} "
                   f"weitere ohne lesbare Quelle (Herkunft nicht "
-                  f"entscheidbar), ebenfalls korpusweit")
+                  f"entscheidbar), ebenfalls korpusweit "
+                  f"(davon {_ha[1]} aus dem Archiv)")
     n_user = sum(1 for r in train_recs if r[5])
     print(f"\nsplit: {len(train_recs)} train recs ({len(y_train)} frames, "
           f"{100*y_train.mean():.1f}% ad, {n_user} user-confirmed @ "

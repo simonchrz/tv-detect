@@ -1,6 +1,27 @@
 # O18 — Sollen auch die nicht entscheidbaren Aufnahmen ihr Privileg verlieren?
 (Vorab-Registrierung)
 
+> ⚠️ **INSTRUMENT REPARIERT 2026-09-13, 17:45 — vor der ersten Zahl des
+> laufenden Anlaufs notiert.** `--herkunft-streng` hat seine Zielgruppe bis
+> heute nie gesehen: die Archiv-Einspeisung hängt ihre Aufnahmen direkt an
+> `per_rec` und lief an der Prüfung vorbei. Der Schalter meldete deshalb
+> "0 weitere ohne lesbare Quelle" — nicht messbar, nicht wirkungslos.
+> Nach dem Fix (db47008) greift er auf **412 Aufnahmen** korpusweit, alle
+> aus dem Archiv; im Trainingssatz sinken die doppelt gewichteten von 426
+> auf 115.
+>
+> **Regel, Arme, Schwelle und Konsequenz bleiben unverändert** — sie
+> standen fest, bevor die erste Zahl existierte, und das gilt weiter. Was
+> sich geändert hat, ist ausschließlich, dass der Schalter die Gruppe
+> überhaupt erreicht, über die die Frage gestellt wurde. Die 294 aus der
+> Tabelle unten sind heute 412; die Gruppe ist gewachsen, nicht
+> ausgetauscht.
+>
+> Alle früheren Zeilen zählen NICHT: die vom 06.09. entstanden unter dem
+> Streuungs-Defekt, die vom 13.09. 09:21 unter dem Ein-Prozess-Fehler
+> (Ledger §3as), und beide Anläufe liefen ohnehin gegen den blinden
+> Schalter.
+
 > ✅ **WIEDER AUFGENOMMEN 2026-09-13.** Die Sperre ist
 > aufgehoben: der Zwei-Prozess-Modus ist reproduzierbar, seit `--stichtag`
 > eine feste Referenzzeit für die Altersgewichte setzt. Gegenprobe mit

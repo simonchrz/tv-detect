@@ -596,5 +596,26 @@ echo "=== kanten-schatten (sammelt, wendet nicht an) ==="
   || true
 echo "=== kanten-schatten end ==="
 
+# ── Massstab-Audit ───────────────────────────────────────────────────────
+# Woraus besteht der Satz, an dem JEDE registrierte Frage entschieden wird?
+# Das Skript stand seit 09-06 im Repo und wurde NIE aufgerufen — die Zahl,
+# auf die es ankommt, rechnete niemand. Stand 09-14: golden 22 menschlich /
+# 3 maschinell / 13 unbekannt, und der Golden-Median ueber die 22 belegten
+# liegt 0.0297 UEBER dem ueber alle 38.
+#
+# ⚠️ NICHT-FATAL, und das mit Absicht: das Skript endet mit exit 1, sobald
+# maschinelle Labels im Massstab stehen (heute 27). Das ist ein Bericht,
+# keine Stoerung — die Nacht darf daran nicht scheitern.
+#
+# Der Trend ist die eigentliche Zahl: nicht der Abstand an EINEM Abend,
+# sondern ob er waechst. Waechst er, entfernt sich der Gate-Boden von dem,
+# was je ein Mensch bestaetigt hat.
+echo "=== massstab-audit (Bericht + Trend, aendert nichts) ==="
+"$VENV_PY" "$HOME/src/tv-detect/scripts/massstab-audit.py" --nur-zaehlen --trend 2>&1 \
+  || true
+"$VENV_PY" "$HOME/src/tv-detect/scripts/massstab-audit.py" --auswerten 2>&1 \
+  || true
+echo "=== massstab-audit end ==="
+
 echo "train-head exit=$rc"
 exit $rc

@@ -95,6 +95,26 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 
 ## 3. Offene Fragen
 
+### O23 — Misst der belegbare Maßstab etwas anderes als der ganze?
+
+*Status: **LÄUFT seit 2026-09-14**, 1/10 Nächte. Registrierung:
+`docs/o23-massstab-belegt-preregistration.md`. Kostet keine Rechenzeit —
+zwei Teilmengen derselben `per-rec-iou`-Datei.*
+
+*Anlass: der Golden-Satz, an dem O1 bis O18 entschieden wurden, besteht aus
+22 nachweislich menschlich gelabelten, 3 maschinellen und 13 nicht
+belegbaren Aufnahmen. Der Median über die 22 Belegten liegt **0.0297
+ÜBER** dem über alle 38 — die unbelegten Mitglieder sind die schwereren,
+nicht die leichteren. Gefragt ist, ob dieser Abstand ein konstanter
+Versatz ist oder wandert.*
+
+*Der Hebel steckt nicht in der Statistik: die belegte Teilmenge kann
+nicht wachsen, weil der test-Eimer an menschlich gelabelten Aufnahmen
+erschöpft ist. **29 reviewbare test-Aufnahmen ohne Review** sind die
+einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
+disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
+von 22 auf bis zu 51 heben.*
+
 ### O17 — Zählt das Training die richtigen Labels als menschlich?
 
 *Status: **ENTSCHIEDEN 2026-09-06, REGEL NICHT ERFÜLLT.** Median **+0.0032**

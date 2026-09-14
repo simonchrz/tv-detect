@@ -339,6 +339,42 @@ def main():
             print(f"     {neg}/{len(deltas)} Läufe negativ, "
                   f"Median {sorted(deltas)[len(deltas)//2]:+.3f}")
 
+    # ── Der Massstab neben sich selbst ───────────────────────────────
+    # Jede registrierte Frage wird am Golden-Median entschieden. Wieviel
+    # von ihm steht auf Labeln, die je ein Mensch bestaetigt hat? Die
+    # interessante Zahl ist der ABSTAND und vor allem, ob er waechst.
+    mt = args.archiv / "massstab-trend.jsonl"
+    if mt.exists():
+        try:
+            eintraege = [json.loads(z) for z in
+                         mt.read_text().splitlines() if z.strip()][-5:]
+        except Exception as e:
+            eintraege = []
+            print(f"\nMassstab-Trend nicht lesbar ({e})")
+        if eintraege:
+            print("\nMassstab (Golden-Median, belegt gegen alle):")
+            print(f"  {'Lauf':<17} {'alle':>7} {'belegt':>8} {'Abstand':>9}  Eimer golden")
+            for e in eintraege:
+                g = (e.get("eimer") or {}).get("golden") or {}
+                print(f"  {str(e.get('ts'))[:17]:<17} "
+                      f"{e.get('golden_median_alle', 0):>7.4f} "
+                      f"{e.get('golden_median_belegt', 0):>8.4f} "
+                      f"{e.get('abstand', 0):>+9.4f}  "
+                      f"{g.get('mensch', 0)} Mensch / {g.get('maschine', 0)} Masch "
+                      f"/ {g.get('unbekannt', 0)} unbek.")
+            j = eintraege[-1]
+            if j.get("n_belegt", 0) < 30:
+                print(f"  ⚠ nur {j.get('n_belegt')} belegte Mitglieder — ein Median "
+                      f"darüber streut ~{(38 / max(j.get('n_belegt'), 1)) ** 0.5:.2f}× "
+                      f"so breit wie der über alle 38.")
+            if len(eintraege) >= 2:
+                delta = eintraege[-1].get("abstand", 0) - eintraege[0].get("abstand", 0)
+                if abs(delta) >= 0.005:
+                    richtung = "wächst" if delta < 0 else "schrumpft"
+                    print(f"  ⚠ der Abstand {richtung} ({delta:+.4f} über "
+                          f"{len(eintraege)} Läufe) — der Gate-Boden entfernt sich "
+                          f"von dem, was ein Mensch bestätigt hat.")
+
     # ── Versiegelter Satz ────────────────────────────────────────────
     # Nur die Groesse, nie ein Ergebnis: ihn taeglich auszuwerten waere
     # genau die Nutzung, die ihn wertlos macht.

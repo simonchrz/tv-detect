@@ -143,13 +143,118 @@ def letzter_iou_lauf():
     return letzte
 
 
+def trend_schreiben(pfad, ts, bericht, alle, menschlich):
+    """Eine Zeile je Lauf: der Massstab neben sich selbst.
+
+    ⚠️ Die interessante Zahl ist nicht der Abstand an EINEM Abend, sondern
+    ob er waechst. Waechst er, entfernt sich der Gate-Boden von dem, was
+    ein Mensch je bestaetigt hat -- und das faellt ohne Spur niemandem auf.
+    """
+    pfad = Path(pfad)
+    if pfad.exists():
+        for zeile in reversed(pfad.read_text().splitlines()):
+            if not zeile.strip():
+                continue
+            try:
+                if json.loads(zeile).get("ts") == ts:
+                    print(f"\nTrend: {ts} steht schon drin — nicht doppelt gezaehlt.")
+                    return
+            except Exception:
+                pass
+            break
+    z = {k: {n: sum(1 for e in bericht[k] if e["herkunft"] == n)
+             for n in ("mensch", "maschine", "unbekannt")}
+         for k in bericht}
+    eintrag = {
+        "ts": ts,
+        "golden_median_alle": round(st.median(alle), 4),
+        "golden_median_belegt": round(st.median(menschlich), 4),
+        "abstand": round(st.median(alle) - st.median(menschlich), 4),
+        "n_alle": len(alle),
+        "n_belegt": len(menschlich),
+        "eimer": z,
+    }
+    with pfad.open("a") as f:
+        f.write(json.dumps(eintrag, ensure_ascii=False) + "\n")
+    print(f"\nTrend fortgeschrieben: {pfad.name} "
+          f"(alle {eintrag['golden_median_alle']:.4f} / belegt "
+          f"{eintrag['golden_median_belegt']:.4f}, Abstand {eintrag['abstand']:+.4f})")
+
+
+N_SOLL = 10          # Naechte, docs/o23-massstab-belegt-preregistration.md
+SCHWELLE = 0.010     # Aenderung des Abstands zwischen erster und zweiter Haelfte
+
+
+def auswerten(pfad):
+    """O23: driftet der Abstand, oder ist er ein konstanter Versatz?
+
+    ⚠️ Beurteilt werden die ERSTEN 10 Naechte, nicht die letzten. Ein
+    Urteil, das sich mit jeder weiteren Nacht verschiebt, ist keins --
+    dieselbe Begruendung wie der n_soll-Stopp in audit-preregistration.py.
+
+    ⚠️ Vor der zehnten Nacht gibt es KEINEN Zwischenstand. Wer den Abstand
+    nach drei Naechten anschaut, hat die Regel schon gelesen und die
+    Zahlen dazu -- ab da ist nicht mehr trennbar, was Regel und was
+    Wunsch war.
+    """
+    if not pfad.exists():
+        print("O23: noch keine Zeile im Massstab-Trend.")
+        return 0
+    zeilen = []
+    for z in pfad.read_text().splitlines():
+        if not z.strip():
+            continue
+        try:
+            zeilen.append(json.loads(z))
+        except Exception:
+            pass
+    if len(zeilen) < N_SOLL:
+        print(f"O23 (Massstab belegt gegen alle): {len(zeilen)}/{N_SOLL} "
+              f"Naechte — kein Zwischenstand, so registriert.")
+        return 0
+
+    erste, zweite = zeilen[:5], zeilen[5:N_SOLL]
+    a1 = st.median([e.get("abstand", 0.0) for e in erste])
+    a2 = st.median([e.get("abstand", 0.0) for e in zweite])
+    d = a2 - a1
+    print("\n" + "=" * 68)
+    print("O23 — Misst der belegbare Massstab etwas anderes als der ganze?")
+    print("  Registrierung: o23-massstab-belegt-preregistration.md")
+    print("=" * 68)
+    print(f"  Abstand, Naechte 1-5   Median {a1:+.4f}  ({erste[0].get('ts')} …)")
+    print(f"  Abstand, Naechte 6-10  Median {a2:+.4f}  (… {zweite[-1].get('ts')})")
+    print(f"  Aenderung              {d:+.4f}   Schwelle {SCHWELLE:.3f}")
+    if abs(d) >= SCHWELLE:
+        print("\n  → REGEL ERFUELLT: der Abstand DRIFTET. Der Gate-Boden "
+              "entfernt sich von dem,\n     was ein Mensch bestaetigt hat. "
+              "Konsequenz laut Registrierung: Umstellung\n     des Massstabs "
+              "auf die belegte Teilmenge — als eigener, registrierter\n"
+              "     Schritt mit Dual-Zeile im Trend.")
+        return 1
+    print("\n  → REGEL NICHT ERFUELLT: konstanter Versatz. Der volle Satz "
+          "bleibt\n     Gate-Grundlage; der Abstand wird weiter berichtet, "
+          "begruendet aber\n     keine Umstellung.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="maschinenlesbar")
     ap.add_argument("--nur-zaehlen", action="store_true",
                     help="keine Einzelzeilen, nur die Tabelle")
+    ap.add_argument("--trend", nargs="?", const=str(ARCHIV / "massstab-trend.jsonl"),
+                    default=None, metavar="PFAD",
+                    help="eine Zeile je Lauf anhaengen: beide Golden-Mediane "
+                         "nebeneinander. Doppelte ts werden uebersprungen, das "
+                         "Skript darf also mehrfach laufen.")
+    ap.add_argument("--auswerten", action="store_true",
+                    help="O23 nach der registrierten Regel beurteilen, sobald "
+                         "10 Naechte vorliegen. Vorher KEIN Zwischenstand.")
     args = ap.parse_args()
+
+    if args.auswerten:
+        return auswerten(Path(args.trend or (ARCHIV / "massstab-trend.jsonl")))
 
     ledger = json.loads((ARCHIV / "split-ledger.json").read_text())
     golden = json.loads((ARCHIV / "golden-eval-set.json").read_text())
@@ -218,6 +323,11 @@ def main():
             fehlen = len(set(gold_uuids) - set(pr))
             print(f"\nGolden-Median nicht berechnet: {fehlen} Gepinnte fehlen im "
                   f"letzten per-rec-iou-Lauf.")
+
+        if args.trend and alle and menschlich:
+            trend_schreiben(args.trend, lauf.get("ts"), bericht, alle, menschlich)
+    elif args.trend:
+        print("\nTrend NICHT fortgeschrieben: kein per-rec-iou-Lauf gefunden.")
 
     schlimm = sum(1 for name in ("golden", "test")
                   for e in bericht[name] if e["herkunft"] == "maschine")

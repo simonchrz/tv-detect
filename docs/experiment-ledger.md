@@ -6031,3 +6031,66 @@ Freibrief, sich eine der beiden Serien auszusuchen.
 Die zehn Zeilen von 17:45 tragen `-VERWORFEN-INTEGRITAETSFLAGGE` im
 arch-Feld, damit das Audit die Wiederholung überhaupt lesen kann (es hält
 nach dem fünften gültigen Paar an). Sie bleiben als Beleg stehen.
+
+## §3au. O18 entschieden: NICHT ERFÜLLT — die strenge Prüfung bleibt aus
+
+Dritter Anlauf, diesmal durch das gehärtete `tv-tagesserie.sh`. Fünf
+Paare, frische Seeds, gleicher Stichtag, und — erstmals — **derselbe
+eingefrorene Lehrer in beiden Armen** (1282 Spalten, identisch). Die Arme
+unterschieden sich in genau vier Dingen: Ausgabeverzeichnis,
+Archiv-Kopie, Armname, `--herkunft-streng`.
+
+| Paar | Δ (streng − belegt) |
+|---|---|
+| p00 | −0.0031 |
+| p01 | +0.0083 |
+| p02 | +0.0172 |
+| p03 | +0.0077 |
+| p04 | +0.0220 |
+
+**Median +0.0083, positiv 4 von 5.** Bedingung 2 erfüllt, Bedingung 1
+verfehlt (Schwelle +0.010). **→ REGEL NICHT ERFÜLLT.**
+
+Der Eingriff ist gewaltig: 417 Aufnahmen korpusweit verlieren `has_user`,
+im Trainingssatz fallen die doppelt gewichteten von 429 auf 115. Dass ein
+Eingriff dieser Größe den Golden-Median um weniger als den Rauschboden
+(§2: 0.008 Std) bewegt, ist selbst die Aussage.
+
+**Konsequenz, wie am 06.09. festgelegt: `--herkunft-streng` bleibt AUS,
+dauerhaft, bis eine neue Tatsache vorliegt.** Die Begründung steht in der
+Registrierung und gilt unverändert: bei O17 war die Korrektur auch ohne
+Messgewinn richtig, weil `which` eine nachweislich falsche
+Tatsachenbehauptung war. Hier gibt es keine falsche Behauptung zu
+korrigieren, nur Unwissenheit — und ohne belegten Nutzen wird menschliche
+Arbeit nicht auf Verdacht weggeworfen.
+
+**Was berichtet gehört, weil die Registrierung es verlangt.** Die
+Vorhersage lautete „Ergebnis im Rauschen", und das ist eingetreten. Der
+erwartete interessantere Fall — ein deutlich NEGATIVER Median, der echte
+menschliche Arbeit unter den Unentscheidbaren belegt hätte — ist NICHT
+eingetreten. Die Richtung ist im Gegenteil konsistent positiv: die beiden
+methodisch sauberen Serien liegen bei +0.0083 (4/5) und +0.0088 (4/5).
+Das ist ein Hinweis, kein Ergebnis, und ändert nach R2 nichts.
+
+### Die drei Anläufe, und was jeder gekostet hat
+
+| Anlauf | Median | Urteil | Warum ungültig |
+|---|---|---|---|
+| 13.09. 09:21 | +0.0000 (5×) | — | beide Arme in EINEM Prozess; `--herkunft-streng` fehlte und wirkt ohnehin vor dem Armlauf (§3as) |
+| 13.09. 17:45 | −0.0024 (2/5) | — | Arme teilten `--output`: Arm 2 lernte mit dem Kopf von Arm 1 als Hygiene-Lehrer (1282 vs 1301 Spalten) |
+| 13.09. 19:30 | +0.0088 (4/5) | — | derselbe Lehrer-Durchgriff, nur gleiche Architektur; zusätzlich Integritäts-Flagge |
+| **14.09. 07:02** | **+0.0083 (4/5)** | **gültig** | — |
+
+Dazwischen lag der eigentliche Fund: **`--herkunft-streng` hat seine
+Zielgruppe nie gesehen.** Die Archiv-Einspeisung hängt ihre Aufnahmen
+direkt an `per_rec` und lief an der Prüfung vorbei; der Schalter meldete
+„0 weitere" und sah damit aus wie ein sauberes Nullergebnis. Ohne den
+Archiv-Anteil in der Meldung wäre O18 zweimal fälschlich als
+„nicht erfüllt" geschlossen worden — mit derselben Konsequenz, aber ohne
+je gemessen zu haben.
+
+**Die Lehre, dreimal dieselbe:** `tv-tagesserie.sh` hat alle drei Fallen
+seit jeher richtig behandelt, mit Begründung im Kommentar. Ich habe
+dreimal ein eigenes Skript geschrieben. Das Skript nimmt jetzt
+Zusatz-Schalter je Arm entgegen; es gibt keinen Grund mehr, an ihm vorbei
+zu messen.

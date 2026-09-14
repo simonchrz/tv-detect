@@ -33,5 +33,10 @@
     "datum": "2026-09-06",
     "urteil": "REGEL NICHT ERFUELLT — Korrektur der has_user-Regel bringt keinen belegbaren Golden-Gewinn (Median +0.0032, 3/5 positiv; Schwelle +0.010 / 4 von 5). Der Effekt liegt zudem unter der Reproduzierbarkeitsgrenze des Zwei-Prozess-Modus (0.0073, §3aq), ueber die Richtung sagt die Serie nichts. Konsequenz laut Registrierung: --herkunft-belegt im Nightly scharf — als Hygiene, nicht als Verbesserung.",
     "verbucht": "experiment-ledger.md §3 O17"
+  },
+  "O18": {
+    "datum": "2026-09-14",
+    "urteil": "REGEL NICHT ERFUELLT — den nicht entscheidbaren Aufnahmen das has_user-Privileg zu entziehen bringt keinen belegbaren Golden-Gewinn (Median +0.0083, 4/5 positiv; Schwelle +0.010 UND 4 von 5). Richtung positiv, Groesse unter dem Rauschboden (0.008 Std). Konsequenz laut Registrierung: --herkunft-streng bleibt dauerhaft AUS — ohne belegten Nutzen wird menschliche Arbeit nicht auf Verdacht weggeworfen.",
+    "verbucht": "experiment-ledger.md §3 O18"
   }
 }

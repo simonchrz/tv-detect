@@ -1,6 +1,13 @@
 # O18 — Sollen auch die nicht entscheidbaren Aufnahmen ihr Privileg verlieren?
 (Vorab-Registrierung)
 
+> 🏁 **ABGESCHLOSSEN 2026-09-14: REGEL NICHT ERFÜLLT.** Median +0.0083,
+> 4 von 5 Paaren positiv — Bedingung 2 erfüllt, Bedingung 1 (≥ +0.010)
+> verfehlt. `--herkunft-streng` bleibt damit **dauerhaft AUS**, wie unten
+> festgelegt. Gültige Serie: `20260914T070219`, gefahren durch
+> `tv-tagesserie.sh` mit identischem eingefrorenem Lehrer in beiden Armen.
+> Auswertung und die drei ungültigen Vorläufe: Ledger §3as/§3at/§3au.
+
 > ⚠️ **INSTRUMENT REPARIERT 2026-09-13, 17:45 — vor der ersten Zahl des
 > laufenden Anlaufs notiert.** `--herkunft-streng` hat seine Zielgruppe bis
 > heute nie gesehen: die Archiv-Einspeisung hängt ihre Aufnahmen direkt an

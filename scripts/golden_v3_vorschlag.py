@@ -42,6 +42,10 @@ _lh_spec = importlib.util.spec_from_file_location(
     "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
 _lh = importlib.util.module_from_spec(_lh_spec)
 _lh_spec.loader.exec_module(_lh)
+_ta_spec = importlib.util.spec_from_file_location(
+    "test_ausschluss", Path(__file__).resolve().parent / "test_ausschluss.py")
+_ta = importlib.util.module_from_spec(_ta_spec)
+_ta_spec.loader.exec_module(_ta)
 NICHT_MENSCH = _lh.NICHT_MENSCH
 
 
@@ -50,7 +54,9 @@ def main():
     golden = json.loads((ARCHIV / "golden-eval-set.json").read_text())
     v2 = set(golden.get("uuids") or [])
 
-    test = {u for u, b in ledger.items() if b == "test"}
+    # ⚠️ Ledger minus Ausschlussliste minus Quarantaene: was nie Messziel
+    # sein darf, darf auch nie Golden-Kandidat oder Review-Hebel sein.
+    test = {u for u, b in ledger.items() if b == "test"} - _ta.ausgeschlossen(ARCHIV)
     versiegelt = {u for u, b in ledger.items() if b == "versiegelt"}
 
     # Menschlich reviewt: ads_user.json ohne Auto-/Agenten-Marker, aus dem

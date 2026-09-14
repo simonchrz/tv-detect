@@ -511,7 +511,7 @@ def vorbereiten_fein(uuids=None):
     return 0
 
 
-def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
+def vorbereiten(anzahl, dump_anfordern=False, uuids=None, nur_bericht=False):
     """Frames um jede Modellkante ziehen.
 
     Mit `uuids` gezielt auf benannte Aufnahmen, auch wenn sie schon ein
@@ -528,11 +528,35 @@ def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
     _erlaubt = erlaubte_uuids()
     if _erlaubt is None:
         return 1
-    _vorher = len(kandidaten)
-    kandidaten = [d for d in kandidaten if d.name[5:] in _erlaubt]
-    if _vorher != len(kandidaten):
-        print(f"  {_vorher - len(kandidaten)} Aufnahmen uebersprungen "
-              f"(nicht im Train-Eimer: golden/test/versiegelt)")
+    if nur_bericht:
+        # ⚠️ NUR-BERICHT: Test-Aufnahmen duerfen KLASSIFIZIERT werden, damit
+        # label-widerspruch.py dem Menschen zeigt, wo ein Block vermutlich
+        # falsch liegt — geschrieben wird dort NIE. Zwei Sperren: der Ordner
+        # bekommt eine Markierungsdatei, und --anwenden verweigert markierte
+        # Ordner zusaetzlich zur Train-Pruefung. Golden bleibt auch hier
+        # tabu (Leitplanke L2: Eingabe, nicht Stellschraube).
+        #
+        # Und NUR mit ausdruecklicher uuid-Liste. Eine automatische Auswahl
+        # ueber den Test-Eimer waere genau die Tuer, die am 2026-09-06
+        # geschlossen wurde (35 von 71 Kandidaten waren nicht-train).
+        if not uuids:
+            print("--nur-bericht verlangt --uuids: keine automatische Auswahl "
+                  "ausserhalb des Train-Eimers.")
+            return 1
+        _gold = golden_uuids() or set()
+        _vorher = len(kandidaten)
+        kandidaten = [d for d in kandidaten if d.name[5:] not in _gold]
+        if _vorher != len(kandidaten):
+            print(f"  {_vorher - len(kandidaten)} Golden-Aufnahmen uebersprungen "
+                  f"— auch im Berichtsmodus tabu")
+        print(f"  ⚠ NUR-BERICHT: {len(kandidaten)} Aufnahmen ausserhalb der "
+              f"Train-Sperre vorbereitet. Ihre Urteile werden NIE angewandt.")
+    else:
+        _vorher = len(kandidaten)
+        kandidaten = [d for d in kandidaten if d.name[5:] in _erlaubt]
+        if _vorher != len(kandidaten):
+            print(f"  {_vorher - len(kandidaten)} Aufnahmen uebersprungen "
+                  f"(nicht im Train-Eimer: golden/test/versiegelt)")
     # ⚠️ Aufnahmen mit vorhandenem Signal-Dump zuerst. Der Schattenlauf
     # (kanten-schatten.py) braucht je Aufnahme einen Dump; ohne ihn ist das
     # Review zwar richtig, aber fuer die offenen Fragen unsichtbar.
@@ -593,6 +617,12 @@ def vorbereiten(anzahl, dump_anfordern=False, uuids=None):
             pass
         ziel.mkdir(parents=True, exist_ok=True)
         (ziel / "auftrag.json").write_text(json.dumps(auftrag, indent=1))
+        if nur_bericht:
+            (ziel / "NUR-BERICHT").write_text(
+                "Dieser Auftrag dient nur dem Widerspruchs-Bericht "
+                "(label-widerspruch.py). Sein Urteil darf NIE ueber "
+                "--anwenden geschrieben werden: die Aufnahme liegt nicht im "
+                "Train-Eimer, ihr Label ist Ground Truth des Gates.\n")
         n = sum(len(k["frames"]) for k in kanten)
         print(f"  {u:36} {len(auto)} Bloecke, {len(kanten)} Kanten, {n} Frames "
               f"-> {ziel}")
@@ -870,6 +900,13 @@ def anwenden(trocken, nur_enden=False):
             print(f"  {d.name.rstrip('/')}: NICHT TRAIN (golden/test/versiegelt) "
                   f"— nicht angefasst")
             continue
+        # ⚠️ Zweite Sperre, unabhaengig vom Ledger: ein Auftrag aus dem
+        # Berichtsmodus wird auch dann nicht angewandt, wenn die Aufnahme
+        # spaeter einmal in den Train-Eimer wandern sollte.
+        if (d / "NUR-BERICHT").is_file():
+            print(f"  {d.name.rstrip('/')}: NUR-BERICHT — Urteil wird nicht "
+                  f"angewandt, so vorbereitet")
+            continue
         # ⚠️ Schon angewandt = nicht noch einmal schreiben. Jeder erneute
         # POST setzt reviewed_at neu und laesst eine alte Beurteilung wie
         # eine frische aussehen — im Schattenlauf haengt daran, welche
@@ -972,12 +1009,19 @@ def main():
     ap.add_argument("--anzahl", type=int, default=5)
     ap.add_argument("--uuids", default="",
                     help="mit --grob: gezielt diese uuids (kommagetrennt), auch wenn sie schon Labels haben")
+    ap.add_argument("--nur-bericht", action="store_true",
+                    help="mit --vorbereiten --uuids: auch Test-Aufnahmen "
+                         "klassifizieren lassen — NUR fuer label-widerspruch.py. "
+                         "Markiert die Auftraege; --anwenden verweigert sie.")
     ap.add_argument("--dump-anfordern", action="store_true",
                     help="fehlende Signal-Dumps per redetect anfordern und "
                          "abwarten, BEVOR die Frames gezogen werden (sonst "
                          "ist das Review fuer den Schattenlauf unsichtbar)")
     a = ap.parse_args()
     ARBEIT.mkdir(parents=True, exist_ok=True)
+    if a.nur_bericht and (a.grob or a.fein or a.anwenden or not a.vorbereiten):
+        print("--nur-bericht gilt nur fuer --vorbereiten (Kantenfenster).")
+        return 1
     if a.vorbereiten:
         if a.fein:
             return vorbereiten_fein([x for x in a.uuids.split(',') if x])
@@ -985,7 +1029,8 @@ def main():
             return vorbereiten_grob(
                 a.anzahl, [x for x in a.uuids.split(',') if x])
         return vorbereiten(a.anzahl, a.dump_anfordern,
-                           [x for x in a.uuids.split(',') if x])
+                           [x for x in a.uuids.split(',') if x],
+                           nur_bericht=a.nur_bericht)
     if a.nachfassen:
         return nachfassen()
     if a.anwenden:

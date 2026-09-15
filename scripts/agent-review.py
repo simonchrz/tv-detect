@@ -124,6 +124,12 @@ KONVENTION = {
     "unklar":          None,
 }
 
+# Massgeblich ist Ledger §3y (seit 2026-09-15 mit dieser Tabelle abgeglichen:
+# Gewinnspiel = Werbung, Rand-Trailer = Werbung, VOX-Nachrichten = nicht
+# Sendung). Eine Nachrichten-Kategorie fehlt hier BEWUSST, bis entschieden
+# ist, ob die Regel ueber VOX hinaus gilt — sie wuerde senderuebergreifend
+# greifen.
+#
 # ⚠️ `mitmachtafel` stand vom 2026-08-13 bis zum 2026-08-17 auf "sendung" —
 # so lautete die damalige Entscheidung. Am 2026-08-17 hat Simon sie
 # ZURUECKGENOMMEN: der Gewinnspiel-Insert zaehlt wieder als Werbung.

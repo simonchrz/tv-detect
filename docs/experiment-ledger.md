@@ -298,14 +298,38 @@ gesehen, bevor ich die Regel schrieb. Serienbeginn ist der 13.08., und die
 Schwelle ist wortgleich die von O1, damit sie nicht an den beobachteten
 Effekt angepasst ist. Beides steht in der Registrierung.
 
-## 3y. Label-Konventionen (Simon, 2026-08-13 abends — BINDEND)
+## 3y. Label-Konventionen (Simon, 2026-08-13 abends — BINDEND; Stand 2026-09-15)
 
-1. **Kostenpflichtige Gewinnspiel-Inserts sind SENDUNG** (winario,
+1. **Kostenpflichtige Gewinnspiel-Inserts sind WERBUNG** (winario,
    Gewinnarena — auch show-gebrandet mit 01379-Nummern).
+   ⚠️ **Umgekehrt am 2026-08-17 (Simon).** Am 13.08. stand hier „SENDUNG".
+   Zurückgenommen, weil die Messung zeigte, dass diese Lesart nirgends
+   umgesetzt war: über 150 Aufnahmen und 242 Blöcke lagen Modell und Label
+   im Median exakt aufeinander, beide nach der ALTEN Lesart. Sie
+   durchzusetzen hätte 9 der 38 Golden-Aufnahmen umgeschrieben und den
+   Verlauf zerschnitten. Bis 2026-09-15 stand die Rücknahme nur im
+   Kommentar über `KONVENTION` in `scripts/agent-review.py` — wer hier
+   nachschlug, las die falsche Regel.
+   Die Anwendungen unten vom 13./14.08. („NICHT korrigiert: 3
+   Gewinnspiel-Spannen", „7× Gewinnspiel = Sendung, Label korrekt")
+   entstanden unter der zurückgenommenen Lesart.
 2. **Werbung beginnt und endet meist mit einem kurzen Sendungstrailer —
    diese Rand-Trailer gehören ZUR WERBUNG.** ⚠️ Das REVIDIERT den
    End-Snap-Entscheid vom 28.07. („Trailer = Sendung"): der dortige Guard
    wurde auf der alten Lesart kalibriert und gehört neu bewertet.
+3. **VOX-Nachrichten gehören nicht zur Sendung** (Simon, 2026-09-15). Ein
+   Nachrichtenblock mitten in einer VOX-Aufnahme wird mit dem Werbeblock
+   geschnitten. Anlass: Widerspruchsbericht vom 14.09. —
+   `dvr-vox-1788293700` (Hot oder Schrott) lässt Block 4 bei 7568 s exakt
+   am VOX-Nachrichten-Intro beginnen. **Das Label entspricht der Regel
+   bereits**, nachzuziehen ist nichts. Der Widerspruch kam aus dem
+   Agenten-Kategoriensatz: er kennt keine Nachrichten, die Agenten führten
+   sie als `sendungsinhalt`.
+   **Offen:** ob dasselbe für die Kurznachrichten anderer Sender gilt
+   (RTL Aktuell, Newstime, RTLZWEI News). Solange nicht entschieden, bekommt
+   `KONVENTION` in `agent-review.py` KEINE Nachrichten-Kategorie — sie
+   würde senderübergreifend greifen und damit mehr festlegen als
+   beschlossen.
 
 Erste Anwendung: 10 Kanten in 7 Golden-Aufnahmen agent-reviewt korrigiert
 (Frames gesichtet durch 4 Prüf-Agenten, Urteile mit Konfidenz; Anwendung

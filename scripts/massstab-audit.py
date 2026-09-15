@@ -67,10 +67,10 @@ _lh_spec = importlib.util.spec_from_file_location(
     "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
 _lh = importlib.util.module_from_spec(_lh_spec)
 _lh_spec.loader.exec_module(_lh)
-_ta_spec = importlib.util.spec_from_file_location(
+_aus_spec = importlib.util.spec_from_file_location(
     "test_ausschluss", Path(__file__).resolve().parent / "test_ausschluss.py")
-_ta = importlib.util.module_from_spec(_ta_spec)
-_ta_spec.loader.exec_module(_ta)
+_aus = importlib.util.module_from_spec(_aus_spec)
+_aus_spec.loader.exec_module(_aus)
 NICHT_MENSCH = _lh.NICHT_MENSCH
 
 # which-Werte, die ein rein maschinelles Label bezeichnen.
@@ -271,7 +271,7 @@ def main():
     # Golden ist auf test gepinnt; wir berichten es als eigenen Eimer, damit
     # die Zahlen sich nicht doppelt zaehlen.
     # Ausschlussliste + Quarantaene: nie Messziel, also auch hier nicht zaehlen.
-    _raus = _ta.ausgeschlossen(ARCHIV)
+    _raus = _aus.ausgeschlossen(ARCHIV)
     _n_raus = sum(1 for u, b in ledger.items() if b == "test" and u in _raus)
     if _n_raus:
         print(f"  ({_n_raus} Ledger-Test-Aufnahmen ausgeschlossen/quarantaeniert — nicht gezaehlt)")

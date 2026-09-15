@@ -41,10 +41,10 @@ _lh_spec = importlib.util.spec_from_file_location(
     "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
 _lh = importlib.util.module_from_spec(_lh_spec)
 _lh_spec.loader.exec_module(_lh)
-_ta_spec = importlib.util.spec_from_file_location(
+_aus_spec = importlib.util.spec_from_file_location(
     "test_ausschluss", Path(__file__).resolve().parent / "test_ausschluss.py")
-_ta = importlib.util.module_from_spec(_ta_spec)
-_ta_spec.loader.exec_module(_ta)
+_aus = importlib.util.module_from_spec(_aus_spec)
+_aus_spec.loader.exec_module(_aus)
 
 
 import numpy as np
@@ -4091,7 +4091,7 @@ def main():
     # massstab-audit.py. Bis dahin kannten die beiden Audits die Liste
     # nicht und zaehlten 12 ausgeschlossene bzw. quarantaenierte Aufnahmen
     # als Massstab. Eintraege dort ergaenzen, nicht hier.
-    TEST_SET_EXCLUDE = _ta.TEST_SET_EXCLUDE
+    TEST_SET_EXCLUDE = _aus.TEST_SET_EXCLUDE
 
     # ── Sticky, channel-stratified split (2026-07-14) ───────────────
     # The pure hash<test_frac rule left per-channel test coverage to

@@ -35,12 +35,21 @@ class EineDefinition(unittest.TestCase):
             self.assertIn('"test_ausschluss.py"', quelle(name), name)
 
     def test_audits_ziehen_die_liste_ab(self):
-        self.assertIn("_ta.ausgeschlossen(ARCHIV)", quelle("golden_v3_vorschlag.py"))
-        self.assertIn("_ta.ausgeschlossen(ARCHIV)", quelle("massstab-audit.py"))
+        self.assertIn("_aus.ausgeschlossen(ARCHIV)", quelle("golden_v3_vorschlag.py"))
+        self.assertIn("_aus.ausgeschlossen(ARCHIV)", quelle("massstab-audit.py"))
         self.assertIn("and u not in _raus", quelle("massstab-audit.py"))
 
+    def test_alias_heisst_nicht_ta(self):
+        # ⚠️ `_ta` ist in train-head.py seit jeher eine LOKALE Variable in
+        # main() (_augment_test_recs). Ein Modul-Alias gleichen Namens ist
+        # dort unerreichbar — das hat am 2026-09-15 die Nacht gekostet.
+        # Die allgemeine Pruefung steht in
+        # test_modulalias_nicht_beschattet.py; hier nur der konkrete Name.
+        for name in ("train-head.py", "golden_v3_vorschlag.py", "massstab-audit.py"):
+            self.assertNotIn("_ta = importlib.util.module_from_spec", quelle(name), name)
+
     def test_trainer_benutzt_das_modul(self):
-        self.assertIn("TEST_SET_EXCLUDE = _ta.TEST_SET_EXCLUDE", quelle("train-head.py"))
+        self.assertIn("TEST_SET_EXCLUDE = _aus.TEST_SET_EXCLUDE", quelle("train-head.py"))
 
 
 class ModulVerhalten(unittest.TestCase):

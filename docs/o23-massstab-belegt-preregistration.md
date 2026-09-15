@@ -10,6 +10,24 @@ Diese eine Zahl war der Anlass. Die Regel unten beurteilt ausdrücklich
 existiert noch keine einzige Zahl, und das ist die Bedingung, unter der
 eine nachträglich formulierte Frage noch ehrlich ist.
 
+> ⚠️ **KORREKTUR 2026-09-15, bei 2 von 10 Nächten, vor jedem Urteil.**
+> Die Zahlen oben (0.9599 / 0.9895 / −0.0297) gehören nicht zum Kopf vom
+> 14.09., sondern zu dem vom **13.09.** Die Spur las fest die
+> `champion`-Spalte aus `per-rec-iou.jsonl`, also den Kopf VOR dem Lauf;
+> jede Zeile trug damit den Kopf der Vornacht. Aufgefallen, weil die Zeile
+> vom 15.09. 0.9639 meldete, während der in derselben Nacht deployte Kopf
+> 0.957 hatte. Richtig für den 14.09.: **0.9639 / 0.9909 / −0.0270**.
+>
+> Behoben in `produktionskopf()`: gemessen wird der Kopf, der NACH dem Lauf
+> in Produktion ist (`candidate` bei Deploy, sonst `champion`). Beide
+> bisherigen Trendzeilen sind aus derselben Quelle neu gerechnet und
+> tragen ein Feld `korrigiert`; Sicherung `massstab-trend.jsonl.bak.20260915`.
+>
+> **Die Aussage ändert sich nicht:** über drei verschiedene Köpfe liegt der
+> Abstand zwischen −0.027 und −0.033. Regel, Schwelle und Konsequenz
+> bleiben unverändert — betroffen war nur, welcher Nacht eine Zahl
+> zugeschrieben wird, und das vor der ersten beurteilten Zahl.
+
 ## Woher die Frage kommt
 
 Jede registrierte Frage von O1 bis O18 wurde am Golden-Median entschieden.

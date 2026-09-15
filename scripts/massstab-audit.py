@@ -133,7 +133,7 @@ def herkunft(uuid, meta):
 
 
 def letzter_iou_lauf():
-    """Der juengste Eintrag aus per-rec-iou.jsonl (Champion-Spalte)."""
+    """Der juengste Eintrag aus per-rec-iou.jsonl (beide Spalten, s. produktionskopf)."""
     p = ARCHIV / "per-rec-iou.jsonl"
     if not p.is_file():
         return None
@@ -145,6 +145,24 @@ def letzter_iou_lauf():
             except Exception:
                 pass
     return letzte
+
+
+def produktionskopf(lauf):
+    """Die Spalte des Kopfes, der NACH diesem Lauf in Produktion ist.
+
+    ⚠️ Bis 2026-09-15 stand hier fest `champion`. Der Champion ist aber der
+    Kopf VOR dem Lauf -- jede Trendzeile trug damit den Kopf der Vornacht
+    unter dem Zeitstempel dieser Nacht. Aufgefallen, weil die Zeile vom
+    15.09. alle=0.9639 meldete, waehrend der in derselben Nacht deployte
+    Kopf 0.957 hatte; 0.9639 war der Kopf vom 14.09.
+
+    Deployt der Lauf, ist `candidate` der neue Produktionskopf. Lehnt das
+    Gate ab, bleibt `champion` in Produktion. Eine abgelehnte Nacht misst
+    damit denselben Kopf wie die Nacht davor -- das ist richtig so: die
+    Frage lautet, was der Massstab ueber das Modell sagt, das tatsaechlich
+    laeuft.
+    """
+    return "candidate" if lauf.get("deploy") else "champion"
 
 
 def trend_schreiben(pfad, ts, bericht, alle, menschlich):
@@ -314,12 +332,14 @@ def main():
     # Was der Massstab kostet: Golden-Median mit und ohne die Maschinen.
     lauf = letzter_iou_lauf()
     if lauf:
-        pr = lauf.get("champion") or {}
+        _spalte = produktionskopf(lauf)
+        pr = lauf.get(_spalte) or {}
         alle = [pr[u] for u in gold_uuids if u in pr]
         menschlich = [pr[e["uuid"]] for e in bericht["golden"]
                       if e["herkunft"] == "mensch" and e["uuid"] in pr]
         if alle and menschlich and len(alle) != len(menschlich):
-            print(f"\nGolden-Median (Lauf {lauf.get('ts')}):")
+            print(f"\nGolden-Median (Lauf {lauf.get('ts')}, Kopf: {_spalte}"
+                  f"{' = neu deployt' if _spalte == 'candidate' else ' = Gate lehnte ab'}):")
             print(f"  alle {len(alle):>3} Gepinnten     {st.median(alle):.4f}")
             print(f"  nur  {len(menschlich):>3} menschlichen  {st.median(menschlich):.4f}")
             print(f"  Aufschlag durch maschinelle Labels: "

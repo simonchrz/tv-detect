@@ -43,6 +43,29 @@ class DasNightlyRuftEsAuf(unittest.TestCase):
         self.assertIn("|| true", NIGHTLY[i:i + 400])
 
 
+class DerRichtigeKopf(unittest.TestCase):
+    """⚠️ Bis 2026-09-15 las die Spur fest `champion` — den Kopf VOR dem
+    Lauf. Jede Zeile trug damit den Kopf der Vornacht."""
+
+    def setUp(self):
+        import importlib.util
+        s = importlib.util.spec_from_file_location("ma", SKRIPT)
+        self.ma = importlib.util.module_from_spec(s); s.loader.exec_module(self.ma)
+
+    def test_deployt_heisst_candidate(self):
+        self.assertEqual(self.ma.produktionskopf({"deploy": True}), "candidate")
+
+    def test_abgelehnt_heisst_champion(self):
+        self.assertEqual(self.ma.produktionskopf({"deploy": False}), "champion")
+
+    def test_fehlendes_flag_ist_ablehnung(self):
+        # Kein Flag = nicht nachweislich deployt = der alte Kopf laeuft.
+        self.assertEqual(self.ma.produktionskopf({}), "champion")
+
+    def test_nicht_mehr_fest_verdrahtet(self):
+        self.assertNotIn('pr = lauf.get("champion")', SKRIPT.read_text())
+
+
 class DieRegelGreiftAnDerSchwelle(unittest.TestCase):
     def test_kein_zwischenstand_vor_zehn_naechten(self):
         r = lauf([-0.03] * 9)

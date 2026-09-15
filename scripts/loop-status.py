@@ -346,13 +346,30 @@ def main():
     mt = args.archiv / "massstab-trend.jsonl"
     if mt.exists():
         try:
-            eintraege = [json.loads(z) for z in
-                         mt.read_text().splitlines() if z.strip()][-5:]
+            alle_zeilen = [json.loads(z) for z in
+                           mt.read_text().splitlines() if z.strip()]
         except Exception as e:
-            eintraege = []
+            alle_zeilen = []
             print(f"\nMassstab-Trend nicht lesbar ({e})")
-        if eintraege:
-            print("\nMassstab (Golden-Median, belegt gegen alle):")
+        # ⚠️ KEIN Zwischenstand vor der zehnten Nacht (O23, dieselbe Regel wie
+        # massstab-audit.py --auswerten). Bis 2026-09-15 zeigte dieser Block
+        # den Abstand jeder Nacht und warnte ab 0.005 Aenderung ueber ZWEI
+        # Laeufe, dass er "waechst" — bei ~0.010 Rauschen bedeutungslos, und
+        # genau der Blick auf halbe Serien, den die Registrierung ausschliesst:
+        # wer den Abstand nach drei Naechten sieht, kann Regel und Wunsch
+        # nicht mehr trennen. Erst nach N Naechten erscheinen Zahlen.
+        N_SOLL = 10
+        if alle_zeilen and len(alle_zeilen) < N_SOLL:
+            j = alle_zeilen[-1]
+            g = (j.get("eimer") or {}).get("golden") or {}
+            print(f"\nMassstab (O23): {len(alle_zeilen)}/{N_SOLL} Nächte — "
+                  f"kein Zwischenstand, so registriert. Eimer golden: "
+                  f"{g.get('mensch', 0)} Mensch / {g.get('maschine', 0)} Masch / "
+                  f"{g.get('unbekannt', 0)} unbek.")
+        elif alle_zeilen:
+            eintraege = alle_zeilen[-5:]
+            print("\nMassstab (Golden-Median, belegt gegen alle; O23 entscheidbar "
+                  "— Urteil: massstab-audit.py --auswerten):")
             print(f"  {'Lauf':<17} {'alle':>7} {'belegt':>8} {'Abstand':>9}  Eimer golden")
             for e in eintraege:
                 g = (e.get("eimer") or {}).get("golden") or {}
@@ -362,18 +379,6 @@ def main():
                       f"{e.get('abstand', 0):>+9.4f}  "
                       f"{g.get('mensch', 0)} Mensch / {g.get('maschine', 0)} Masch "
                       f"/ {g.get('unbekannt', 0)} unbek.")
-            j = eintraege[-1]
-            if j.get("n_belegt", 0) < 30:
-                print(f"  ⚠ nur {j.get('n_belegt')} belegte Mitglieder — ein Median "
-                      f"darüber streut ~{(38 / max(j.get('n_belegt'), 1)) ** 0.5:.2f}× "
-                      f"so breit wie der über alle 38.")
-            if len(eintraege) >= 2:
-                delta = eintraege[-1].get("abstand", 0) - eintraege[0].get("abstand", 0)
-                if abs(delta) >= 0.005:
-                    richtung = "wächst" if delta < 0 else "schrumpft"
-                    print(f"  ⚠ der Abstand {richtung} ({delta:+.4f} über "
-                          f"{len(eintraege)} Läufe) — der Gate-Boden entfernt sich "
-                          f"von dem, was ein Mensch bestätigt hat.")
 
     # ── Versiegelter Satz ────────────────────────────────────────────
     # Nur die Groesse, nie ein Ergebnis: ihn taeglich auszuwerten waere

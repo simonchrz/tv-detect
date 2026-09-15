@@ -43,6 +43,32 @@ class DasNightlyRuftEsAuf(unittest.TestCase):
         self.assertIn("|| true", NIGHTLY[i:i + 400])
 
 
+class KeinZwischenstandInDerUebersicht(unittest.TestCase):
+    """⚠️ loop-status.py zeigte bis 2026-09-15 den Abstand jeder Nacht und
+    warnte nach ZWEI Laeufen, er "waechst" — genau der Blick auf halbe
+    Serien, den O23 ausschliesst."""
+
+    QUELL = (REPO / "scripts/loop-status.py").read_text()
+
+    def test_keine_trendwarnung_mehr(self):
+        self.assertNotIn("der Abstand {richtung}", self.QUELL)
+        self.assertNotIn("Gate-Boden entfernt sich", self.QUELL)
+
+    def test_zahlen_erst_nach_n_soll(self):
+        i = self.QUELL.index('mt = args.archiv / "massstab-trend.jsonl"')
+        block = self.QUELL[i:i + 3000]
+        self.assertIn("len(alle_zeilen) < N_SOLL", block)
+        # Der Zweig VOR der Grenze darf keinen Median und keinen Abstand drucken.
+        vor = block[block.index("len(alle_zeilen) < N_SOLL"):block.index("elif alle_zeilen:")]
+        for verboten in ("golden_median_alle", "golden_median_belegt", "abstand"):
+            self.assertNotIn(verboten, vor,
+                             f"Uebersicht zeigt {verboten} vor der zehnten Nacht")
+
+    def test_n_soll_gleich_der_auswertung(self):
+        self.assertIn("N_SOLL = 10", self.QUELL)
+        self.assertIn("N_SOLL = 10", SKRIPT.read_text())
+
+
 class DerRichtigeKopf(unittest.TestCase):
     """⚠️ Bis 2026-09-15 las die Spur fest `champion` — den Kopf VOR dem
     Lauf. Jede Zeile trug damit den Kopf der Vornacht."""

@@ -262,7 +262,7 @@ class FingerabdruckOhneByteKopie(unittest.TestCase):
             self.assertEqual(voll, h.hexdigest())
 
     def test_train_head_hasht_blockweise(self):
-        i = NEU_SRC.index("def _fp(a):")
+        i = NEU_SRC.index("def _fp(a")   # Signatur bekam spaeter ein dtype (Seed-Phase)
         # Nur Code zaehlt — der Kommentar darueber nennt `.tobytes()` ja
         # gerade als das, was vermieden wird.
         code = "\n".join(z for z in NEU_SRC[i:i + 900].splitlines()

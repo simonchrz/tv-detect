@@ -90,9 +90,18 @@ import onnxruntime as ort
 # equals 1.0, all others 0.0. Unknown slug → all-zero one-hot
 # (model degrades gracefully to "channel-agnostic" prediction).
 
-def _gestapelt(bloecke, dtype, zusaetze=None):
+def _gestapelt(bloecke, dtype, zusaetze=None, freigeben=False):
     """Zeilenbloecke in EINE vorbelegte Matrix schreiben, statt sie erst als
     Liste zu sammeln und dann zu verketten.
+
+    `freigeben=True`: jeder Block wird nach dem Umkopieren aus der Liste
+    geloescht (Eintrag -> None). np.empty legt die Zielseiten erst beim
+    Schreiben an — so liegen nie alle Teile UND die ganze Matrix zugleich
+    im Speicher, sondern hoechstens Teile + der schon geschriebene Anteil.
+    Gemessen 2026-09-16 beim float64-Stapeln der Trainingsmatrix: ohne
+    Freigabe 49,7 GB Gipfel (11 GB Teile + 23 GB Matrix + Roh-Features),
+    mit Freigabe entsprechend weniger. Der Aufrufer darf die Liste danach
+    nicht mehr lesen.
 
     ⚠️ np.concatenate ueber eine Liste von Teilen haelt am Gipfel BEIDES:
     die Teile und die fertige Matrix — bei 3,1 Mio x 1282 float32 rund
@@ -110,11 +119,15 @@ def _gestapelt(bloecke, dtype, zusaetze=None):
     n = sum(len(b) for b in bloecke)
     aus = np.empty((n, breite + k), dtype=dtype)
     lo = 0
-    for i, b in enumerate(bloecke):
+    for i in range(len(bloecke)):
+        b = bloecke[i]
         hi = lo + len(b)
         aus[lo:hi, :breite] = b
         if k:
             aus[lo:hi, breite:] = zusaetze[i]
+        if freigeben:
+            bloecke[i] = None
+            del b
         lo = hi
     return aus
 
@@ -3909,7 +3922,13 @@ def main():
             if not fnpy.exists():
                 continue  # features cleared → can't reconstruct; skip
             try:
-                a_feats = np.load(fnpy)
+                # Copy-on-Write-Mapping statt Vollladen: 604 eingespeiste
+                # Aufnahmen hielten so ~10 GB als echten, nicht verdraeng-
+                # baren Speicher. Mit mode "c" bleiben die Seiten datei-
+                # gestuetzt, bis eine beschrieben wird — und beschrieben
+                # werden nur die Logo-NaN-Zeilen unten. Dieselben Werte;
+                # die lebenden Aufnahmen laufen so schon lange.
+                a_feats = np.load(fnpy, mmap_mode="c")
                 _touch_atime(fnpy)
             except Exception:
                 continue
@@ -3918,7 +3937,8 @@ def main():
             if args.with_logo and a_feats.shape[1] > 1280:
                 nm = np.isnan(a_feats[:, 1280])
                 if nm.any():
-                    a_feats = a_feats.copy()
+                    # kein .copy() mehr: der Schreibzugriff geht bei mode "c"
+                    # in eine private Seitenkopie, der Rest bleibt gemappt.
                     a_feats[nm, 1280] = 0.5
                     logo_nan_mask_by_uuid[u] = nm
             a_which = a_meta.get("which", "")
@@ -4723,7 +4743,20 @@ def main():
         print(f"bumper-confirmed boundaries: {bumper_boost_total} frame(s) "
               f"boosted across {len(bumper_boost_recs)} recording(s) "
               f"({args.bumper_boost}× weight)")
-    X_train = np.concatenate(X_train_parts) if X_train_parts else np.empty((0, per_rec[0][3].shape[1]))
+    # ⚠️ Die Trainingsmatrix entsteht hier DIREKT als float64 — sie dient
+    # zuerst der LogReg-Baseline, und sklearn 1.8 rechnet float64: eine
+    # float32-Matrix kopierte es komplett um, 11 GB + 22 GB nebeneinander,
+    # und predict() zog noch einmal 22 GB. Das war der Gipfel der ganzen
+    # Seed-Phase (~49 GB mit Roh-Features). Die float32-Matrix fuer die
+    # MLP-Seeds wird ERST DANACH aus den Roh-Features neu gestapelt, wenn
+    # diese 22 GB schon wieder frei sind (s. X_train_ch unten). float32 ->
+    # float64 ist exakt; der Fingerabdruck rechnet chunkweise nach float32
+    # zurueck und bleibt derselbe (test_seedphase_ohne_kopien.py). Ende-zu-
+    # Ende belegt am 2026-09-16: alter und neuer Code, gleicher Stichtag,
+    # Fingerabdruck, Baseline-Zeile, Seeds und Golden identisch.
+    X_train = (_gestapelt(X_train_parts, np.float64, freigeben=True) if X_train_parts
+               else np.empty((0, per_rec[0][3].shape[1]), dtype=np.float64))
+    _base_dim = X_train.shape[1]
     y_train = np.concatenate(y_train_parts) if y_train_parts else np.empty(0)
     sw_train = np.concatenate(sw_train_parts) if sw_train_parts else np.empty(0)
     # ⚠️ Die Merkmals-Teilstuecke sind ab hier tot — aber sie halten eine
@@ -4752,21 +4785,21 @@ def main():
     # zwei Tage lang an der falschen Stelle.
     try:
         import hashlib as _hl
-        def _fp(a):
+        def _fp(a, dtype=None):
             # Blockweise statt `.tobytes()`: das erzeugte fuer den Hash eine
             # vollstaendige Byte-Kopie der Matrix (12 GB, zwei Sekunden lang).
-            # Zeilenbloecke eines C-zusammenhaengenden Arrays sind selbst
-            # zusammenhaengend und gehen ohne Kopie in den Puffer; der
-            # Digest ist derselbe (test_mlp_fit_ohne_kopien.py).
-            a = np.ascontiguousarray(a)
+            # Zeilenbloecke gehen einzeln in den Puffer; `dtype` rechnet den
+            # Block vorher um — die float64-Baseline-Matrix wird so nach
+            # float32 gehasht und liefert denselben Digest wie die frueher
+            # gehashte float32-Matrix (test_seedphase_ohne_kopien.py).
             h = _hl.sha1()
             for lo in range(0, len(a), 65536):
-                h.update(a[lo:lo + 65536])
+                h.update(np.ascontiguousarray(a[lo:lo + 65536], dtype=dtype))
             return h.hexdigest()[:12]
-        print(f"matrix-fingerprint: X={_fp(X_train)} y={_fp(y_train)} "
+        print(f"matrix-fingerprint: X={_fp(X_train, np.float32)} y={_fp(y_train)} "
               f"sw={_fp(sw_train)} shape={X_train.shape} "
               f"sw_summe={float(sw_train.sum()):.6f}", flush=True)
-        print(f"speicher: Matrix {X_train.nbytes / 2**30:.1f} GB, "
+        print(f"speicher: Matrix {X_train.nbytes / 2**30:.1f} GB (float64 fuer die Baseline), "
               f"Gipfel bis hierher {_gipfel_gb():.1f} GB", flush=True)
         # ⚠️ Und je Aufnahme, damit ein Unterschied eine ADRESSE hat.
         # Am 2026-09-12 waren X und y bit-gleich und nur sw verschieden
@@ -4817,8 +4850,14 @@ def main():
     # inference time (NNWeight, NNGate) instead.
     clf = LogisticRegression(max_iter=2000, C=1.0, verbose=0)
     clf.fit(X_train, y_train, sample_weight=sw_train)
-    train_pred = clf.predict(X_train)
+    train_pred = _vorhersage_blockweise(clf, X_train)
     train_acc = (train_pred == y_train).mean()
+    # ⚠️ Letzter Leser der float64-Matrix. Ab hier nur ein leerer
+    # Platzhalter mit derselben Breite (spaetere Leser fragen `.shape[1]`,
+    # hasattr-gesichert). Die float32-Matrix fuer die Seeds entsteht unten
+    # neu — erst wenn diese 22 GB frei sind.
+    X_train = np.empty((0, _base_dim), dtype=np.float32)
+    gc.collect()
     # NOT the deployed model's accuracy — this is the internal LogReg
     # baseline, fit unconditionally regardless of --head-arch purely as
     # a reference point for the shadow table / historical continuity.
@@ -5055,25 +5094,31 @@ def main():
         # Go-Seite hatten die Spalte immer richtig; der Fit lernte also auf
         # einer anderen Eingabe, als er spaeter bewertet wurde.
         # Test: scripts/test_zusatzspalten.py, Klasse MaskenVersatz.
-        zusatz_parts = []
+        # ⚠️ Die float32-Matrix fuer die Seeds entsteht HIER aus den
+        # Roh-Features — dieselben Zeilen in derselben Reihenfolge wie die
+        # float64-Baseline-Matrix oben (r[3][mask] je Aufnahme, Aufnahmen
+        # ohne Zeilen uebersprungen), diesmal mit dem Zusatzblock in EINER
+        # vorbelegten Matrix statt np.hstack aus zwei. Bis 2026-09-16 lag
+        # hier die float32-Basis (11 GB) erst neben ihrer sklearn-float64-
+        # Kopie und dann neben der hstack-Kopie.
+        _basis_parts, zusatz_parts = [], []
         for r, mask, n in zip(train_recs, keep_masks, rec_lengths_train):
             if n <= 0:
                 continue
+            _basis_parts.append(r[3][mask])
             zusatz_parts.append(_prod_zusatz(r[3], r[0])[mask])
-        zusatz_train = (np.concatenate(zusatz_parts) if zusatz_parts
-                        else np.zeros((len(X_train), 0), dtype=np.float32))
-        X_train_ch = np.hstack([X_train, zusatz_train])
-        if not args.co_train:
-            # ⚠️ X_train (1282 Spalten, 12 GB) ist ab hier tot: die
-            # Seeds, das Ensemble und die Voll-Anpassung arbeiten auf
-            # X_train_ch bzw. den Roh-Features je Aufnahme. Nur --co-train
-            # liest sie noch. Alles andere fragt nur noch `.shape[1]`
-            # (hasattr-gesichert), deshalb ein leerer Platzhalter mit
-            # derselben Breite statt `del`. Bis 2026-09-16 lag die Matrix
-            # als zweite volle Kopie bis zum Prozessende im Speicher.
-            X_train = np.empty((0, X_train.shape[1]), dtype=X_train.dtype)
-            del zusatz_train
-            gc.collect()
+        X_train_ch = (_gestapelt(_basis_parts, np.float32, zusatz_parts, freigeben=True)
+                      if _basis_parts
+                      else np.empty((0, _base_dim), dtype=np.float32))
+        del _basis_parts, zusatz_parts
+        gc.collect()
+        if len(X_train_ch) != len(y_train):
+            raise RuntimeError(
+                f"Trainingsmatrix {len(X_train_ch)} Zeilen, Labels {len(y_train)} — "
+                f"die neu gestapelten Teilstuecke passen nicht zur Baseline-Matrix")
+        if args.co_train:
+            # --co-train liest die Basis-Spalten: Sicht auf dieselbe Matrix.
+            X_train = X_train_ch[:, :_base_dim]
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
               f"({n_chan if wants_kanal else 'KEINE'} channels"
@@ -6482,7 +6527,15 @@ def main():
 
     # Refit on ALL data before writing head.bin (validation told us
     # it works; ship the full-data model).
-    if args.final_on_all and test_recs:
+    # ⚠️ Nur noch, wenn die LogReg selbst der Produktionskopf ist. Auf dem
+    # MLP-Pfad diente dieser Voll-Fit (3,1 Mio x 1282 float64 = 32 GB, nach
+    # den Umbauten der groesste Einzelposten des Laufs) zuletzt allein dem
+    # Unsicherheits-Bericht — der rechnet seit 2026-09-16 mit dem deployten
+    # MLP (Simons Entscheid). `weights`/`bias` unten kommen dann aus der
+    # Train-Baseline und werden auf dem MLP-Pfad nie geschrieben
+    # (dieselbe Bedingung wie is_mlp_write).
+    _logreg_ist_produktion = not (wants_mlp and mlp_prod_clf is not None)
+    if args.final_on_all and test_recs and _logreg_ist_produktion:
         print("\nrefitting on all data for production head...")
         # Bootstrap recordings (no slug at extract → optional feature
         # columns absent) have narrower X than full-feature recordings
@@ -6730,6 +6783,23 @@ def main():
 
         _mult_hist = {1: 0, 2: 0, 3: 0}
         _budget = 0
+        # Unsicherheit aus dem DEPLOYTEN Kopf (Simons Entscheid 2026-09-16).
+        # Bis dahin kam sie aus einer eigens nachgezogenen logistischen
+        # Regression ueber alle Aufnahmen — einem Modell, das nie in
+        # Produktion lief. Dieselbe Zusatzspalten-Bildung und Kanalkarte wie
+        # der ausgelieferte Kopf, dieselbe Platt-Kalibrierung wie
+        # head.calibration.json (nur wenn sie dort "applied" ist).
+        _unc_mlp = (wants_mlp and mlp_prod_clf is not None
+                    and mlp_prod_chan_slugs is not None)
+        if _unc_mlp:
+            _unc_chan_idx = {s_: i for i, s_ in enumerate(mlp_prod_chan_slugs)}
+            _unc_n_chan = len(mlp_prod_chan_slugs)
+            _unc_cal = (calibration if (calibration and calibration.get("applied"))
+                        else None)
+        print(f"active-learning: Unsicherheit aus "
+              f"{'dem deployten MLP' if _unc_mlp else 'der LogReg'}"
+              + (f", Platt A={_unc_cal['A']:+.3f} B={_unc_cal['B']:+.3f}"
+                 if _unc_mlp and _unc_cal else ", unkalibriert"), flush=True)
         skipped_logo = 0
         skipped_whisper = 0
         emitted = 0
@@ -6746,15 +6816,29 @@ def main():
                 # at extract time) up to clf's expected dim so
                 # predict_proba doesn't throw. Same defensive pattern
                 # as the Phase B inference site below.
-                expected_dim = clf.coef_.shape[1]
-                if X.shape[1] < expected_dim:
-                    X = np.concatenate([X, np.full(
-                        (X.shape[0], expected_dim - X.shape[1]),
-                        0.5, dtype=X.dtype)], axis=1)
-                # Use calibrated probabilities so "uncertainty"
-                # reflects the model's true confidence, not the
-                # over-confidence of an uncalibrated logistic head.
-                proba = calibrated_proba(X)
+                if _unc_mlp:
+                    if X.shape[1] < _base_dim:
+                        X = np.concatenate([X, np.full(
+                            (X.shape[0], _base_dim - X.shape[1]),
+                            0.5, dtype=X.dtype)], axis=1)
+                    Xa = _gestapelt([X], np.float32,
+                                    [_prod_zusatz(X, uuid, _unc_chan_idx, _unc_n_chan)])
+                    proba = mlp_prod_clf.predict_proba(Xa)[:, 1]
+                    if _unc_cal is not None:
+                        _pc = np.clip(proba, 1e-6, 1.0 - 1e-6)
+                        _lg = np.log(_pc / (1.0 - _pc))
+                        proba = 1.0 / (1.0 + np.exp(-(_unc_cal["A"] * _lg + _unc_cal["B"])))
+                    del Xa
+                else:
+                    expected_dim = clf.coef_.shape[1]
+                    if X.shape[1] < expected_dim:
+                        X = np.concatenate([X, np.full(
+                            (X.shape[0], expected_dim - X.shape[1]),
+                            0.5, dtype=X.dtype)], axis=1)
+                    # Use calibrated probabilities so "uncertainty"
+                    # reflects the model's true confidence, not the
+                    # over-confidence of an uncalibrated logistic head.
+                    proba = calibrated_proba(X)
                 n = len(proba)
                 # Filter 1 — logo-sentinel strip. Frames whose logo
                 # column was the NaN sentinel (= extract_logo silently

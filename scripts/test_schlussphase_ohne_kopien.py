@@ -69,6 +69,14 @@ class Gestapelt(unittest.TestCase):
     def test_leer(self):
         self.assertEqual(gestapelt([], np.float32).shape, (0, 0))
 
+    def test_freigeben_liefert_dasselbe_und_leert_die_liste(self):
+        b = self._bloecke(np.float32)
+        soll = np.concatenate(b)
+        liste = list(b)
+        ist = gestapelt(liste, np.float64, freigeben=True)
+        self.assertTrue(np.array_equal(ist, soll.astype(np.float64)))
+        self.assertTrue(all(x is None for x in liste), "Teile muessen freigegeben sein")
+
 
 class VorhersageBlockweise(unittest.TestCase):
     def test_gleich_wie_am_stueck(self):
@@ -118,7 +126,10 @@ class QuelltextWache(unittest.TestCase):
         self.assertNotIn("X_all_ch = X_all_ch[nz]", self.CODE)
         self.assertNotIn("X_all = np.concatenate([r[3] for r in keep])", self.CODE)
         self.assertNotIn("full_acc = (clf.predict(X_all) == y_all).mean()", self.CODE)
-        self.assertEqual(self.CODE.count("_gestapelt("), 3, "zwei Aufrufe + Definition")
+        # Die beiden Aufrufe der Schlussphase muessen da sein (weitere kamen
+        # spaeter fuer die Seed-Phase dazu — nicht zaehlen, sondern benennen).
+        self.assertIn("X_all = _gestapelt([r[3] for r in keep], np.float64)", self.CODE)
+        self.assertIn("X_all_ch = _gestapelt([r[3] for r in keep_all], np.float32, _zus)", self.CODE)
 
 
 if __name__ == "__main__":

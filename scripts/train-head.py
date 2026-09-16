@@ -24,6 +24,7 @@ re-extracted).
 import argparse
 import concurrent.futures as cf
 import gc
+import resource
 import hashlib
 import json
 import os
@@ -88,6 +89,17 @@ import onnxruntime as ort
 # look up the recording's channel slug → idx; one-hot column at idx
 # equals 1.0, all others 0.0. Unknown slug → all-zero one-hot
 # (model degrades gracefully to "channel-agnostic" prediction).
+
+def _gipfel_gb():
+    """Hoechster Speicherbedarf dieses Prozesses bisher, in GB.
+
+    ⚠️ Gehoert ins Log, weil ein Lauf sonst erst auffaellt, wenn er stirbt:
+    am 2026-09-16 kam SIGKILL ohne Vorwarnung nach 2 h 44, kurz vor der
+    Gate-Entscheidung. macOS liefert ru_maxrss in BYTE, Linux in Kilobyte.
+    """
+    m = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return m / 2**30 if sys.platform == "darwin" else m / 2**20
+
 def write_mlp_head_v1(path, mlp, *, input_dim, hidden_dim,
                       backbone_dim=1280, n_logo=0, n_audio=0,
                       n_channel=0):
@@ -4661,6 +4673,19 @@ def main():
     X_train = np.concatenate(X_train_parts) if X_train_parts else np.empty((0, per_rec[0][3].shape[1]))
     y_train = np.concatenate(y_train_parts) if y_train_parts else np.empty(0)
     sw_train = np.concatenate(sw_train_parts) if sw_train_parts else np.empty(0)
+    # ⚠️ Die Merkmals-Teilstuecke sind ab hier tot — aber sie halten eine
+    # ZWEITE vollstaendige Kopie der Trainingsmatrix. Stand 2026-09-16:
+    # 2 354 470 x 1282 float32 = 12 GB, die den ganzen restlichen Lauf
+    # belegt bleiben. In der Nacht zum 16.09. hat der Speicher-Waechter
+    # den Lauf deshalb nach 2 h 44 mit SIGKILL beendet, kurz VOR der
+    # Gate-Entscheidung: Gipfel 38 GB RSS und 55 GB Swap auf 64 GB RAM,
+    # obwohl nichts anderes lief. Der Korpus waechst taeglich, der Abstand
+    # zur Grenze schrumpft also von allein.
+    #
+    # y_/sw_train_parts bleiben absichtlich stehen: sie sind winzig und
+    # werden unten noch gelesen (Zeilenlaengen je Aufnahme, Gewichts-Dump).
+    del X_train_parts
+    gc.collect()
     # ⚠️ FINGERABDRUCK DER TRAININGSMATRIX. Zwei Laeufe mit identischem
     # Korpus, Labels, Gewichten, Lehrer und Auswertungsgrundlage lagen am
     # 2026-09-12 trotzdem 0.0116 auseinander (§3ar). Der Fit-Kern ist
@@ -4679,6 +4704,8 @@ def main():
         print(f"matrix-fingerprint: X={_fp(X_train)} y={_fp(y_train)} "
               f"sw={_fp(sw_train)} shape={X_train.shape} "
               f"sw_summe={float(sw_train.sum()):.6f}", flush=True)
+        print(f"speicher: Matrix {X_train.nbytes / 2**30:.1f} GB, "
+              f"Gipfel bis hierher {_gipfel_gb():.1f} GB", flush=True)
         # ⚠️ Und je Aufnahme, damit ein Unterschied eine ADRESSE hat.
         # Am 2026-09-12 waren X und y bit-gleich und nur sw verschieden
         # (Summe 3003004 gegen 3002999) — ohne diese Aufschluesselung

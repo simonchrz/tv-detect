@@ -90,6 +90,45 @@ import onnxruntime as ort
 # equals 1.0, all others 0.0. Unknown slug → all-zero one-hot
 # (model degrades gracefully to "channel-agnostic" prediction).
 
+def _gestapelt(bloecke, dtype, zusaetze=None):
+    """Zeilenbloecke in EINE vorbelegte Matrix schreiben, statt sie erst als
+    Liste zu sammeln und dann zu verketten.
+
+    ⚠️ np.concatenate ueber eine Liste von Teilen haelt am Gipfel BEIDES:
+    die Teile und die fertige Matrix — bei 3,1 Mio x 1282 float32 rund
+    2 x 16 GB. Vorbelegen und blockweise fuellen kostet einmal 16 GB. Die
+    Werte sind dieselben (test_schlussphase_ohne_kopien.py); ein
+    Typwechsel beim Zuweisen (float32 -> float64 exakt, float64 -> float32
+    dieselbe Rundung wie astype) ebenfalls.
+    `zusaetze`: je Block ein Zusatzblock mit gleicher Zeilenzahl, der rechts
+    angehaengt wird (frueher np.hstack je Aufnahme).
+    """
+    if not bloecke:
+        return np.empty((0, 0), dtype=dtype)
+    breite = bloecke[0].shape[1]
+    k = zusaetze[0].shape[1] if zusaetze else 0
+    n = sum(len(b) for b in bloecke)
+    aus = np.empty((n, breite + k), dtype=dtype)
+    lo = 0
+    for i, b in enumerate(bloecke):
+        hi = lo + len(b)
+        aus[lo:hi, :breite] = b
+        if k:
+            aus[lo:hi, breite:] = zusaetze[i]
+        lo = hi
+    return aus
+
+
+def _vorhersage_blockweise(clf, X, block=1 << 18):
+    """clf.predict ueber Zeilenbloecke. sklearn wandelt die Eingabe sonst als
+    Ganzes um (float32 -> float64 = eine zweite 32-GB-Matrix fuer eine
+    Vorhersage). Zeilen sind unabhaengig, das Ergebnis ist dasselbe."""
+    if len(X) == 0:
+        return clf.predict(X)
+    return np.concatenate([clf.predict(X[lo:lo + block])
+                           for lo in range(0, len(X), block)])
+
+
 def _gipfel_gb():
     """Hoechster Speicherbedarf dieses Prozesses bisher, in GB.
 
@@ -6452,11 +6491,24 @@ def main():
         target_dim = max(r[3].shape[1] for r in per_rec)
         keep = [r for r in per_rec if r[3].shape[1] == target_dim
                                     and not (len(r) > 12 and r[12])]
-        X_all = np.concatenate([r[3] for r in keep])
+        # ⚠️ Direkt als float64 vorbelegen. sklearn 1.8 rechnet die
+        # LogisticRegression intern in float64 und kopiert eine float32-
+        # Eingabe deshalb komplett um: bei 3,1 Mio x 1282 lagen dann die
+        # float32-Matrix (16 GB) UND die float64-Kopie (32 GB) nebeneinander,
+        # und predict() kopierte fuer die Vorhersage noch einmal 32 GB.
+        # Jetzt: eine float64-Matrix (32 GB), sklearn uebernimmt sie ohne
+        # Kopie, die Vorhersage laeuft blockweise. float32 -> float64 ist
+        # exakt, die Regression sieht dieselben Zahlen wie vorher.
+        #
+        # Dieser Fit ist KEINE Diagnose, die man weglassen koennte: `clf`
+        # ist danach der Lehrer des Unsicherheits-Berichts
+        # (--surface-uncertain, nachts aktiv) — ohne ihn aenderte sich
+        # dessen Ausgabedatei.
+        X_all = _gestapelt([r[3] for r in keep], np.float64)
         y_all = np.concatenate([r[4] for r in keep])
         clf = LogisticRegression(max_iter=2000, C=1.0, verbose=0)
         clf.fit(X_all, y_all)
-        full_acc = (clf.predict(X_all) == y_all).mean()
+        full_acc = (_vorhersage_blockweise(clf, X_all) == y_all).mean()
         print(f"full-data fit acc {full_acc*100:.1f}% "
               f"({len(keep)}/{len(per_rec)} recs, "
               f"{X_all.shape[0]} frames)")
@@ -6489,18 +6541,17 @@ def main():
         # Zusatzblock je Aufnahme, in derselben Reihenfolge wie die
         # X-Verkettung. Eigene Kanalkarte: der Refit laeuft ueber ALLE
         # Aufnahmen, nicht nur ueber train+test, deshalb prod_chan_idx_all.
-        X_parts = []
-        y_parts = []
-        for r in keep_all:
-            X_parts.append(np.hstack([
-                r[3], _prod_zusatz(r[3], r[0], prod_chan_idx_all,
-                                   n_chan_prod)]).astype(np.float32))
-            y_parts.append(r[4])
-        X_all_ch = np.concatenate(X_parts) if X_parts else np.empty((0, 0))
-        y_all_ch = np.concatenate(y_parts) if y_parts else np.empty(0)
-        # The per-rec hstack parts are a second full corpus copy (~10 GB)
-        # that would otherwise stay referenced through the fit below.
-        del X_parts, y_parts
+        # Zusatzbloecke sind schmal (Kanal/Whisper/Temporal/…) — die duerfen
+        # als Liste stehen. Die breiten Roh-Features werden direkt in die
+        # vorbelegte Matrix geschrieben; frueher lagen hier die
+        # per-Aufnahme-hstack-Teile UND die verkettete Matrix nebeneinander
+        # (2 x ~16 GB am Gipfel).
+        _zus = [_prod_zusatz(r[3], r[0], prod_chan_idx_all, n_chan_prod)
+                for r in keep_all]
+        X_all_ch = _gestapelt([r[3] for r in keep_all], np.float32, _zus)
+        y_all_ch = (np.concatenate([r[4] for r in keep_all]) if keep_all
+                    else np.empty(0))
+        del _zus
         gc.collect()
         # Reconstruct per-frame sample weights from per-rec metadata
         # (= same logic as the train-only fit: user_weight × age decay,
@@ -6534,13 +6585,18 @@ def main():
                 sw_arr[nan_mask] = 0.0
             sw_parts.append(sw_arr)
         sw_all_ch = np.concatenate(sw_parts) if sw_parts else np.empty(0)
-        # Drop weight-0 rows (= rec older than 180 d); they'd just dilute.
+        # Zeilen mit Gewicht 0 (Aufnahme aelter als 180 d, Logo-NaN) bleiben
+        # in der Matrix STEHEN. Bis 2026-09-16 wurden sie hier mit
+        # `X_all_ch = X_all_ch[nz]` herausgeschnitten — eine vollstaendige
+        # Kopie der 16-GB-Matrix. WeightedMLP.fit laesst Gewicht-0-Zeilen
+        # seit dem Umbau am selben Tag selbst weg, in derselben Reihenfolge
+        # und mit demselben Zufallsstrom (test_schlussphase_ohne_kopien.py:
+        # fit(X, y, w) == fit(X[nz], y[nz], w[nz])). Nur die Genauigkeits-
+        # Zeilen unten rechnen weiter ueber die gewichteten Zeilen, damit die
+        # gemeldeten Zahlen dieselben bleiben.
         nz = sw_all_ch > 0
-        X_all_ch = X_all_ch[nz]
-        y_all_ch = y_all_ch[nz]
-        sw_all_ch = sw_all_ch[nz]
         print(f"\nrefitting MLP on all data for production head...")
-        print(f"  base: {len(X_all_ch)} frames "
+        print(f"  base: {int(nz.sum())} frames "
               f"({len(keep_all)}/{len(per_rec)} recs), "
               f"true sample_weight (no oversample)")
         # Derselbe Seed wie der ausgewaehlte Kopf — sonst waere der
@@ -6564,11 +6620,11 @@ def main():
             _rc.fit(X_all_ch, y_all_ch, sw_all_ch)
             if len(_refit_seeds) > 1:
                 print(f"  Refit Seed {_rs}: acc "
-                      f"{(_rc.predict(X_all_ch) == y_all_ch).mean()*100:.1f}%, "
+                      f"{(_rc.predict(X_all_ch)[nz] == y_all_ch[nz]).mean()*100:.1f}%, "
                       f"epochs {_rc.n_iter_}, loss {_rc.loss_:.4f}")
             _refits.append(_rc)
         mlp_prod_clf = merge_mlp_ensemble(_refits)
-        full_acc = (mlp_prod_clf.predict(X_all_ch) == y_all_ch).mean()
+        full_acc = (mlp_prod_clf.predict(X_all_ch)[nz] == y_all_ch[nz]).mean()
         print(f"  full-data fit acc {full_acc*100:.1f}%, "
               f"epochs {mlp_prod_clf.n_iter_}, "
               f"loss {mlp_prod_clf.loss_:.4f}"

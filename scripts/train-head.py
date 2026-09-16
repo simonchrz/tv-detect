@@ -535,19 +535,33 @@ class WeightedMLP:
         w = (np.ones(len(y), dtype=np.float32) if sample_weight is None
              else np.asarray(sample_weight, dtype=np.float32).ravel())
         keep = w > 0
-        if not keep.all():
-            X, y, w = X[keep], y[keep], w[keep]
-        n = len(y)
+        # ⚠️ ZEILEN-INDIZES statt Kopien. Bis 2026-09-16 standen hier
+        # `X = X[keep]` und `X = X[perm]` — zwei VOLLSTAENDIGE Kopien der
+        # Matrix (je 12 GB bei 2,35 Mio x 1282 float32), je Fit, dreimal pro
+        # Nacht und noch einmal fuer die Voll-Anpassung. Die haben den Lauf
+        # in der Nacht zum 16.09. ueber 64 GB gedrueckt: Gipfel 38 GB RSS
+        # plus 55 GB Swap, SIGKILL vor dem Gate. `keep` greift praktisch
+        # immer, weil Logo-NaN-Frames Gewicht 0 bekommen.
+        #
+        # Bitgleich zur alten Fassung: dieselbe Zeile landet in derselben
+        # Batch-Position, der Zufallsstrom ist unveraendert (permutation(n)
+        # mit demselben n, danach dieselben uniform-/permutation-Aufrufe),
+        # und `X[rows_t[idx]]` liefert dasselbe zusammenhaengende float32-
+        # Feld wie vorher `Xt[idx]` — der Batch-Zugriff war schon immer ein
+        # zufaelliges Zusammensuchen. Belegt in test_mlp_fit_ohne_kopien.py
+        # gegen die woertlich eingefrorene alte Fassung. Materialisiert
+        # wird nur noch der Validierungsanteil (10 %).
+        rows = np.flatnonzero(keep) if not keep.all() else np.arange(len(y))
+        n = len(rows)
         if n == 0:
             raise ValueError("WeightedMLP.fit: no rows with weight > 0")
-        # One shuffled copy; train/val are then contiguous slices (views),
-        # so peak memory is input + this copy — no oversample, no second
-        # sklearn-internal split copy.
         perm = rng.permutation(n)
-        X, y, w = X[perm], y[perm], w[perm]
+        rows = rows[perm]
+        y, w = y[rows], w[rows]
         n_val = max(1, int(n * self.validation_fraction)) if n >= 10 else 0
-        Xt, yt, wt = X[n_val:], y[n_val:], w[n_val:]
-        Xv, yv, wv = X[:n_val], y[:n_val], w[:n_val]
+        rows_t = rows[n_val:]
+        yt, wt = y[n_val:], w[n_val:]
+        Xv, yv, wv = X[rows[:n_val]], y[:n_val], w[:n_val]
 
         d, h = X.shape[1], self.hidden_dim
         bound1 = np.sqrt(6.0 / (d + h))
@@ -580,7 +594,7 @@ class WeightedMLP:
             epoch_wsum = 0.0
             for lo in range(0, nt, self.batch_size):
                 idx = order[lo:lo + self.batch_size]
-                xb, yb, wb = Xt[idx], yt[idx], wt[idx]
+                xb, yb, wb = X[rows_t[idx]], yt[idx], wt[idx]
                 nb = len(idx)
                 z1 = xb @ W1 + b1
                 a1 = np.maximum(z1, 0.0)
@@ -4700,7 +4714,16 @@ def main():
     try:
         import hashlib as _hl
         def _fp(a):
-            return _hl.sha1(np.ascontiguousarray(a).tobytes()).hexdigest()[:12]
+            # Blockweise statt `.tobytes()`: das erzeugte fuer den Hash eine
+            # vollstaendige Byte-Kopie der Matrix (12 GB, zwei Sekunden lang).
+            # Zeilenbloecke eines C-zusammenhaengenden Arrays sind selbst
+            # zusammenhaengend und gehen ohne Kopie in den Puffer; der
+            # Digest ist derselbe (test_mlp_fit_ohne_kopien.py).
+            a = np.ascontiguousarray(a)
+            h = _hl.sha1()
+            for lo in range(0, len(a), 65536):
+                h.update(a[lo:lo + 65536])
+            return h.hexdigest()[:12]
         print(f"matrix-fingerprint: X={_fp(X_train)} y={_fp(y_train)} "
               f"sw={_fp(sw_train)} shape={X_train.shape} "
               f"sw_summe={float(sw_train.sum()):.6f}", flush=True)
@@ -5001,6 +5024,17 @@ def main():
         zusatz_train = (np.concatenate(zusatz_parts) if zusatz_parts
                         else np.zeros((len(X_train), 0), dtype=np.float32))
         X_train_ch = np.hstack([X_train, zusatz_train])
+        if not args.co_train:
+            # ⚠️ X_train (1282 Spalten, 12 GB) ist ab hier tot: die
+            # Seeds, das Ensemble und die Voll-Anpassung arbeiten auf
+            # X_train_ch bzw. den Roh-Features je Aufnahme. Nur --co-train
+            # liest sie noch. Alles andere fragt nur noch `.shape[1]`
+            # (hasattr-gesichert), deshalb ein leerer Platzhalter mit
+            # derselben Breite statt `del`. Bis 2026-09-16 lag die Matrix
+            # als zweite volle Kopie bis zum Prozessende im Speicher.
+            X_train = np.empty((0, X_train.shape[1]), dtype=X_train.dtype)
+            del zusatz_train
+            gc.collect()
         print(f"\n=== --head-arch {args.head_arch}: production fit ===")
         print(f"  base train dim: {X_train_ch.shape[1]} "
               f"({n_chan if wants_kanal else 'KEINE'} channels"
@@ -5191,6 +5225,12 @@ def main():
                 print(f"    {d:+.3f}  {lbl}  ({u})")
         mlp_prod_chan_slugs = prod_chan_slugs
         mlp_prod_in_dim = X_train_ch.shape[1]
+        # ⚠️ Letzter Leser von X_train_ch. Ab hier folgen Auswertungen auf
+        # den Testaufnahmen und die Voll-Anpassung auf X_all_ch — die
+        # 12 GB hier blieben bis 2026-09-16 bis zum Prozessende liegen.
+        del X_train_ch
+        gc.collect()
+        print(f"speicher: Gipfel nach den Seeds {_gipfel_gb():.1f} GB", flush=True)
         # Snapshot the TRAIN-ONLY head now, before --final-on-all rebinds
         # mlp_prod_clf to the all-data refit. This honest (held-out) head is
         # written next to head.bin as head.gate.bin and is what the NEXT run's
@@ -6420,6 +6460,12 @@ def main():
         print(f"full-data fit acc {full_acc*100:.1f}% "
               f"({len(keep)}/{len(per_rec)} recs, "
               f"{X_all.shape[0]} frames)")
+        # ⚠️ X_all (alle Aufnahmen, 1282 Spalten, ~15 GB) diente nur diesem
+        # Diagnose-Fit. Gleich darunter wird X_all_ch aus denselben
+        # Roh-Features noch einmal gebaut — ohne dieses del laegen beide
+        # nebeneinander, plus die Fit-Kopien obendrauf.
+        del X_all, y_all
+        gc.collect()
     weights = clf.coef_.ravel().astype(np.float32)  # (1280,)
     bias = float(clf.intercept_[0])
 
@@ -7655,6 +7701,7 @@ def main():
     # still uploaded the morning's 0.83 regression head that was
     # left in /tmp from before the manual rollback). Pi-state is
     # source of truth when no new head is being shipped.
+    print(f"speicher: Gipfel gesamt {_gipfel_gb():.1f} GB", flush=True)
     return 0 if deploy else 3
 
 

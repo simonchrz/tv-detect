@@ -67,14 +67,14 @@ class CopyOnWriteMapping(unittest.TestCase):
 
 class BaselineUndSeeds(unittest.TestCase):
     def test_baseline_matrix_float64_und_wieder_frei(self):
-        self.assertIn("_gestapelt(X_train_parts, np.float64)", CODE)
+        self.assertIn("_gestapelt(X_train_parts, np.float64, freigeben=True)", CODE)
         self.assertIn("train_pred = _vorhersage_blockweise(clf, X_train)", CODE)
         i = CODE.index("train_pred = _vorhersage_blockweise(clf, X_train)")
         self.assertIn("X_train = np.empty((0, _base_dim), dtype=np.float32)", CODE[i:i + 500])
 
     def test_seed_matrix_aus_rohdaten_ohne_hstack(self):
         self.assertNotIn("X_train_ch = np.hstack", CODE)
-        self.assertIn("_gestapelt(_basis_parts, np.float32, zusatz_parts)", CODE)
+        self.assertIn("_gestapelt(_basis_parts, np.float32, zusatz_parts, freigeben=True)", CODE)
         self.assertIn("len(X_train_ch) != len(y_train)", CODE, "Zeilen-Wache fehlt")
 
 

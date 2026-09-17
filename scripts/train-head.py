@@ -24,6 +24,7 @@ re-extracted).
 import argparse
 import concurrent.futures as cf
 import gc
+import errno
 import resource
 import hashlib
 import json
@@ -151,6 +152,24 @@ def _gipfel_gb():
     """
     m = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return m / 2**30 if sys.platform == "darwin" else m / 2**20
+
+
+def _dateigrenze_anheben(ziel=10240):
+    """Weiche Grenze fuer offene Dateien auf `ziel` heben (nie senken).
+
+    ⚠️ Jede per `mmap_mode` eingespeiste Archiv-Aufnahme haelt einen
+    Dateideskriptor bis zum Laufende (Pythons mmap dupliziert ihn). launchd
+    startet den Nightly mit einer weichen Grenze von 256, ein Terminal mit
+    ueber einer Million. In der Nacht zum 17.09. kamen deshalb nur 245 von
+    604 Archiv-Aufnahmen an -- der Rest scheiterte an EMFILE, still, und der
+    Kopf lernte auf halbem Korpus. Die Messlaeufe davor liefen im Terminal
+    und konnten das nicht sehen. 10240 ist OPEN_MAX auf macOS.
+    """
+    weich, hart = resource.getrlimit(resource.RLIMIT_NOFILE)
+    neu = ziel if hart == resource.RLIM_INFINITY else min(ziel, hart)
+    if weich != resource.RLIM_INFINITY and weich < neu:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (neu, hart))
+    return weich, resource.getrlimit(resource.RLIMIT_NOFILE)[0]
 
 def write_mlp_head_v1(path, mlp, *, input_dim, hidden_dim,
                       backbone_dim=1280, n_logo=0, n_audio=0,
@@ -3002,6 +3021,8 @@ def main():
                     help="UUID-keyed .ts cache populated by tv-thumbs-daemon "
                          "(detect + prefetch). Checked before SMB fallback.")
     args = ap.parse_args()
+    _dg_vor, _dg_nach = _dateigrenze_anheben()
+    print(f"dateigrenze: offene Dateien {_dg_vor} → {_dg_nach}")
 
     # --co-train forces the feature flags it needs (otherwise the
     # column slicing below points at non-existent columns).
@@ -3914,6 +3935,10 @@ def main():
                 z = np.load(npz_path, allow_pickle=False)
                 a_labels = z["labels"]
                 a_meta = json.loads(str(z["meta"]))
+            except OSError as e:
+                if e.errno == errno.EMFILE:
+                    raise  # s. _dateigrenze_anheben: nie still halbieren
+                continue
             except Exception:
                 continue
             if a_meta.get("which", "") in ("auto", "auto-confirm"):
@@ -3930,6 +3955,12 @@ def main():
                 # die lebenden Aufnahmen laufen so schon lange.
                 a_feats = np.load(fnpy, mmap_mode="c")
                 _touch_atime(fnpy)
+            except OSError as e:
+                # EMFILE hat am 17.09. 359 Aufnahmen still verschluckt.
+                # Ein Lauf auf halbem Korpus ist schlimmer als keiner.
+                if e.errno == errno.EMFILE:
+                    raise
+                continue
             except Exception:
                 continue
             if a_feats.shape[0] == 0 or a_feats.shape[0] != len(a_labels):

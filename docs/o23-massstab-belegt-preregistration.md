@@ -28,6 +28,23 @@ eine nachträglich formulierte Frage noch ehrlich ist.
 > bleiben unverändert — betroffen war nur, welcher Nacht eine Zahl
 > zugeschrieben wird, und das vor der ersten beurteilten Zahl.
 
+> ⚠️ **KORREKTUR 2026-09-17, bei 3 gültigen von 10 Nächten, vor jedem Urteil.**
+> Die Spur schreibt eine Zeile je **Lauf**, die Auswertung zählte Zeilen —
+> registriert sind **Nächte**. Drei Speicher-Messläufe am 16.09. standen so
+> als drei Nächte drin („7/10“). Dazu lief die Nacht zum 17.09. wegen der
+> launchd-Dateigrenze auf halbem Korpus; 8 Gepinnte fehlten, ihr Arm
+> „alle“ war ein Median über 30 statt über 38 — nicht der registrierte Arm.
+>
+> Behoben in `naechte()` (`massstab-audit.py`, von `loop-status.py`
+> mitbenutzt): je Kalendertag zählt die **erste Zeile mit allen 38
+> Gepinnten**. Fällt der Nightly aus, zählt der erste vollständige
+> Nachlauf desselben Tages — so waren der 15. und 16.09. schon behandelt.
+> Die Datei bleibt unverändert, nur die Zählung filtert. Regel, Schwelle und
+> Konsequenz bleiben unverändert. Ehrlich vermerkt: die Zeilenwerte waren
+> sichtbar, aber alle gültigen Kandidaten eines Tages liegen zwischen
+> −0.028 und −0.032; die Wahl „erste statt letzte“ verschiebt nichts, was
+> die Schwelle von 0.010 berührt.
+
 ## Woher die Frage kommt
 
 Jede registrierte Frage von O1 bis O18 wurde am Golden-Median entschieden.

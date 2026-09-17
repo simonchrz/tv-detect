@@ -21,8 +21,9 @@ NIGHTLY = (REPO / "daemon/tv-train-head.sh").read_text()
 def lauf(abstaende):
     f = Path(tempfile.mkdtemp()) / "t.jsonl"
     f.write_text("\n".join(
-        json.dumps({"ts": f"n{i:02d}", "abstand": a})
-        for i, a in enumerate(abstaende)) + "\n")
+        json.dumps(z if isinstance(z, dict) else
+                   {"ts": f"202609{i + 1:02d}T040000", "abstand": z, "n_alle": 38})
+        for i, z in enumerate(abstaende)) + "\n")
     return subprocess.run([sys.executable, str(SKRIPT), "--auswerten",
                            "--trend", str(f)], capture_output=True, text=True)
 
@@ -122,6 +123,33 @@ class DieRegelGreiftAnDerSchwelle(unittest.TestCase):
         b = lauf(basis + [-0.090] * 5).stdout
         self.assertIn("NICHT ERFUELLT", a)
         self.assertIn("NICHT ERFUELLT", b)
+
+
+
+class NaechteNichtLaeufe(unittest.TestCase):
+    """⚠️ Bis 2026-09-17 zaehlte die Auswertung Zeilen. Drei Messlaeufe am
+    16.09. waren drei "Naechte", und die Halb-Korpus-Nacht zum 17.09.
+    (30 statt 38 Gepinnte) zaehlte mit."""
+
+    def test_zweiter_lauf_am_selben_tag_zaehlt_nicht(self):
+        z = [-0.03] * 8 + [{"ts": "20260908T120000", "abstand": -0.03, "n_alle": 38}]
+        r = lauf(z)
+        self.assertIn("8/10", r.stdout)
+        self.assertIn("1 Zeile(n) nicht gezaehlt", r.stdout)
+
+    def test_unvollstaendiger_golden_satz_zaehlt_nicht(self):
+        z = [-0.03] * 9 + [{"ts": "20260920T040000", "abstand": -0.01, "n_alle": 30}]
+        self.assertIn("9/10", lauf(z).stdout)
+
+    def test_erster_vollstaendiger_lauf_des_tages_zaehlt(self):
+        # Nacht unvollstaendig, Nachlauf am Morgen vollstaendig -> der zaehlt.
+        z = [{"ts": "20260901T034605", "abstand": -0.001, "n_alle": 30},
+             {"ts": "20260901T065500", "abstand": -0.030, "n_alle": 38}]
+        z += [{"ts": f"202609{i:02d}T040000", "abstand": -0.030, "n_alle": 38}
+              for i in range(2, 11)]
+        r = lauf(z)
+        self.assertIn("NICHT ERFUELLT", r.stdout)
+        self.assertIn("20260901T065500", r.stdout)
 
 
 if __name__ == "__main__":

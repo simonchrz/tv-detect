@@ -359,6 +359,16 @@ def main():
         # wer den Abstand nach drei Naechten sieht, kann Regel und Wunsch
         # nicht mehr trennen. Erst nach N Naechten erscheinen Zahlen.
         N_SOLL = 10
+        # Dieselbe Nachtzaehlung wie die Auswertung (eine Zeile je Tag, nur
+        # alle 38 Gepinnten) -- bis 2026-09-17 zaehlte dieser Block Laeufe.
+        try:
+            import importlib.util as _ilu
+            _s = _ilu.spec_from_file_location(
+                "massstab_audit", Path(__file__).resolve().parent / "massstab-audit.py")
+            _ma = _ilu.module_from_spec(_s); _s.loader.exec_module(_ma)
+            alle_zeilen = _ma.naechte(alle_zeilen)
+        except Exception as e:
+            print(f"\nMassstab: Nachtzaehlung nicht ladbar ({e})")
         if alle_zeilen and len(alle_zeilen) < N_SOLL:
             j = alle_zeilen[-1]
             g = (j.get("eimer") or {}).get("golden") or {}

@@ -205,6 +205,33 @@ def trend_schreiben(pfad, ts, bericht, alle, menschlich):
 
 N_SOLL = 10          # Naechte, docs/o23-massstab-belegt-preregistration.md
 SCHWELLE = 0.010     # Aenderung des Abstands zwischen erster und zweiter Haelfte
+N_GOLDEN = 38        # "Median ueber alle 38 Gepinnten" -- Arm "alle" der Registrierung
+
+
+def naechte(zeilen):
+    """Die Zeilen, die als Naechte von O23 zaehlen.
+
+    ⚠️ Die Spur schreibt eine Zeile je LAUF, registriert sind NAECHTE. Bis
+    2026-09-17 zaehlte die Auswertung Zeilen: drei Messlaeufe am 16.09.
+    standen als drei Naechte drin. Und die Nacht zum 17.09. lief auf
+    halbem Korpus (Dateigrenze), 8 Gepinnte fehlten -- ihr "alle" war ein
+    Median ueber 30, nicht ueber 38, also ein anderer Arm.
+
+    Regel, festgelegt bevor die zehnte Nacht da ist: je Kalendertag zaehlt
+    die ERSTE Zeile mit allen 38 Gepinnten. Faellt der Nightly aus, zaehlt
+    der erste vollstaendige Nachlauf desselben Tages -- so wurden der 15.
+    und der 16.09. schon behandelt. Die Datei bleibt unveraendert.
+    """
+    tage, aus = set(), []
+    for e in zeilen:
+        if e.get("n_alle") != N_GOLDEN:
+            continue
+        tag = str(e.get("ts", ""))[:8]
+        if tag in tage:
+            continue
+        tage.add(tag)
+        aus.append(e)
+    return aus
 
 
 def auswerten(pfad):
@@ -230,6 +257,11 @@ def auswerten(pfad):
             zeilen.append(json.loads(z))
         except Exception:
             pass
+    n_zeilen = len(zeilen)
+    zeilen = naechte(zeilen)
+    if n_zeilen != len(zeilen):
+        print(f"O23: {n_zeilen - len(zeilen)} Zeile(n) nicht gezaehlt "
+              f"(zweiter Lauf desselben Tages oder nicht alle {N_GOLDEN} Gepinnten).")
     if len(zeilen) < N_SOLL:
         print(f"O23 (Massstab belegt gegen alle): {len(zeilen)}/{N_SOLL} "
               f"Naechte — kein Zwischenstand, so registriert.")

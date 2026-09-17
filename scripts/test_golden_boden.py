@@ -149,9 +149,10 @@ class GoldenBoden(unittest.TestCase):
             cand=0.898, champ=0.899)
         self.assertTrue(deploy, "abgelehnter Kandidat wurde als Bestwert benutzt")
 
-    def test_unvollstaendiger_satz_gatet_nicht(self):
-        """Fehlt eine gepinnte Aufnahme, ist der Median nicht
-        komposition-konstant — dann darf er nicht gaten."""
+    def test_unvollstaendiger_satz_blockt(self):
+        """Fehlt eine gepinnte Aufnahme, ist der Lauf nicht pruefbar — dann
+        bleibt der Champion. Bis 2026-09-17 liess der Boden hier durch, und
+        genau so ging der Halb-Korpus-Kopf raus."""
         with tempfile.TemporaryDirectory() as tmp:
             p, uuids = archiv(tmp, [{"ts": "n1", "golden_median": 0.915,
                                      "deployed": True, "set_hash": HASH}])
@@ -161,8 +162,22 @@ class GoldenBoden(unittest.TestCase):
             deploy, _, = _th.golden_boden(
                 True, "x", golden_floor=0.010, train_archive=str(p),
                 cand_pr=cand, champ_pr=prio(uuids, 0.900), melde=zeilen.append)
-            self.assertTrue(deploy)
-            self.assertIn("komposition-konstant", "\n".join(zeilen))
+            self.assertFalse(deploy)
+            self.assertIn("Champion bleibt", "\n".join(zeilen))
+            self.assertIn(uuids[0], "\n".join(zeilen))
+
+    def test_unvollstaendiger_satz_blockt_auch_bei_gutem_wert(self):
+        # Der Wert ueber die verbliebenen ist nicht der Punkt — der Lauf ist es.
+        with tempfile.TemporaryDirectory() as tmp:
+            p, uuids = archiv(tmp, [{"ts": "n1", "golden_median": 0.900,
+                                     "deployed": True, "set_hash": HASH}])
+            cand = prio(uuids, 0.999)
+            del cand[uuids[0]]
+            deploy, grund = _th.golden_boden(
+                True, "x", golden_floor=0.010, train_archive=str(p),
+                cand_pr=cand, champ_pr={}, melde=lambda z: None)
+            self.assertFalse(deploy)
+            self.assertIn("GOLDEN-BODEN", grund)
 
     def test_eintraege_mit_missing_zaehlen_nicht(self):
         """Ein frueherer Eintrag, der selbst nicht komposition-konstant war,
@@ -186,6 +201,45 @@ class GoldenBoden(unittest.TestCase):
         self.assertTrue(deploy)
         self.assertEqual(log, "")
 
+
+
+class KorpusWache(unittest.TestCase):
+    """Die Nacht zum 2026-09-17 als Zahlen: 400+72 gegen 682+132."""
+
+    HIST = [{"deployed": True, "n_train_recs": 682, "n_test_recs": 132}] * 3
+
+    def w(self, n, deploy=True, hist=None):
+        return _th.korpus_wache(deploy, "x", history=self.HIST if hist is None else hist,
+                                cur_total_n=n, melde=lambda z: None)
+
+    def test_halber_korpus_blockt(self):
+        deploy, grund = self.w(472)
+        self.assertFalse(deploy)
+        self.assertIn("KORPUS-WACHE", grund)
+
+    def test_normaler_korpus_passiert(self):
+        self.assertTrue(self.w(819)[0])
+
+    def test_knapp_ueber_dem_boden_passiert(self):
+        self.assertTrue(self.w(int(814 * 0.85))[0])
+
+    def test_ohne_historie_keine_meinung(self):
+        self.assertTrue(self.w(10, hist=[])[0])
+
+    def test_abgelehnte_zaehlen_nicht(self):
+        hist = self.HIST + [{"deployed": False, "n_train_recs": 5000, "n_test_recs": 0}]
+        self.assertTrue(self.w(819, hist=hist)[0])
+
+    def test_ablehnung_bleibt_ablehnung(self):
+        self.assertFalse(self.w(819, deploy=False)[0])
+
+    def test_sitzt_vor_dem_golden_boden_fuer_jeden_zweig(self):
+        src = (Path(__file__).resolve().parent / "train-head.py").read_text()
+        i = src.index("deploy, reason = korpus_wache(")
+        self.assertLess(i, src.index("deploy, reason = golden_boden("))
+        # hinter der ganzen Gate-Verzweigung, nicht in einem ihrer Zweige
+        self.assertTrue(src[:i].rstrip().endswith("")
+                        and src[src.rindex("\n", 0, i) + 1:i] == "    ")
 
 
 class GoldenStau(unittest.TestCase):

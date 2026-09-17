@@ -2471,13 +2471,24 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
 
         # ⚠️ Komposition-Konstanz ist die ganze Geschaeftsgrundlage dieser
         # Zahl. Fehlt auch nur eine gepinnte Aufnahme, ist der Median mit
-        # frueheren Naechten NICHT vergleichbar — dann darf er auch nicht
-        # gaten. Lieber nicht pruefen als falsch pruefen.
+        # frueheren Naechten NICHT vergleichbar.
+        #
+        # Bis 2026-09-17 hiess das "dann nicht pruefen" — und damit deployen.
+        # In der Nacht zum 17.09. fehlten 8 Gepinnte, weil der Lauf an der
+        # launchd-Dateigrenze nur den halben Korpus geladen hatte; genau
+        # dieser Kopf ging ungeprueft raus. Fehlende Gepinnte sind ein
+        # Befund ueber den LAUF, nicht nur ueber die Zahl: nicht deployen.
+        # Faellt eine Gepinnte dauerhaft weg, steht der Champion, bis der
+        # Satz bewusst neu gepinnt ist (Simon, 2026-09-17).
         fehlend = sorted(golden - set(cand_pr))
         if fehlend:
-            melde(f"  Golden-Boden: uebersprungen — {len(fehlend)} gepinnte "
-                  f"Aufnahme(n) fehlen heute, Median nicht komposition-konstant")
-            return deploy, reason
+            melde(f"  Golden-Boden: {len(fehlend)} gepinnte Aufnahme(n) fehlen "
+                  f"heute ({', '.join(fehlend[:3])}"
+                  f"{' …' if len(fehlend) > 3 else ''}) — nicht pruefbar, "
+                  f"Champion bleibt. Dauerhaft weg? Dann Satz neu pinnen.")
+            return False, (reason + f" — ABER GOLDEN-BODEN: {len(fehlend)} "
+                           f"gepinnte Aufnahme(n) fehlen, Lauf nicht "
+                           f"pruefbar — Champion bleibt")
 
         g_cand = float(np.median([cand_pr[u] for u in golden]))
         # Champion im GLEICHEN Lauf auf denselben Aufnahmen — ehrlicher als
@@ -2537,6 +2548,36 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
         # Ein kaputter Boden darf keinen Lauf verhindern; er darf nur nicht
         # stillschweigend nichts tun.
         melde(f"  Golden-Boden: nicht auswertbar ({e}) — Gate unveraendert")
+    return deploy, reason
+
+
+KORPUS_BODEN = 0.85  # heutiger Gesamtkorpus >= 85 % des Medians der letzten 3 Deploys
+
+
+def korpus_wache(deploy, reason, *, history, cur_total_n, melde=print):
+    """Nicht auf geschrumpftem Korpus deployen — egal, welcher Zweig entschied.
+
+    ⚠️ Dieselbe Pruefung stand seit Mai im Gate, aber nur im Zweig "Testsatz
+    geaendert, kein Paarvergleich". Seit es den Paarvergleich gibt, lief sie
+    praktisch nie. In der Nacht zum 17.09. lernte der Kopf auf 400+72 statt
+    682+132 Aufnahmen (launchd-Dateigrenze), der Paarvergleich auf den 72
+    verbliebenen fand keinen Unterschied, und er ging raus.
+    """
+    if not deploy:
+        return deploy, reason
+    frueher = [h.get("n_train_recs", 0) + h.get("n_test_recs", 0)
+               for h in [h for h in reversed(history) if h.get("deployed")][:3]
+               if h.get("n_train_recs", 0)]
+    if not frueher:
+        return deploy, reason
+    med = sorted(frueher)[len(frueher) // 2]
+    boden = int(med * KORPUS_BODEN)
+    if cur_total_n < boden:
+        melde(f"  Korpus-Wache: {cur_total_n} Aufnahmen < {boden} "
+              f"({int(KORPUS_BODEN * 100)} % von {med}) — Champion bleibt")
+        return False, (reason + f" — ABER KORPUS-WACHE: {cur_total_n} "
+                       f"Aufnahmen statt ~{med} — Champion bleibt")
+    melde(f"  Korpus-Wache: {cur_total_n} Aufnahmen (Boden {boden}) — passiert")
     return deploy, reason
 
 
@@ -7603,6 +7644,9 @@ def main():
         except Exception as _ge:
             print(f"  golden-eval failed: {_ge}")
 
+    deploy, reason = korpus_wache(
+        deploy, reason, history=history,
+        cur_total_n=len(train_recs) + len(test_recs))
     deploy, reason = golden_boden(
         deploy, reason,
         golden_floor=args.golden_floor,

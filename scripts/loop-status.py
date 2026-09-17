@@ -219,7 +219,11 @@ def main():
             print("  ⚠ Nicht alle Zeilen teilen Satz UND Decoder — die "
                   "Mediane sind NICHT direkt vergleichbar.")
         deployt = [e for e in zeilen(args.archiv / "golden-trend.jsonl")
-                   if e.get("deployed") and e.get("golden_median")]
+                   if e.get("deployed") and e.get("golden_median")
+                   # wie golden_bestwert(): Zeilen mit fehlenden Gepinnten
+                   # sind nicht komposition-konstant (17.09.: n=30-Kopf
+                   # stand hier als "Champion 0.9782")
+                   and not e.get("missing")]
         if deployt:
             hash_jetzt = gt[-1].get("set_hash")
             dec_jetzt = gt[-1].get("decoder")

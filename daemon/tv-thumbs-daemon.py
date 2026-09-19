@@ -561,6 +561,24 @@ def _freier_platz_gb(pfad):
     return st.f_bavail * st.f_frsize / 1024 ** 3
 
 
+def _atime_auffrischen(p):
+    """Zugriffszeit fuer die LRU-Raeumung setzen, die mtime NICHT anfassen.
+
+    ⚠️ Bis 2026-09-19 stand hier `cache_path.touch()`. touch() setzt atime
+    UND mtime -- und die mtime der Quell-.ts ist der Schluessel des
+    Merkmals-Caches (`<uuid>-<mtime>-fps…npy`, train-head.py). Jeder
+    Cache-Treffer (Dump-Kampagne, Detect, Remux) machte die Aufnahme damit
+    fuer das naechste Training "neu": 54 Neu-Extraktionen in der Nacht zum
+    18.09., 103 (89 Minuten) in der zum 19.09., bei identischem Inhalt.
+    Die Raeumung sortiert nur nach atime, die mtime braucht sie nicht.
+    """
+    try:
+        st = os.stat(p)
+        os.utime(p, (time.time(), st.st_mtime))
+    except OSError:
+        pass
+
+
 def _maybe_evict_source_cache():
     """Quellen aufheben, solange Platz da ist (Simons Entscheid 2026-09-08).
 
@@ -1310,8 +1328,7 @@ def get_source(uuid):
                       f"for {uuid}", flush=True)
             # fall through to the cold-fetch path below
         else:
-            try: cache_path.touch()  # update atime for LRU
-            except Exception: pass
+            _atime_auffrischen(cache_path)  # nur atime, fuer die LRU-Raeumung
             return cache_path
     if cache_path.exists():
         try: cache_path.unlink()  # stub from a half-finished fetch

@@ -97,7 +97,9 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 
 ### O23 — Misst der belegbare Maßstab etwas anderes als der ganze?
 
-*Status: **LÄUFT seit 2026-09-14**, 1/10 Nächte. Registrierung:
+*Status: **LÄUFT seit 2026-09-14**, 8/10 gültige Nächte (Stand 2026-09-21;
+gezählt nach `naechte()`: je Kalendertag die erste Zeile mit allen 38
+Gepinnten — der Halbkorpus-Lauf vom 17.09. zählt nicht). Registrierung:
 `docs/o23-massstab-belegt-preregistration.md`. Kostet keine Rechenzeit —
 zwei Teilmengen derselben `per-rec-iou`-Datei.*
 

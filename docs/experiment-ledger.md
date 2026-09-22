@@ -118,6 +118,20 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O24 — Bringen die Cluster-Anker dem Training belegbar etwas?
+
+*Status: **REGISTRIERT 2026-09-22, `serie_ab` 20260923** — Tagesserie, erst
+nach dem O23-Urteil starten. Registrierung:
+`docs/o24-cluster-anker-preregistration.md`. Nightly bleibt bis zum Urteil
+auf `--cluster-anker alt` (Vorgabe, bitgleich).*
+
+*Anlass: die Anker sind per Konstruktion kein unabhängiger Beleg
+(Fingerprints entstehen IN den Label-Blöcken; 99.0 % gegen Menschen-Labels
+misst Staleness), sie wirken in Gate-Fit, Refit und Serien je verschieden
+(bool-Masken-Kopie vor der Mutation), und ihr einziger Widerspruch zu einem
+Menschen-Label war ein veralteter Fingerprint über reiner Sendung (CSI,
+Golden-Satz). Nicht erfüllt → `aus` ins Nightly und Code entfernen.*
+
 ### O17 — Zählt das Training die richtigen Labels als menschlich?
 
 *Status: **ENTSCHIEDEN 2026-09-06, REGEL NICHT ERFÜLLT.** Median **+0.0032**

@@ -2678,6 +2678,15 @@ def main():
                          "Quelle behalten es. Vorgabe AUS = heutiges "
                          "Verhalten; siehe docs/o17-labelherkunft-"
                          "preregistration.md")
+    ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="alt",
+                    help="O24: was die cluster_anchored-Spannen im Training "
+                         "tun. alt = heutiges Verhalten, bitgleich (Label "
+                         "auf Werbung + 1.5x Gewicht, wirkt aber je Fit "
+                         "VERSCHIEDEN, siehe Kommentar an der Anwendung). "
+                         "aus = keine Wirkung in keinem Fit; eingelesen und "
+                         "archiviert wird weiter, damit sich der Korpus "
+                         "nicht verschiebt. Siehe docs/o24-cluster-anker-"
+                         "preregistration.md")
     ap.add_argument("--user-weight", type=float, default=2.0,
                     help="sample-weight multiplier applied to frames "
                          "from recordings that have an ads_user.json. "
@@ -4765,11 +4774,26 @@ def main():
         # Cluster-anchored ad spots: each entry is a time span whose
         # audio+visual fingerprint matched a known ≥3-member family.
         # Force label=1 in that span and boost weight to 1.5× — same
-        # treatment as user skip-presses. For unreviewed recordings
-        # (= no ads_user.json) this is the only high-confidence ad
-        # signal we have.
+        # treatment as user skip-presses.
+        #
+        # ⚠️ Gemessen 2026-09-22 (O24): das Label kommt je Fit VERSCHIEDEN an.
+        # `y_train_parts` hat oben schon `r[4][mask]` kopiert (bool-Maske =
+        # Kopie), bevor `yslice` hier mutiert:
+        #   * Produktions-/Gate-Fit (y_train)      -> nur das Gewicht
+        #   * All-Data-Refit (r[4], = head.bin)    -> nur das Label
+        #   * Tages-/Schattenserie (_build_train)  -> Label UND Gewicht
+        # Und die Anker sind kein unabhaengiger Beleg: tv-spot-extract.py
+        # fingerprintet nur INNERHALB der Label-Bloecke. Gegen Menschen-Labels
+        # 99.0 % Praezision — per Konstruktion; alle Widersprueche waren
+        # veraltete Fingerprints (CSI dvr-rtl-1781909700, 21 Anker ueber
+        # reiner Sendung). `--cluster-anker aus` nimmt die Wirkung aus allen
+        # drei Fits; `alt` bleibt bitgleich, bis O24 entschieden ist.
         cluster_anchored = r[13] if len(r) > 13 else []
         cluster_anchor_frames = 0
+        if cluster_anchored and args.cluster_anker == "aus":
+            globals().setdefault("_cluster_anchor_aus", [0])[0] += sum(
+                1 for _ in cluster_anchored)
+            cluster_anchored = []
         if cluster_anchored:
             yslice = r[4]
             for spot in cluster_anchored:
@@ -4805,8 +4829,15 @@ def main():
               f"from /mark-reviewed (1.2× over base weight)")
     _ca_total = globals().get("_cluster_anchor_total", [0])[0]
     if _ca_total:
-        print(f"cluster-anchored: forced ad + 1.5× weight on "
-              f"{_ca_total} frame(s)")
+        # Die alte Zeile sagte "forced ad + 1.5× weight" — das stimmt fuer
+        # KEINEN einzelnen Fit (siehe Kommentar an der Anwendung).
+        print(f"cluster-anchored: {_ca_total} frame(s) — Gate-Fit nur 1.5× "
+              f"Gewicht, Refit nur Label=Werbung, Serien beides "
+              f"(--cluster-anker alt)")
+    _ca_aus = globals().get("_cluster_anchor_aus", [0])[0]
+    if _ca_aus:
+        print(f"cluster-anchored: AUS (--cluster-anker aus) — {_ca_aus} "
+              f"Anker-Spanne(n) eingelesen, in keinem Fit angewandt")
     n_skip = sum(len(r[7]) if len(r) > 7 else 0 for r in train_recs)
     if n_skip:
         print(f"skip-press signals: {n_skip} confirmed-ad frame(s) "
@@ -6149,6 +6180,13 @@ def main():
             _ts_arme["mlp32-cwtmpwm-ist"] = (_arm_prod, 32)
             _ts_arme["mlp32-cwtmpwm-belegt"] = (_arm_prod, 32)
             _ts_arme["mlp32-cwtmpwm-streng"] = (_arm_prod, 32)   # O18
+            # O24: gleiche Architektur, der Unterschied ist --cluster-anker
+            # (wirkt beim Aufbau der Gewichte/Labels, also vor dem Armlauf).
+            # NACKT wie das Nightly (TVH_HEAD_ARCH_OVERRIDE="--head-arch
+            # mlp32" seit O2) — nicht _arm_prod, das ist die Architektur, die
+            # tv-tagesserie.sh per --head-arch vorgibt, aber nicht ausliefert.
+            _ts_arme["mlp32-anker"] = (_ident, 32)
+            _ts_arme["mlp32-ohneanker"] = (_ident, 32)
             _ts_arme["mlp32"] = (_ident, 32)
             _ts_arme["mlp32-cwt-mp"] = (_augment_cwt_minuteprior, 32)
             _ts_arme["mlp32-ct-mp"] = (_augment_ct_minuteprior, 32)

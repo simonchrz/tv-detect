@@ -250,9 +250,18 @@ echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
     --prod-seeds 3 \
     --herkunft-belegt \
     --audio-dynamik \
+    --cluster-anker aus \
     --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-23: --cluster-anker aus (O24, REGEL NICHT ERFUELLT). Registrierte
+# Konsequenz — und zugleich das Ende eines Defekts: seit 2026-05-03 bekam
+# JEDE Live-Aufnahme die Anker der alphabetisch letzten Snapshot-Aufnahme
+# (rec_dir-Restwert in train-head.py), ~97k Frames je Nacht an falschen
+# Stellen; im Refit als Label Werbung. Die Serie mass deshalb Zufalls-Anker
+# gegen keine, nicht die Anker wie gedacht (Nachtrag in der Registrierung).
+# Der Einlesefehler ist behoben; `aus` bleibt, bis eine NEUE Frage die
+# Anker in ihrer richtigen Form belegt.
 # 2026-09-08: --audio-dynamik AN (O22). Die Audio-Spalte trug bis heute
 # den Lautheits-PEGEL und war damit praktisch unbenutzt: die
 # Permutations-Wichtigkeit am deployten Kopf misst 0.0021 Verlust gegen

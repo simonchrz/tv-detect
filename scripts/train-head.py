@@ -2678,9 +2678,10 @@ def main():
                          "Quelle behalten es. Vorgabe AUS = heutiges "
                          "Verhalten; siehe docs/o17-labelherkunft-"
                          "preregistration.md")
-    ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="alt",
-                    help="O24: was die cluster_anchored-Spannen im Training "
-                         "tun. alt = heutiges Verhalten, bitgleich (Label "
+    ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="aus",
+                    help="O24 (entschieden 2026-09-23: aus): was die "
+                         "cluster_anchored-Spannen im Training "
+                         "tun. alt = bisheriges Verhalten (Label "
                          "auf Werbung + 1.5x Gewicht, wirkt aber je Fit "
                          "VERSCHIEDEN, siehe Kommentar an der Anwendung). "
                          "aus = keine Wirkung in keinem Fit; eingelesen und "
@@ -3898,9 +3899,19 @@ def main():
         # but bumps weight at high-confidence frames. For unreviewed:
         # the only high-confidence ad signal we have without manual
         # review.
+        #
+        # ⚠️ `rec_dir_path` aus rec_info, NICHT `rec_dir`. Diese Schleife
+        # setzt `rec_dir` nie; bis 2026-09-23 las die Zeile den Restwert der
+        # Verzeichnis-Schleife oben = das LETZTE Verzeichnis im Snapshot.
+        # Seit Einfuehrung (2026-05-03, 226e6c8) bekam damit JEDE
+        # Live-Aufnahme die Anker einer einzigen fremden Aufnahme (~97k
+        # Frames je Nacht an falschen Stellen), und die Archiv-Regel unten
+        # (`or bool(cluster_anchored)`) war fuer jede Live-Aufnahme wahr —
+        # 163 Eintraege mit rohem Detektor-Label kamen so ins Archiv.
         cluster_anchored = []
-        ca_path = rec_dir / "cluster_anchored.json"
-        if ca_path.is_file():
+        ca_path = (rec_dir_path / "cluster_anchored.json"
+                   if rec_dir_path is not None else None)
+        if ca_path is not None and ca_path.is_file():
             try:
                 cluster_anchored = json.loads(ca_path.read_text()) or []
             except Exception:

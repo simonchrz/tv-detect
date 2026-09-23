@@ -40,8 +40,18 @@ class ClusterAnker(unittest.TestCase):
         y[1:3] = 1
         self.assertEqual(int(kopie.sum()), 0)
 
-    def test_vorgabe_bleibt_alt_bis_o24_entschieden(self):
-        self.assertRegex(QUELL, r'"--cluster-anker", choices=\("alt", "aus"\), default="alt"')
+    def test_vorgabe_ist_aus_seit_o24(self):
+        # O24 am 2026-09-23 NICHT ERFUELLT -> aus. Vorgabe UND Nightly, damit
+        # Tagesserien und Handlaeufe nicht still auf dem alten Stand laufen.
+        self.assertRegex(QUELL, r'"--cluster-anker", choices=\("alt", "aus"\), default="aus"')
+        nightly = (REPO / "daemon/tv-train-head.sh").read_text()
+        self.assertIn("    --cluster-anker aus \\\n", nightly)
+
+    def test_anker_aus_dem_eigenen_verzeichnis(self):
+        # Bis 2026-09-23 las die Zeile `rec_dir`, das diese Schleife nie
+        # setzt: jede Aufnahme bekam die Anker der LETZTEN im Snapshot.
+        self.assertIn('ca_path = (rec_dir_path / "cluster_anchored.json"', QUELL)
+        self.assertNotIn('ca_path = rec_dir / "cluster_anchored.json"', QUELL)
 
     def test_aus_greift_vor_jeder_mutation(self):
         b = _anker_block()
@@ -61,7 +71,7 @@ class ClusterAnker(unittest.TestCase):
         # `aus` schon das Einlesen abschalten, unterschieden sich die Arme im
         # KORPUS statt in der Behandlung.
         self.assertIn("or bool(cluster_anchored))):", QUELL)
-        lese = QUELL.index('ca_path = rec_dir / "cluster_anchored.json"')
+        lese = QUELL.index('ca_path = (rec_dir_path / "cluster_anchored.json"')
         self.assertNotIn("cluster_anker", QUELL[lese - 800:lese + 400])
 
     def test_gewichte_tsv_zeigt_anker_je_aufnahme(self):

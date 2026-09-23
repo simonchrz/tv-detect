@@ -123,11 +123,33 @@ von 22 auf bis zu 51 heben.*
 
 ### O24 — Bringen die Cluster-Anker dem Training belegbar etwas?
 
-*Status: **LÄUFT seit 2026-09-23 08:07** (nach dem O23-Urteil gestartet,
-`com.user.tv-tagesserie`, Seeds 8538,9535,532,1529,2526, Log
-`~/Library/Logs/tv-tagesserie-o24.log`). Registrierung:
-`docs/o24-cluster-anker-preregistration.md`. Nightly bleibt bis zum Urteil
-auf `--cluster-anker alt` (Vorgabe, bitgleich).*
+*Status: **ABGESCHLOSSEN 2026-09-23 — REGEL NICHT ERFÜLLT** (Median +0.0035,
+5/5 positiv, Schwelle +0.010 verfehlt; Tagesserie `20260923T080742`, Seeds
+8538,9535,532,1529,2526, Log `~/Library/Logs/tv-tagesserie-o24.log`).
+Konsequenz umgesetzt: `--cluster-anker aus` im Nightly und als Vorgabe.
+Registrierung: `docs/o24-cluster-anker-preregistration.md`, Abschluss in
+`serien-abschluss.json`.*
+
+*⚠️ **Die Serie hat einen Defekt gemessen, nicht die Frage.** Beim Klären
+des schwankenden Anker-Zählers (29k–97k Frames je Nacht) zeigten die neuen
+Spalten 4/5 in `head.gewichte.tsv`: viele Aufnahmen trugen genau 50 Spannen
+/ 1044 Frames, ihre Snapshot-Dateien aber 39–70. `train-head.py` las
+`cluster_anchored.json` über `rec_dir` — das die Einleseschleife nie setzt;
+es war der Restwert der Verzeichnis-Schleife davor, also die alphabetisch
+LETZTE Snapshot-Aufnahme (am 23.09. `dvr-vox-1790108100`). Seit Einführung
+(2026-05-03, `226e6c8`) bekam jede Live-Aufnahme dieselben fremden Anker:
+~97k Frames je Nacht an falschen Stellen, im Refit (= `head.bin`) als Label
+Werbung. Der mit-Arm war also Zufalls-Anker gegen keine. Die Registrierung
+setzte den Mechanismus als per-Aufnahme voraus; die Regel gilt trotzdem,
+und `aus` ist in beiden Lesarten richtig. Gedeutet wird der Vorsprung des
+mit-Arms nicht. Einlesefehler behoben 2026-09-23.*
+
+*Folgeschäden, noch offen: 163 Archiv-Einträge (18 %) mit rohem
+Detektor-Label (`which=auto`) — sie kamen nur ins Archiv, weil die
+Archiv-Regel `or bool(cluster_anchored)` für jede Live-Aufnahme wahr war.
+Nicht angefasst (L6), erst messen, dann entscheiden. Die Anker in ihrer
+richtigen Form sind UNGEPRÜFT; eine neue Frage bräuchte eine neue
+Registrierung.*
 
 *Anlass: die Anker sind per Konstruktion kein unabhängiger Beleg
 (Fingerprints entstehen IN den Label-Blöcken; 99.0 % gegen Menschen-Labels

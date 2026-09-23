@@ -97,12 +97,15 @@ Sweep zeigt: der Löwenanteil davon ist **Fit-Zufall**, nicht Korpus-Drift.
 
 ### O23 — Misst der belegbare Maßstab etwas anderes als der ganze?
 
-*Status: **LÄUFT seit 2026-09-14**, 9/10 gültige Nächte (Stand 2026-09-22;
-zehnte Nacht faellt auf den 23.09., erst dann wird die Regel angelegt;
-gezählt nach `naechte()`: je Kalendertag die erste Zeile mit allen 38
-Gepinnten — der Halbkorpus-Lauf vom 17.09. zählt nicht). Registrierung:
-`docs/o23-massstab-belegt-preregistration.md`. Kostet keine Rechenzeit —
-zwei Teilmengen derselben `per-rec-iou`-Datei.*
+*Status: **ENTSCHIEDEN 2026-09-23, REGEL NICHT ERFÜLLT — konstanter
+Versatz.** 10/10 gültige Nächte (14.09.–23.09., gezählt nach `naechte()`).
+Abstand Nächte 1–5 Median **−0.0283**, Nächte 6–10 Median **−0.0302**,
+Änderung **−0.0019** (Schwelle 0.010). Vorhersage traf. Konsequenz laut
+Registrierung: der volle Satz bleibt Gate-Grundlage; der Abstand wird
+weiter berichtet, begründet aber keine Umstellung. Registrierung:
+`docs/o23-massstab-belegt-preregistration.md`. Offen bleibt, WELCHER
+Maßstab recht hat — das entscheidet nur Review der 29 reviewbaren
+test-Aufnahmen, keine Statistik.*
 
 *Anlass: der Golden-Satz, an dem O1 bis O18 entschieden wurden, besteht aus
 22 nachweislich menschlich gelabelten, 3 maschinellen und 13 nicht
@@ -120,8 +123,9 @@ von 22 auf bis zu 51 heben.*
 
 ### O24 — Bringen die Cluster-Anker dem Training belegbar etwas?
 
-*Status: **REGISTRIERT 2026-09-22, `serie_ab` 20260923** — Tagesserie, erst
-nach dem O23-Urteil starten. Registrierung:
+*Status: **LÄUFT seit 2026-09-23 08:07** (nach dem O23-Urteil gestartet,
+`com.user.tv-tagesserie`, Seeds 8538,9535,532,1529,2526, Log
+`~/Library/Logs/tv-tagesserie-o24.log`). Registrierung:
 `docs/o24-cluster-anker-preregistration.md`. Nightly bleibt bis zum Urteil
 auf `--cluster-anker alt` (Vorgabe, bitgleich).*
 
@@ -2772,6 +2776,7 @@ Grund, der DIESE Serie entwertet, nicht nur die alte.
 | Detect-Fallback auf dem Pi | **per Design aus** | — | Pi5 ist always-on-Transport, CPU/ML läuft auf dem Mac. |
 | Flankenauswahl nach Signal (nn/logo je Kante) als Kanten-Nachbearbeitung | **NICHT ERFÜLLT** | 2026-08-27 (O14) | 120 Kanten / 32 Aufnahmen, alle drei Bedingungen verfehlt, [1] und [2] in die falsche Richtung. Maßstab war zu 100 % Agenten-Label mit 45 % Null-Echo — eine gegatete Variante wäre eine ANDERE Regel und braucht erst einen Maßstab mit Menschen-Kanten (Kette: Dump seit 08-27 bei jedem Detect, `--ocr-marker` fehlt noch). Details: `o14-flankenauswahl-preregistration.md`, §3ak, Nachtrag 2026-08-27. |
 | Kontextspalten (voller MLP5-Kopf) als Hebel auf den Kantenschwanz | **NICHT ERFÜLLT** | 2026-08-18 (O16) | Eine Nacht voller Kopf, registriert: Anteil >10 s unverändert (Ziel −5 pp), gepaarte Replikation identisch. Der Kopf sieht an den schlechten Kanten etwas mehr NN-Amplitude (0.56→0.68), der Decoder macht daraus keine bessere Kante. Wiedervorlage nur über **Bildinhalt** (Auflösung, Logo-Kanal, OCR), eigens registriert — nicht erneut über Kontextspalten. Details: `o16-voller-kopf-preregistration.md`. |
+| Gate-Boden auf die belegte Golden-Teilmenge umstellen | **NICHT ERFÜLLT** | 2026-09-23 (O23) | Abstand belegt−alle über 10 Nächte konstant (−0.028 → −0.030, Δ −0.0019, Schwelle 0.010): kein Drift, nur Versatz. Wiedervorlage nur, wenn der belegte Kern durch Review wächst — nicht erneut über dieselben 22. |
 
 ## 5. Leitplanken
 

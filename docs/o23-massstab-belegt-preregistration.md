@@ -1,6 +1,12 @@
 # O23 — Misst der belegbare Maßstab etwas anderes als der ganze?
 (Vorab-Registrierung)
 
+> 🏁 **ABGESCHLOSSEN 2026-09-23: REGEL NICHT ERFÜLLT — konstanter Versatz.**
+> 10/10 gültige Nächte. Abstand Nächte 1–5 Median −0.0283, Nächte 6–10
+> Median −0.0302, Änderung −0.0019 (Schwelle 0.010). Ausgewertet mit
+> `massstab-audit.py --auswerten`. Der volle Satz bleibt Gate-Grundlage,
+> wie unten festgelegt. Ledger §3 O23, Friedhof §4.
+
 **Geschrieben 2026-09-14, nachdem die erste Zahl existierte — und genau
 deshalb steht sie hier oben, nicht versteckt:** am 14.09. lag der
 Golden-Median über alle 38 Gepinnten bei **0.9599**, über die 22

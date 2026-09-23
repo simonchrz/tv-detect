@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.user.tv-tagesserie</string>
+  <!-- Eine registrierte Tagesserie abgekoppelt fahren. KEIN Zeitplan:
+       gestartet per `launchctl kickstart gui/501/com.user.tv-tagesserie`
+       (ohne -k, ein laufender Lauf wird nicht abgeschossen).
+
+       WARUM EIN EIGENER DIENST: tv-tagesserie.sh starb am 20. und 21.08.
+       nach ~1 min still mit dem Prozessbaum des Aufrufers, und nohup
+       schuetzt nicht davor, dass launchd die Prozessgruppe eines Jobs
+       abraeumt (Vorlage: com.user.dumps-erneuern). Als eigener Job laeuft
+       die Serie ausserdem in derselben Umgebung wie das Nightly.
+
+       Die Argumente sind die der GERADE registrierten Frage (O24, 23.09.).
+       Fuer die naechste Serie hier ersetzen, nicht aus einer Variable
+       zusammensetzen: Schalter mit Werten zerfallen beim Wortsplitten. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/simon/src/tv-detect/daemon/tv-tagesserie.sh</string>
+    <string>mlp32-anker,mlp32-ohneanker</string>
+    <string>5</string>
+    <string>--cluster-anker alt</string>
+    <string>--cluster-anker aus</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key>
+  <string>/Users/simon/Library/Logs/tv-tagesserie-o24.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/simon/Library/Logs/tv-tagesserie-o24.log</string>
+</dict>
+</plist>

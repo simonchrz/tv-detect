@@ -4693,6 +4693,12 @@ def main():
     confirmed_extra_w = 0
     bumper_boost_total = 0
     bumper_boost_recs = set()
+    # uuid -> (Anker-Spannen, angewandte Anker-Frames). Nur Ausgabe (Spalten
+    # 4/5 in head.gewichte.tsv): am 2026-09-23 meldete der Lauf 97409
+    # Anker-Frames, die tatsaechlich trainierten Aufnahmen tragen im
+    # Snapshot aber hoechstens 71465. Ohne Aufschluesselung je Aufnahme
+    # war nicht zu klaeren, woher der Rest kommt.
+    _anker_je_rec = {}
     for r, mask in zip(train_recs, keep_masks):
         X_train_parts.append(r[3][mask])
         y_train_parts.append(r[4][mask])
@@ -4809,6 +4815,8 @@ def main():
                 yslice[i0:i1] = 1
                 sw_full[i0:i1] = np.maximum(sw_full[i0:i1], base_w * 1.5)
                 cluster_anchor_frames += (i1 - i0)
+        _anker_je_rec[r[0]] = (len(r[13]) if len(r) > 13 else 0,
+                               cluster_anchor_frames)
         if cluster_anchor_frames:
             globals().setdefault("_cluster_anchor_total", [0])[0] = (
                 globals().get("_cluster_anchor_total", [0])[0]
@@ -4915,10 +4923,24 @@ def main():
             with _gew.open("w") as _fh:
                 _i = 0
                 for _r, _m, _w in zip(train_recs, keep_masks, sw_train_parts):
-                    _fh.write(f"{_r[0]}\t{len(_w)}\t{float(np.sum(_w)):.6f}\n")
+                    # Spalten 4/5 hinten angehaengt: Anker-Spannen, angewandte
+                    # Anker-Frames (cut -f1-3 liest wie bisher).
+                    _ns, _af = _anker_je_rec.get(_r[0], (0, 0))
+                    _fh.write(f"{_r[0]}\t{len(_w)}\t{float(np.sum(_w)):.6f}"
+                              f"\t{_ns}\t{_af}\n")
                     _i += 1
             print(f"matrix-fingerprint: Gewichte je Aufnahme -> {_gew.name} "
                   f"({_i} Zeilen)", flush=True)
+            # Datierte Kopie JEDE Nacht, auch bei REJECT: die Datei neben
+            # head.bin wird ueberschrieben, und die Bundle-Archivierung
+            # laeuft nur beim Deploy. Ohne Vornacht kein Vergleich.
+            try:
+                _ga = _gew.parent / "archive"
+                _ga.mkdir(exist_ok=True)
+                (_ga / f"head.{ts}.gewichte.tsv").write_text(_gew.read_text())
+            except Exception as _e3:
+                print(f"matrix-fingerprint: Archivkopie nicht schreibbar "
+                      f"({_e3})", flush=True)
         except Exception as _e2:
             print(f"matrix-fingerprint: Gewichte je Aufnahme nicht "
                   f"schreibbar ({_e2})", flush=True)

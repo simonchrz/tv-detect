@@ -64,6 +64,18 @@ class ClusterAnker(unittest.TestCase):
         lese = QUELL.index('ca_path = rec_dir / "cluster_anchored.json"')
         self.assertNotIn("cluster_anker", QUELL[lese - 800:lese + 400])
 
+    def test_gewichte_tsv_zeigt_anker_je_aufnahme(self):
+        # 2026-09-23: Log 97409 Anker-Frames, Snapshot hoechstens 71465.
+        # Die Aufschluesselung je Aufnahme ist die einzige Adresse dafuer.
+        self.assertIn("_anker_je_rec[r[0]] = (len(r[13])", QUELL)
+        self.assertIn('f"\\t{_ns}\\t{_af}\\n"', QUELL)
+
+    def test_gewichte_tsv_wird_jede_nacht_archiviert(self):
+        # Die Bundle-Archivierung laeuft nur beim Deploy; die Kopie muss
+        # direkt am Schreiber haengen, sonst fehlt die Vornacht bei REJECT.
+        a = QUELL.index('.with_suffix(".gewichte.tsv")')
+        self.assertIn('head.{ts}.gewichte.tsv', QUELL[a:a + 2500])
+
     def test_arme_stehen_in_registry_und_regel(self):
         m = re.search(r"```regel\n(.*?)\n```", REGEL, re.S)
         self.assertIsNotNone(m, "Regel-Block fehlt")

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.user.ocr-spur</string>
+  <!-- OCR-Spur ueber die ganze Aufnahme fuer alle Quellen nachrechnen
+       (scripts/ocr-spur-nachrechnen.py). KEIN Zeitplan: gestartet per
+       `launchctl kickstart gui/501/com.user.ocr-spur` (ohne -k).
+
+       Eigener Dienst aus demselben Grund wie com.user.dumps-erneuern und
+       com.user.tv-tagesserie: ein Hintergrund-Kind eines anderen Jobs oder
+       Werkzeugs stirbt mit dessen Prozessgruppe. Der Lauf dauert Stunden,
+       wartet auf Detects und Ausbildung und ist fortsetzbar — ein erneuter
+       Start rechnet nur, was fehlt oder dessen Quelle sich geaendert hat. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/simon/ml/tv-classifier/.venv/bin/python</string>
+    <string>/Users/simon/src/tv-detect/scripts/ocr-spur-nachrechnen.py</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key>
+  <string>/Users/simon/Library/Logs/ocr-spur.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/simon/Library/Logs/ocr-spur.log</string>
+</dict>
+</plist>

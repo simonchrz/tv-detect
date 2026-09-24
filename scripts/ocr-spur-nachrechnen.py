@@ -37,10 +37,21 @@ und mtime ihrer Quelle; weicht eines ab, wird neu gerechnet.
 import argparse
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# ⚠️ launchd startet mit einem PATH ohne /opt/homebrew/bin. Der erste echte
+# Start (2026-09-24) scheiterte deshalb an ALLEN 322 Aufnahmen mit
+# "ffprobe: executable file not found" — die Probe aus der Shell lief, weil
+# die Shell ihn hat. Derselbe PATH wie in tv-tagesserie.sh; /opt/homebrew/bin
+# zeigt auf den gepinnten Mac-ffmpeg (~/ffmpeg-h3-mac/out), wie im Detect.
+PFAD = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# Gleicher Fehler so oft in Folge = systematisch, nicht die Aufnahme.
+ABBRUCH_NACH = 3
 
 HIER = Path(__file__).resolve().parent
 QUELLEN = Path.home() / ".cache/tv-detect-daemon/source"
@@ -109,6 +120,14 @@ def main():
                     help="nicht auf Detects/Ausbildung warten")
     a = ap.parse_args()
 
+    os.environ["PATH"] = PFAD + ":" + os.environ.get("PATH", "")
+    fehlt = [w for w in ("ffmpeg", "ffprobe") if not shutil.which(w)]
+    if fehlt:
+        print(f"{', '.join(fehlt)} nicht im PATH ({os.environ['PATH']}) — "
+              f"ABBRUCH vor der ersten Aufnahme.")
+        return 1
+    print(f"ffmpeg {shutil.which('ffmpeg')}", flush=True)
+
     ziel = Path(a.ziel)
     ziel.mkdir(parents=True, exist_ok=True)
     if not BINARY.is_file():
@@ -141,6 +160,8 @@ def main():
     if sperre is None:
         return 0
     ok = fehl = 0
+    letzter_fehler, in_folge = None, 0
+    abgebrochen = False
     t0 = time.time()
     try:
         for i, u in enumerate(offen, 1):
@@ -173,11 +194,21 @@ def main():
                 continue
             if r.returncode == 0:
                 ok += 1
+                letzter_fehler, in_folge = None, 0
                 print("  " + r.stdout.strip(), flush=True)
             else:
                 fehl += 1
                 # vom ENDE kuerzen: dort steht der eigentliche Fehler
-                print(f"  FEHLER rc={r.returncode}: {r.stderr.strip()[-300:]}", flush=True)
+                meldung = r.stderr.strip()[-300:]
+                print(f"  FEHLER rc={r.returncode}: {meldung}", flush=True)
+                if abbrechen(letzter_fehler, in_folge, meldung):
+                    print(f"\n⚠️ ABBRUCH: {ABBRUCH_NACH}x derselbe Fehler in "
+                          f"Folge — systematisch, nicht die Aufnahme.",
+                          flush=True)
+                    abgebrochen = True
+                    break
+                in_folge = in_folge + 1 if meldung == letzter_fehler else 1
+                letzter_fehler = meldung
     finally:
         try:
             sperre.unlink()
@@ -185,7 +216,14 @@ def main():
             pass
     print(f"\nfertig: {ok} Spuren, {fehl} Fehlschlaege, "
           f"{(time.time() - t0) / 3600:.1f} h", flush=True)
+    if abgebrochen:
+        return 2
     return 0 if fehl == 0 else 1
+
+
+def abbrechen(letzter, in_folge, meldung):
+    """True, wenn diese Meldung die ABBRUCH_NACH-te gleiche in Folge ist."""
+    return meldung == letzter and in_folge + 1 >= ABBRUCH_NACH
 
 
 if __name__ == "__main__":

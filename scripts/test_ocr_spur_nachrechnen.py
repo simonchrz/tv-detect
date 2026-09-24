@@ -52,6 +52,28 @@ class Staleness(unittest.TestCase):
         self.assertEqual(M.veraltet_oder_fehlt(self.tmp, "a", self.q)[1], "Luecken")
 
 
+class Abbruch(unittest.TestCase):
+    def test_erst_der_dritte_gleiche_fehler_bricht_ab(self):
+        # 24.09.: 322 Aufnahmen scheiterten nacheinander am selben fehlenden
+        # ffprobe. Drei gleiche in Folge sind systematisch.
+        letzter, n, ab = None, 0, []
+        for m in ["x", "x", "x"]:
+            ab.append(M.abbrechen(letzter, n, m))
+            n = n + 1 if m == letzter else 1
+            letzter = m
+        self.assertEqual(ab, [False, False, True])
+
+    def test_wechselnde_fehler_brechen_nicht_ab(self):
+        letzter, n = None, 0
+        for m in ["x", "y", "x", "y", "x"]:
+            self.assertFalse(M.abbrechen(letzter, n, m))
+            n = n + 1 if m == letzter else 1
+            letzter = m
+
+    def test_pfad_kennt_homebrew(self):
+        self.assertTrue(M.PFAD.startswith("/opt/homebrew/bin:"))
+
+
 class Reihenfolge(unittest.TestCase):
     def test_messsatz_und_golden_zuerst(self):
         tmp = Path(tempfile.mkdtemp())

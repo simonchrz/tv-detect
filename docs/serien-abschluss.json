@@ -43,5 +43,10 @@
     "datum": "2026-09-23",
     "urteil": "REGEL NICHT ERFUELLT — Median +0.0035, 5/5 positiv; Schwelle +0.010 verfehlt (Tagesserie 20260923T080742). Konsequenz laut Registrierung: --cluster-anker aus im Nightly (seit 2026-09-23, auch Vorgabe). ⚠️ DEUTUNG: die Serie mass NICHT die Anker wie gedacht. train-head.py las cluster_anchored.json ueber einen rec_dir-Restwert = die LETZTE Snapshot-Aufnahme; der mit-Arm trug auf jeder Aufnahme dieselben 50 fremden Anker-Spannen (Nachweis: Spalten 4/5 in head.gewichte.tsv des Arms). Gemessen wurde Zufalls-Anker gegen keine. Ueber die Anker in richtiger Form sagt die Serie nichts; der leichte Vorsprung des mit-Arms liegt unter der Schwelle und wird nicht gedeutet. Einlesefehler behoben 2026-09-23.",
     "verbucht": "experiment-ledger.md §3 O24"
+  },
+  "O25": {
+    "datum": "2026-09-24",
+    "urteil": "REGEL NICHT ERFUELLT — kein belegter Schaden: Median +0.0005, 2/5 negativ (Schwelle -0.010 UND 4 von 5; Tagesserie 20260924T062742, Arme unterschieden sich um genau 88 eingespeiste Archiv-Aufnahmen, 2 der 90 sind live). Konsequenz laut Registrierung: --archiv-ausschluss im Nightly und in der Tagesserie, als HYGIENE, nicht als Verbesserung. Die Archiv-Dateien bleiben liegen (L6).",
+    "verbucht": "experiment-ledger.md §3 O25"
   }
 }

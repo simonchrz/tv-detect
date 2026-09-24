@@ -113,7 +113,8 @@ for ARM in "${ARMLISTE[@]}"; do
   # --audio-dynamik und --herkunft-belegt stehen unten fuer
   # PRODUKTIONS-PARITAET: beide sind im Nightly scharf (O22 seit 09-08,
   # O17 davor). Eine Serie ohne sie beantwortet ihre Frage an einem
-  # Modell, das es nicht mehr gibt.
+  # Modell, das es nicht mehr gibt. Dasselbe gilt seit 2026-09-24 fuer
+  # --archiv-ausschluss (O25); --cluster-anker aus ist seit O24 Vorgabe.
   #
   # --sealed-frac bleibt BEWUSST weg (Nightly: 0.20). Versiegelt wird nur,
   # was noch nicht im Ledger steht; bei 0.0 erben beide Arme denselben
@@ -132,6 +133,7 @@ for ARM in "${ARMLISTE[@]}"; do
       --with-logo --with-audio --with-minute-prior --with-self-training \
       --audio-dynamik \
       --herkunft-belegt \
+      --archiv-ausschluss "$REPO/docs/archiv-ausschluss-o25.json" \
       --train-archive "$D/archive" \
       --serie-archiv "$ECHT" \
       --head-arch mlp32-channel-whisper-temporal-mp-wm \

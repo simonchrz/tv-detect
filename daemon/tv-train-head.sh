@@ -251,9 +251,15 @@ echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
     --herkunft-belegt \
     --audio-dynamik \
     --cluster-anker aus \
+    --archiv-ausschluss "$HOME/src/tv-detect/docs/archiv-ausschluss-o25.json" \
     --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-24: --archiv-ausschluss (O25, REGEL NICHT ERFUELLT = kein belegter
+# Schaden: Median +0.0005, 2/5 negativ). Als HYGIENE eingebaut, nicht als
+# Verbesserung: die 90 gelisteten Archiv-Eintraege tragen rohe
+# Detektor-Labels und kamen nur ueber den rec_dir-Defekt ins Archiv
+# (keine eigenen Anker). Die Dateien bleiben liegen (L6).
 # 2026-09-23: --cluster-anker aus (O24, REGEL NICHT ERFUELLT). Registrierte
 # Konsequenz — und zugleich das Ende eines Defekts: seit 2026-05-03 bekam
 # JEDE Live-Aufnahme die Anker der alphabetisch letzten Snapshot-Aufnahme

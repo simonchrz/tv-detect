@@ -42,6 +42,14 @@ class ArchivAusschluss(unittest.TestCase):
         for arm in regel["arme"].values():
             self.assertIn(f'_ts_arme["{arm}"] = (_ident, 32)', QUELL)
 
+    def test_nightly_und_serie_tragen_den_ausschluss(self):
+        # O25 am 2026-09-24 nicht erfuellt (kein Schaden) -> Hygiene im
+        # Nightly; die Tagesserie muss mitziehen (Produktions-Paritaet).
+        n = (REPO / "daemon/tv-train-head.sh").read_text()
+        s = (REPO / "daemon/tv-tagesserie.sh").read_text()
+        self.assertIn('--archiv-ausschluss "$HOME/src/tv-detect/docs/archiv-ausschluss-o25.json" \\\n', n)
+        self.assertIn('--archiv-ausschluss "$REPO/docs/archiv-ausschluss-o25.json" \\\n', s)
+
     def test_plist_faehrt_o25(self):
         p = (REPO / "daemon/launchd/com.user.tv-tagesserie.plist").read_text()
         self.assertIn("<string>mlp32-bereinigt,mlp32-archivalt</string>", p)

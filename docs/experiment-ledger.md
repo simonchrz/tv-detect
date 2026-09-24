@@ -123,8 +123,12 @@ von 22 auf bis zu 51 heben.*
 
 ### O25 — Schadet es, die über den Defekt archivierten Aufnahmen aus dem Training zu nehmen?
 
-*Status: **REGISTRIERT 2026-09-24, `serie_ab` 20260924** — Tagesserie über
-`com.user.tv-tagesserie`, Schadensprüfung. Registrierung:
+*Status: **ABGESCHLOSSEN 2026-09-24 — REGEL NICHT ERFÜLLT, kein belegter
+Schaden** (Median +0.0005, 2/5 negativ; Tagesserie `20260924T062742`,
+Arme um genau 88 eingespeiste Archiv-Aufnahmen verschieden, 2 der 90 sind
+live). Konsequenz umgesetzt: `--archiv-ausschluss` im Nightly und in
+`tv-tagesserie.sh` (Parität), **als Hygiene, nicht als Verbesserung**. Die
+Archiv-Dateien bleiben liegen (L6). Registrierung:
 `docs/o25-archiv-bereinigung-preregistration.md`, Liste:
 `docs/archiv-ausschluss-o25.json` (90 UUIDs).*
 

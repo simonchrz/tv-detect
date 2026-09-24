@@ -121,6 +121,21 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O25 — Schadet es, die über den Defekt archivierten Aufnahmen aus dem Training zu nehmen?
+
+*Status: **REGISTRIERT 2026-09-24, `serie_ab` 20260924** — Tagesserie über
+`com.user.tv-tagesserie`, Schadensprüfung. Registrierung:
+`docs/o25-archiv-bereinigung-preregistration.md`, Liste:
+`docs/archiv-ausschluss-o25.json` (90 UUIDs).*
+
+*Anlass: Folgeschaden aus O24. Von 163 Archiv-Einträgen mit rohem
+Detektor-Label haben 90 keine eigenen Anker und kamen nur über den
+`rec_dir`-Defekt ins Archiv (alle train, keiner im Maßstab; 11.4 % der
+Frames, 4.3 % des Gewichts). Nicht erfüllt → `--archiv-ausschluss` ins
+Nightly als Hygiene, nicht als Verbesserung. Die 73 regelkonformen
+(`auto` + eigene Anker, darunter 3 Golden-Mitglieder) sind eine eigene,
+spätere Frage.*
+
 ### O24 — Bringen die Cluster-Anker dem Training belegbar etwas?
 
 *Status: **ABGESCHLOSSEN 2026-09-23 — REGEL NICHT ERFÜLLT** (Median +0.0035,

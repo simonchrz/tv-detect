@@ -13,21 +13,21 @@
        abraeumt (Vorlage: com.user.dumps-erneuern). Als eigener Job laeuft
        die Serie ausserdem in derselben Umgebung wie das Nightly.
 
-       Die Argumente sind die der GERADE registrierten Frage (O24, 23.09.).
+       Die Argumente sind die der GERADE registrierten Frage (O25, 24.09.;
+       davor O24 mit "mlp32-anker,mlp32-ohneanker").
        Fuer die naechste Serie hier ersetzen, nicht aus einer Variable
        zusammensetzen: Schalter mit Werten zerfallen beim Wortsplitten. -->
   <key>ProgramArguments</key>
   <array>
     <string>/Users/simon/src/tv-detect/daemon/tv-tagesserie.sh</string>
-    <string>mlp32-anker,mlp32-ohneanker</string>
+    <string>mlp32-bereinigt,mlp32-archivalt</string>
     <string>5</string>
-    <string>--cluster-anker alt</string>
-    <string>--cluster-anker aus</string>
+    <string>--archiv-ausschluss /Users/simon/src/tv-detect/docs/archiv-ausschluss-o25.json</string>
   </array>
   <key>RunAtLoad</key><false/>
   <key>StandardOutPath</key>
-  <string>/Users/simon/Library/Logs/tv-tagesserie-o24.log</string>
+  <string>/Users/simon/Library/Logs/tv-tagesserie-o25.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/simon/Library/Logs/tv-tagesserie-o24.log</string>
+  <string>/Users/simon/Library/Logs/tv-tagesserie-o25.log</string>
 </dict>
 </plist>

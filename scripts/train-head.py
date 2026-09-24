@@ -2678,6 +2678,12 @@ def main():
                          "Quelle behalten es. Vorgabe AUS = heutiges "
                          "Verhalten; siehe docs/o17-labelherkunft-"
                          "preregistration.md")
+    ap.add_argument("--archiv-ausschluss", default=None,
+                    help="O25: JSON mit {\"uuids\": [...]} — diese "
+                         "Archiv-Eintraege werden NICHT eingespeist (Live-"
+                         "Aufnahmen sind nicht betroffen, das Archiv selbst "
+                         "bleibt unangetastet). Siehe docs/o25-archiv-"
+                         "bereinigung-preregistration.md")
     ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="aus",
                     help="O24 (entschieden 2026-09-23: aus): was die "
                          "cluster_anchored-Spannen im Training "
@@ -3988,9 +3994,20 @@ def main():
                       | {ri[0] for ri, _, _ in todo})
         injected = 0
         _herk_vor = (len(herkunft_entzogen), len(herkunft_unentscheidbar))
+        # O25: Eintraege, die nur ueber den rec_dir-Defekt ins Archiv kamen.
+        # Uebersprungen statt geloescht (L6) — umkehrbar, und der Lauf sagt
+        # laut, wie viele er weggelassen hat.
+        _ausschluss = set()
+        if args.archiv_ausschluss:
+            _ausschluss = set(json.loads(
+                Path(args.archiv_ausschluss).expanduser().read_text())["uuids"])
+        _ausgeschlossen = 0
         for npz_path in sorted(archive_dir.glob("*.npz")):
             u = npz_path.stem
             if u in live_uuids:
+                continue
+            if u in _ausschluss:
+                _ausgeschlossen += 1
                 continue
             try:
                 z = np.load(npz_path, allow_pickle=False)
@@ -4112,6 +4129,10 @@ def main():
         if injected:
             print(f"train-archive: injected {injected} deleted/dedup'd "
                   f"recording(s) (trained via frozen label + cached features)")
+        if args.archiv_ausschluss:
+            print(f"train-archive: --archiv-ausschluss — {_ausgeschlossen} von "
+                  f"{len(_ausschluss)} gelisteten Eintraegen NICHT eingespeist "
+                  f"(der Rest ist live oder nicht mehr im Archiv)")
 
     # Schmalere Merkmalsmatrizen auf die Sollbreite bringen.
     #
@@ -6220,6 +6241,10 @@ def main():
             # tv-tagesserie.sh per --head-arch vorgibt, aber nicht ausliefert.
             _ts_arme["mlp32-anker"] = (_ident, 32)
             _ts_arme["mlp32-ohneanker"] = (_ident, 32)
+            # O25: gleiche Architektur, der Unterschied ist --archiv-ausschluss
+            # (wirkt beim Einspeisen des Archivs, also vor dem Armlauf).
+            _ts_arme["mlp32-bereinigt"] = (_ident, 32)
+            _ts_arme["mlp32-archivalt"] = (_ident, 32)
             _ts_arme["mlp32"] = (_ident, 32)
             _ts_arme["mlp32-cwt-mp"] = (_augment_cwt_minuteprior, 32)
             _ts_arme["mlp32-ct-mp"] = (_augment_ct_minuteprior, 32)

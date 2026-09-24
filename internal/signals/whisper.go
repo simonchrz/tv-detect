@@ -65,14 +65,8 @@ func LoadWhisperPerSecond(path string) ([]float64, error) {
 	sums := make([]float64, n)
 	counts := make([]int, n)
 	for _, w := range d.Windows {
-		t0 := int(w.T)
-		if t0 < 0 {
-			t0 = 0
-		}
-		t1 := t0 + winS
-		if t1 > n {
-			t1 = n
-		}
+		t0 := max(int(w.T), 0)
+		t1 := min(t0+winS, n)
 		for s := t0; s < t1; s++ {
 			sums[s] += w.Prob
 			counts[s]++

@@ -70,11 +70,11 @@ func ExtractAudioRMSPerSecond(ctx context.Context, src string, nSeconds int) []f
 	const prefix = "lavfi.astats.Overall.RMS_level="
 	for sc.Scan() {
 		line := sc.Text()
-		i := strings.Index(line, prefix)
-		if i < 0 {
+		_, after, ok := strings.Cut(line, prefix)
+		if !ok {
 			continue
 		}
-		val := strings.TrimSpace(line[i+len(prefix):])
+		val := strings.TrimSpace(after)
 		// ffmpeg writes "-inf" for digital silence — clamp to -90 dB.
 		var dB float64
 		if val == "-inf" || val == "-Inf" || val == "-INF" {
@@ -167,15 +167,9 @@ func AudioDynamik(rms []float32, fenster int) []float32 {
 		c2[i+1] = c2[i] + x*x
 	}
 	half := fenster / 2
-	for i := 0; i < n; i++ {
-		lo := i - half
-		if lo < 0 {
-			lo = 0
-		}
-		hi := i + half + 1
-		if hi > n {
-			hi = n
-		}
+	for i := range n {
+		lo := max(i-half, 0)
+		hi := min(i+half+1, n)
 		m := float64(hi - lo)
 		mu := (c1[hi] - c1[lo]) / m
 		v := (c2[hi]-c2[lo])/m - mu*mu

@@ -156,7 +156,7 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 	pendingStart := -1 // first absent frame of an unconfirmed run
 	consecutiveAbsent := 0
 	consecutivePresent := 0
-	for i := 0; i < len(present); i++ {
+	for i := range present {
 		if !present[i] {
 			consecutivePresent = 0
 			if openStart >= 0 {
@@ -1018,10 +1018,7 @@ func logoCrossingRefine(roughS, radiusS float64, logoConf []float64,
 	}
 	center := int(roughS * fps)
 	radius := int(radiusS * fps)
-	lo := center - radius
-	if lo < 0 {
-		lo = 0
-	}
+	lo := max(center-radius, 0)
 	hi := center + radius
 	if hi >= len(logoConf) {
 		hi = len(logoConf) - 1
@@ -1085,15 +1082,9 @@ func smoothMean(x []float64, halfW int) []float64 {
 		cs[i+1] = cs[i] + v
 	}
 	out := make([]float64, n)
-	for i := 0; i < n; i++ {
-		lo := i - halfW
-		if lo < 0 {
-			lo = 0
-		}
-		hi := i + halfW + 1
-		if hi > n {
-			hi = n
-		}
+	for i := range n {
+		lo := max(i-halfW, 0)
+		hi := min(i+halfW+1, n)
 		out[i] = (cs[hi] - cs[lo]) / float64(hi-lo)
 	}
 	return out

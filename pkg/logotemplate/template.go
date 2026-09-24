@@ -34,12 +34,12 @@ import (
 // Template is a parsed comskip .logo.txt with the mask flattened to
 // a per-pixel "edge expected" boolean grid.
 type Template struct {
-	MinX, MaxX     int  // logo bounding-box columns in source pixel coords
-	MinY, MaxY     int  // logo bounding-box rows
-	PicWidth       int  // source frame width when the template was trained
-	PicHeight      int  // source frame height when the template was trained
-	Mask           [][]bool // [row 0..H-1][col 0..W-1], row-major
-	EdgePositions  int  // number of true cells in Mask
+	MinX, MaxX    int      // logo bounding-box columns in source pixel coords
+	MinY, MaxY    int      // logo bounding-box rows
+	PicWidth      int      // source frame width when the template was trained
+	PicHeight     int      // source frame height when the template was trained
+	Mask          [][]bool // [row 0..H-1][col 0..W-1], row-major
+	EdgePositions int      // number of true cells in Mask
 }
 
 // Width returns the bounding-box width in pixels.
@@ -112,7 +112,7 @@ func Load(path string) (*Template, error) {
 		return nil, fmt.Errorf("logo bbox invalid: w=%d h=%d", w, h)
 	}
 	t.Mask = make([][]bool, h)
-	for r := 0; r < h; r++ {
+	for r := range h {
 		line, err := br.ReadString('\n')
 		if err != nil && line == "" {
 			return nil, fmt.Errorf("logo mask truncated at row %d/%d: %w", r, h, err)

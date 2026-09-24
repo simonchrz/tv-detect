@@ -72,7 +72,7 @@ func TestHSMMParityWithReference(t *testing.T) {
 // shifts every boundary by a second without failing anything loudly.
 func TestPerSecondMean(t *testing.T) {
 	x := make([]float64, 0, 130)
-	for i := 0; i < 130; i++ {
+	for i := range 130 {
 		x = append(x, float64(i))
 	}
 	got := PerSecondMean(x, 25)

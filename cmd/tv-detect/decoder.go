@@ -49,7 +49,7 @@ func boundaryLP(conf, guard []float64, fps, thresh, w float64, nSec int) []float
 	if thresh >= 1 || fps <= 0 {
 		return lp
 	}
-	for s := 0; s < nSec; s++ {
+	for s := range nSec {
 		lo, hi := int(float64(s)*fps), int(float64(s+1)*fps)
 		if hi > len(conf) {
 			hi = len(conf)

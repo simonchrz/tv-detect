@@ -17,11 +17,11 @@ type Frame struct {
 
 // DecodeOpts controls the ffmpeg decode subprocess.
 type DecodeOpts struct {
-	Input    string
-	Width    int     // target width  (0 = native)
-	Height   int     // target height (0 = native)
-	StartS   float64 // -ss seek offset (0 = beginning)
-	DurS     float64 // -t duration limit (0 = full input)
+	Input  string
+	Width  int     // target width  (0 = native)
+	Height int     // target height (0 = native)
+	StartS float64 // -ss seek offset (0 = beginning)
+	DurS   float64 // -t duration limit (0 = full input)
 	// ExtraInputArgs is injected BEFORE -i so it applies to the
 	// input stream. Use for error-tolerance flags on corrupt IPTV
 	// streams: ["-err_detect", "ignore_err", "-fflags", "+discardcorrupt"]

@@ -8,7 +8,7 @@ func TestSceneDetectorIdenticalNoCut(t *testing.T) {
 	for i := range pix {
 		pix[i] = 128
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		d.Push(i, pix)
 	}
 	if len(d.Cuts()) != 0 {

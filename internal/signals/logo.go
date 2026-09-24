@@ -87,13 +87,13 @@ func (d *LogoDetector) Confidence(pixels []byte) float64 {
 	w, h := d.tmpl.Width(), d.tmpl.Height()
 	x0, y0 := d.tmpl.MinX, d.tmpl.MinY
 	matches := 0
-	for ry := 0; ry < h; ry++ {
+	for ry := range h {
 		fy := y0 + ry + d.yOffset
 		if fy <= 0 || fy >= d.frameH-1 {
 			continue // need fy-1 and fy+1 for the Sobel kernel
 		}
 		row := d.tmpl.Mask[ry]
-		for rx := 0; rx < w; rx++ {
+		for rx := range w {
 			if !row[rx] {
 				continue
 			}

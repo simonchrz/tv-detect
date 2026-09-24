@@ -67,7 +67,7 @@ func (d *BumperDetector) Confidence(pixels []byte) float64 {
 	nWords := (nPx + 63) / 64
 	frameMask := make([]uint64, nWords)
 	frameWhite := 0
-	for i := 0; i < nPx; i++ {
+	for i := range nPx {
 		if lumaAt(pixels, i*3) > d.lumaTh {
 			frameMask[i>>6] |= 1 << uint(i&63)
 			frameWhite++
@@ -76,7 +76,7 @@ func (d *BumperDetector) Confidence(pixels []byte) float64 {
 	best := 0.0
 	for _, t := range d.templates {
 		inter := 0
-		for i := 0; i < nWords; i++ {
+		for i := range nWords {
 			inter += bits.OnesCount64(t.Mask[i] & frameMask[i])
 		}
 		union := t.WhiteSet + frameWhite - inter
@@ -110,9 +110,9 @@ func loadBumperTemplate(path string, frameW, frameH, lumaThresh int) (*BumperTem
 	nWords := (nPx + 63) / 64
 	mask := make([]uint64, nWords)
 	white := 0
-	for fy := 0; fy < frameH; fy++ {
+	for fy := range frameH {
 		sy := fy * srcH / frameH
-		for fx := 0; fx < frameW; fx++ {
+		for fx := range frameW {
 			sx := fx * srcW / frameW
 			r, g, b, _ := img.At(srcB.Min.X+sx, srcB.Min.Y+sy).RGBA()
 			// RGBA() returns 16-bit; downscale to 8-bit then BT.601 luma

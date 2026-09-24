@@ -87,10 +87,7 @@ func main() {
 	})
 
 	// Sample one frame every (FPS / samplesPerS) frames.
-	stride := int(d.FPS/(*samplesPerS) + 0.5)
-	if stride < 1 {
-		stride = 1
-	}
+	stride := max(int(d.FPS/(*samplesPerS)+0.5), 1)
 	t0 := time.Now()
 	read, sampled := 0, 0
 	for f := range d.Frames() {
@@ -156,10 +153,7 @@ func printTopPixels(tr *logotrain.Trainer, n, sampled, w int) {
 	hCount, vCount := all.H, all.V
 	pixels := make([]pix, 0, len(hCount)/100)
 	for i := range hCount {
-		score := hCount[i]
-		if vCount[i] > score {
-			score = vCount[i]
-		}
+		score := max(vCount[i], hCount[i])
 		if score == 0 {
 			continue
 		}
@@ -169,14 +163,8 @@ func printTopPixels(tr *logotrain.Trainer, n, sampled, w int) {
 	for sel := 0; sel < n && sel < len(pixels); sel++ {
 		bestI := sel
 		for i := sel + 1; i < len(pixels); i++ {
-			si := pixels[i].h
-			if pixels[i].v > si {
-				si = pixels[i].v
-			}
-			ss := pixels[bestI].h
-			if pixels[bestI].v > ss {
-				ss = pixels[bestI].v
-			}
+			si := max(pixels[i].v, pixels[i].h)
+			ss := max(pixels[bestI].v, pixels[bestI].h)
 			if si > ss {
 				bestI = i
 			}

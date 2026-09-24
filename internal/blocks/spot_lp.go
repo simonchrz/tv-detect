@@ -85,10 +85,7 @@ func AddLP(a, b []float64) []float64 {
 	if b == nil {
 		return a
 	}
-	n := len(a)
-	if len(b) > n {
-		n = len(b)
-	}
+	n := max(len(b), len(a))
 	out := make([]float64, n)
 	for i := range out {
 		if i < len(a) {

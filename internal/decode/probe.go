@@ -21,13 +21,13 @@ type Info struct {
 
 type probeOut struct {
 	Streams []struct {
-		CodecType string `json:"codec_type"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
-		RFrameRate string `json:"r_frame_rate"`
+		CodecType    string `json:"codec_type"`
+		Width        int    `json:"width"`
+		Height       int    `json:"height"`
+		RFrameRate   string `json:"r_frame_rate"`
 		AvgFrameRate string `json:"avg_frame_rate"`
-		NbFrames  string `json:"nb_frames"`
-		Duration  string `json:"duration"`
+		NbFrames     string `json:"nb_frames"`
+		Duration     string `json:"duration"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
@@ -137,9 +137,9 @@ func parseFPS(s string) float64 {
 	if s == "" || s == "0/0" {
 		return 0
 	}
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		num, err1 := strconv.ParseFloat(s[:i], 64)
-		den, err2 := strconv.ParseFloat(s[i+1:], 64)
+	if before, after, ok := strings.Cut(s, "/"); ok {
+		num, err1 := strconv.ParseFloat(before, 64)
+		den, err2 := strconv.ParseFloat(after, 64)
 		if err1 == nil && err2 == nil && den != 0 {
 			return num / den
 		}

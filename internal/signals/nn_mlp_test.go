@@ -637,7 +637,7 @@ func TestConfidenceMLPChunk_TemporalAt25fps(t *testing.T) {
 	// Embedding[0] ramps by +1.0 per FRAME → the delta to the frame 25
 	// indices away is exactly 25.0; consecutive-frame deltas would be 1.0.
 	feats := make([]float32, n*nnFeatDim)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		feats[i*nnFeatDim] = float32(i)
 	}
 	out := d.confidenceMLPChunk(feats, nil, nil, n, fps, 0)
@@ -775,7 +775,7 @@ func TestLoadMLPHeadV4_Roundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	prior := `{"version":1,"neutral":0.31,"priors":{"alpha":[`
-	for m := 0; m < 60; m++ {
+	for m := range 60 {
 		if m > 0 {
 			prior += ","
 		}
@@ -1069,7 +1069,7 @@ func TestChurnSpalte_ParitaetMitTraining(t *testing.T) {
 
 	// Dieselbe Schleife wie in confidenceMLPChunk, step=1 (fps=1).
 	got := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var sum, cnt float32
 		for k := -halb; k <= halb; k++ {
 			j := i + k
@@ -1143,7 +1143,7 @@ func TestChurnSpalte_ImVorwaertslauf(t *testing.T) {
 	halb := churnWindowS / 2
 	n := 2*churnWindowS + 2 // Mitte hat ein volles Fenster ohne Sekunde 0
 	embeds := make([]float32, n*nnFeatDim)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		embeds[i*nnFeatDim] = float32(i)
 	}
 	logo := make([]float64, n)

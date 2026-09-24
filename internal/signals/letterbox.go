@@ -54,10 +54,7 @@ func NewLetterboxDetector(fps float64, width, height, barRows, lumaThreshold int
 	if lumaThreshold <= 0 {
 		lumaThreshold = 16
 	}
-	hyst := int(fps * 0.5)
-	if hyst < 1 {
-		hyst = 1
-	}
+	hyst := max(int(fps*0.5), 1)
 	return &LetterboxDetector{
 		fps:        fps,
 		width:      width,
@@ -99,10 +96,7 @@ func (d *LetterboxDetector) Push(idx int, pixels []byte) {
 		// Flip confirmed. Emission timestamp is the first frame of the
 		// candidate run (idx - hysteresis + 1) — that is the actual
 		// transition frame, not the hysteresis-confirmation frame.
-		flipFrame := idx - d.hysteresis + 1
-		if flipFrame < 0 {
-			flipFrame = 0
-		}
+		flipFrame := max(idx-d.hysteresis+1, 0)
 		d.events = append(d.events, LetterboxEvent{
 			Frame: flipFrame,
 			TimeS: float64(flipFrame) / d.fps,

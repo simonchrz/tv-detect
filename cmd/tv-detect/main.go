@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"runtime"
@@ -519,9 +520,7 @@ func writeSummary(res *pipeline.Result, elapsedS float64, bl []blocks.Block,
 			"fps_proc":  float64(res.FrameCount) / elapsedS,
 		},
 	}
-	for k, v := range extra {
-		out.Stats[k] = v
-	}
+	maps.Copy(out.Stats, extra)
 	for i, b := range bl {
 		out.Blocks[i] = [2]float64{b.StartS, b.EndS}
 	}
@@ -570,10 +569,9 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 		FrameW: d.Width, FrameH: d.Height,
 		EdgeThresh: edgeThresh, Persistence: persist,
 	})
-	stride := int(d.FPS + 0.5) // 1 frame per second
-	if stride < 1 {
-		stride = 1
-	}
+	stride := max(
+		// 1 frame per second
+		int(d.FPS+0.5), 1)
 	read := 0
 	for f := range d.Frames() {
 		if read%stride == 0 {
@@ -636,7 +634,7 @@ func parseBumperTemplates(s string) []string {
 		return nil
 	}
 	var out []string
-	for _, p := range strings.Split(s, ",") {
+	for p := range strings.SplitSeq(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}

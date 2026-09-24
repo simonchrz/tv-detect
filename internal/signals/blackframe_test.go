@@ -47,7 +47,7 @@ func TestBlackDetectorAggregate(t *testing.T) {
 	}
 
 	// Frames 0-5 white, 6-15 black, 16-30 white, 31-32 black (too short).
-	for i := 0; i < 33; i++ {
+	for i := range 33 {
 		switch {
 		case i >= 6 && i <= 15:
 			d.Push(i, black)

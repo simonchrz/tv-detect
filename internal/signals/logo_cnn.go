@@ -170,7 +170,7 @@ func (d *LogoCNNDetector) fillInput(pixels []byte) {
 	scaleY := float32(d.cropH-1) / float32(N-1)
 	// CHW layout: channel c starts at c*N*N
 	const planeSz = N * N
-	for oy := 0; oy < N; oy++ {
+	for oy := range N {
 		sy := float32(oy) * scaleY
 		y0 := int(sy)
 		y1 := y0 + 1
@@ -178,7 +178,7 @@ func (d *LogoCNNDetector) fillInput(pixels []byte) {
 			y1 = d.cropH - 1
 		}
 		fy := sy - float32(y0)
-		for ox := 0; ox < N; ox++ {
+		for ox := range N {
 			sx := float32(ox) * scaleX
 			x0 := int(sx)
 			x1 := x0 + 1
@@ -193,7 +193,7 @@ func (d *LogoCNNDetector) fillInput(pixels []byte) {
 			p01 := ((d.cropY+y1)*d.frameW + (d.cropX + x0)) * 3
 			p11 := ((d.cropY+y1)*d.frameW + (d.cropX + x1)) * 3
 			outIdx := oy*N + ox
-			for c := 0; c < cnnInputChans; c++ {
+			for c := range cnnInputChans {
 				v00 := float32(pixels[p00+c])
 				v10 := float32(pixels[p10+c])
 				v01 := float32(pixels[p01+c])

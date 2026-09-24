@@ -115,7 +115,7 @@ func (d *BoundaryDetector) reloadHead() error {
 	off := boundaryHeaderLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -183,14 +183,13 @@ func (d *BoundaryDetector) BoundaryScores(embeds [][]float32, fps float64) []flo
 		return nil
 	}
 	n := len(embeds)
-	step := int(fps + 0.5) // frames per 1 s window unit; ≥1
-	if step < 1 {
-		step = 1
-	}
+	step := max(
+		// frames per 1 s window unit; ≥1
+		int(fps+0.5), 1)
 	out := make([]float64, n)
 	x := make([]float32, d.inDim)
 	hidden := make([]float32, d.hidden)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Build the temporal context input: concat embeds[i+offset*step]
 		// for each offset in boundaryWindowOffsets. step scales the ±1 unit
 		// to ±1 second at the actual fps. Out-of-range neighbours mirror to

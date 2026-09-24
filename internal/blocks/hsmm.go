@@ -1,5 +1,7 @@
 package blocks
 
+import "slices"
+
 import "math"
 
 // Explicit-duration HMM (HSMM) block formation — THE PRODUCTION DECODER
@@ -163,12 +165,9 @@ func PerSecondMean(x []float64, fps float64) []float64 {
 		return nil
 	}
 	out := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lo := int(float64(i) * fps)
-		hi := int(float64(i+1) * fps)
-		if hi > len(x) {
-			hi = len(x)
-		}
+		hi := min(int(float64(i+1)*fps), len(x))
 		if hi <= lo {
 			continue
 		}
@@ -238,14 +237,11 @@ func FormHSMM(p []float64, o HSMMOpts) []Block {
 	}
 
 	for t := 1; t <= T; t++ {
-		for k := 0; k < 2; k++ {
+		for k := range 2 {
 			c := cfg[k]
 			prevs := []int{1 - k}
 			best, bd, bpv := neg, 0, 0
-			lo := t - c.dmax
-			if lo < 0 {
-				lo = 0
-			}
+			lo := max(t-c.dmax, 0)
 			// Descend from the longest-allowed start to the shortest. With a
 			// strict > comparison this keeps the LATEST start on ties, which
 			// is what the reference does — do not relax to >=.
@@ -296,8 +292,8 @@ func FormHSMM(p []float64, o HSMMOpts) []Block {
 		t, k = st, prev
 	}
 	out := make([]Block, 0, len(rev))
-	for i := len(rev) - 1; i >= 0; i-- {
-		out = append(out, rev[i])
+	for _, r := range slices.Backward(rev) {
+		out = append(out, r)
 	}
 	return out
 }

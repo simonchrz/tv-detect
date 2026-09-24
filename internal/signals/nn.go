@@ -412,7 +412,7 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	off := headerLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -519,7 +519,7 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	off := headerLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -622,7 +622,7 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	off := headerLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -729,7 +729,7 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	off := headerLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -858,7 +858,7 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64) error {
 	off := headerLen
 	readFloats := func(n int) []float32 {
 		out := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			out[i] = floatLE(raw[off+i*4:])
 		}
 		off += n * 4
@@ -1140,10 +1140,10 @@ func (d *NNDetector) ConfidenceChunk(embeds []float32, logoConfs, rmsConfs []flo
 			audioIdx += len(nnChannels)
 		}
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		logit := d.headBias
 		off := i * nnFeatDim
-		for j := 0; j < nnFeatDim; j++ {
+		for j := range nnFeatDim {
 			logit += d.headW[j] * embeds[off+j]
 		}
 		if d.headWithLogo {
@@ -1249,7 +1249,7 @@ func temporalSpalten(base []float32, n, baseDim, step, nTemporal int) (dp, dn, c
 		a := base[i*baseDim : (i+1)*baseDim]
 		b := base[(i-step)*baseDim : (i-step+1)*baseDim]
 		var sumSq float32
-		for k := 0; k < baseDim; k++ {
+		for k := range baseDim {
 			diff := a[k] - b[k]
 			sumSq += diff * diff
 		}
@@ -1262,7 +1262,7 @@ func temporalSpalten(base []float32, n, baseDim, step, nTemporal int) (dp, dn, c
 	}
 	churn = make([]float32, n)
 	const halb = churnWindowS / 2
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var sum, cnt float32
 		for k := -halb; k <= halb; k++ {
 			j := i + k*step
@@ -1308,10 +1308,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	if fps <= 0 {
 		fps = 1
 	}
-	step := int(fps + 0.5)
-	if step < 1 {
-		step = 1
-	}
+	step := max(int(fps+0.5), 1)
 	// Temporal deltas at 1-second spacing over the WHOLE chunk. Base
 	// vector per frame = [backbone, logo?, audio?] — mirrors training's
 	// X rows (train-head.py _augment_channel_whisper_temporal computes
@@ -1321,7 +1318,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	if d.mlpNTemporal > 0 {
 		baseDim := nnFeatDim + d.mlpNLogo + d.mlpNAudio
 		base := make([]float32, n*baseDim)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			copy(base[i*baseDim:], embeds[i*nnFeatDim:(i+1)*nnFeatDim])
 			off := i*baseDim + nnFeatDim
 			if d.mlpNLogo > 0 {
@@ -1339,7 +1336,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 		dpTemporal, dnTemporal, churnTemporal = temporalSpalten(
 			base, n, baseDim, step, d.mlpNTemporal)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		copy(x[:nnFeatDim], embeds[i*nnFeatDim:(i+1)*nnFeatDim])
 		off := nnFeatDim
 		if d.mlpNLogo > 0 {
@@ -1472,7 +1469,7 @@ func preprocess(src []byte, srcW, srcH int, dst []float32) {
 	scaleY := float32(srcH) / th
 	// Layout: dst[c*tw*th + y*tw + x]
 	plane := tw * th
-	for ty := 0; ty < th; ty++ {
+	for ty := range th {
 		sy := float32(ty) * scaleY
 		sy0 := int(sy)
 		sy1 := sy0 + 1
@@ -1480,7 +1477,7 @@ func preprocess(src []byte, srcW, srcH int, dst []float32) {
 			sy1 = srcH - 1
 		}
 		fy := sy - float32(sy0)
-		for tx := 0; tx < tw; tx++ {
+		for tx := range tw {
 			sx := float32(tx) * scaleX
 			sx0 := int(sx)
 			sx1 := sx0 + 1
@@ -1493,7 +1490,7 @@ func preprocess(src []byte, srcW, srcH int, dst []float32) {
 			i10 := 3 * (sy1*srcW + sx0)
 			i11 := 3 * (sy1*srcW + sx1)
 			dstIdx := ty*tw + tx
-			for c := 0; c < 3; c++ {
+			for c := range 3 {
 				v := (1-fx)*(1-fy)*float32(src[i00+c]) +
 					fx*(1-fy)*float32(src[i01+c]) +
 					(1-fx)*fy*float32(src[i10+c]) +

@@ -13,13 +13,13 @@ func makeFrame(letterboxed bool) []byte {
 	if letterboxed {
 		// Zero out top and bottom 4 rows.
 		rowBytes := tw * 3
-		for y := 0; y < trows; y++ {
-			for x := 0; x < rowBytes; x++ {
+		for y := range trows {
+			for x := range rowBytes {
 				pix[y*rowBytes+x] = 0
 			}
 		}
 		for y := th - trows; y < th; y++ {
-			for x := 0; x < rowBytes; x++ {
+			for x := range rowBytes {
 				pix[y*rowBytes+x] = 0
 			}
 		}
@@ -30,7 +30,7 @@ func makeFrame(letterboxed bool) []byte {
 func TestLetterboxOnsetEmitted(t *testing.T) {
 	d := NewLetterboxDetector(25, tw, th, trows, 16)
 	// 30 frames clean, 30 letterboxed → must emit exactly one onset.
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		d.Push(i, makeFrame(false))
 	}
 	for i := 30; i < 60; i++ {
@@ -55,7 +55,7 @@ func TestLetterboxNoFlickerOnDarkScene(t *testing.T) {
 	clean := makeFrame(false)
 	letter := makeFrame(true)
 	// 20 clean, 3 letterboxed (transient), 20 clean → should NOT emit.
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		d.Push(i, clean)
 	}
 	for i := 20; i < 23; i++ {
@@ -71,7 +71,7 @@ func TestLetterboxNoFlickerOnDarkScene(t *testing.T) {
 
 func TestLetterboxOnsetThenOffset(t *testing.T) {
 	d := NewLetterboxDetector(25, tw, th, trows, 16)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		d.Push(i, makeFrame(false))
 	}
 	for i := 30; i < 90; i++ {

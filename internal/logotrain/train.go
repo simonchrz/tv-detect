@@ -37,11 +37,11 @@ type Opts struct {
 // one (any sampling cadence works; 1 fps is plenty since the logo
 // doesn't move).
 type Trainer struct {
-	opts        Opts
-	stride      int
-	hCount      []uint32 // per-pixel horizontal-edge count (Sobel Gy)
-	vCount      []uint32 // per-pixel vertical-edge count   (Sobel Gx)
-	frameCount  uint32
+	opts       Opts
+	stride     int
+	hCount     []uint32 // per-pixel horizontal-edge count (Sobel Gy)
+	vCount     []uint32 // per-pixel vertical-edge count   (Sobel Gx)
+	frameCount uint32
 }
 
 // New creates a Trainer for FrameW x FrameH frames. Allocates two
@@ -96,11 +96,11 @@ func (t *Trainer) Push(pixels []byte) {
 
 // Result holds what training produced.
 type Result struct {
-	FrameCount  uint32
-	MinX, MaxX  int
-	MinY, MaxY  int
-	EdgePixels  int
-	HasLogo     bool // false if no pixel met the persistence threshold
+	FrameCount uint32
+	MinX, MaxX int
+	MinY, MaxY int
+	EdgePixels int
+	HasLogo    bool // false if no pixel met the persistence threshold
 }
 
 // RawCounts exposes the accumulated edge histograms (length FrameW*FrameH).
@@ -131,8 +131,8 @@ func (t *Trainer) ComputeAt(persistence float64) Result {
 	minX, minY := w, h
 	maxX, maxY := -1, -1
 	edgePixels := 0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			idx := y*w + x
 			if t.hCount[idx] >= threshold || t.vCount[idx] >= threshold {
 				if x < minX {

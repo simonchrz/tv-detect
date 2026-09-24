@@ -50,7 +50,7 @@ func (d *SceneDetector) Push(idx int, pixels []byte) {
 	h := make([]int, rgbHistSize)
 	nPx := len(pixels) / 3
 	// 3-bit quantisation per channel: top 3 bits give the bin index.
-	for i := 0; i < nPx; i++ {
+	for i := range nPx {
 		r := int(pixels[i*3]) >> 5
 		g := int(pixels[i*3+1]) >> 5
 		b := int(pixels[i*3+2]) >> 5

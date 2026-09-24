@@ -315,7 +315,7 @@ func TestLogoCrossingRefineStart(t *testing.T) {
 	// 4.0 s = frame 100 (first absent frame).
 	fps := 25.0
 	logo := make([]float64, 250)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		logo[i] = 0.9
 	}
 	got := logoCrossingRefine(4.5, 2.0, logo, 0.10, fps, true)
@@ -361,7 +361,7 @@ func TestLogoCrossingRefinePrefersClosestCrossing(t *testing.T) {
 	// rough = frame 180 (= 7.2s). Closest START crossing is frame 200 (= 8.0s).
 	fps := 25.0
 	logo := make([]float64, 300)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		logo[i] = 0.9
 	}
 	for i := 150; i < 200; i++ {

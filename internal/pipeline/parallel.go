@@ -122,10 +122,7 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 		return nil, fmt.Errorf("probe returned fps=%f duration=%f — cannot plan chunks",
 			info.FPS, info.DurationS)
 	}
-	w := opts.Workers
-	if w < 1 {
-		w = 1
-	}
+	w := max(opts.Workers, 1)
 	plans := planChunks(info.DurationS, w)
 
 	// Audio RMS is per-recording (one ffmpeg pass over the whole
@@ -190,7 +187,7 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 func planChunks(totalS float64, workers int) []chunkPlan {
 	plans := make([]chunkPlan, workers)
 	chunkDur := totalS / float64(workers)
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		plans[i].index = i
 		plans[i].startS = float64(i) * chunkDur
 		if i == workers-1 {
@@ -463,7 +460,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 			bc := make([]float64, nFrames)
 			if boundary != nil && !nnEmbedFail && len(nnEmbeds) == nFrames*1280 {
 				embs := make([][]float32, nFrames)
-				for i := 0; i < nFrames; i++ {
+				for i := range nFrames {
 					embs[i] = nnEmbeds[i*1280 : (i+1)*1280]
 				}
 				if s := boundary.BoundaryScores(embs, d.FPS); len(s) == nFrames {

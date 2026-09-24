@@ -95,7 +95,7 @@ func ExpandSpeakerToFrames(windows []SpeakerWindow, fps float64, nFrames int) []
 	if hop <= 0 {
 		return out
 	}
-	for i := 0; i < nFrames; i++ {
+	for i := range nFrames {
 		t := float64(i) / fps
 		idx := int(t / hop)
 		if idx < 0 || idx >= len(windows) {

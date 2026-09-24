@@ -245,7 +245,7 @@ func liesText(helfer string, bilder []string) (map[string]string, error) {
 		return nil, fmt.Errorf("ocr-helfer: %w", err)
 	}
 	m := make(map[string]string, len(bilder))
-	for _, z := range strings.Split(string(out), "\n") {
+	for z := range strings.SplitSeq(string(out), "\n") {
 		if z == "" {
 			continue
 		}

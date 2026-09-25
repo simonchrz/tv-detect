@@ -1406,10 +1406,31 @@ def _playlist_duration_s(path):
         return 0.0
 
 
+# Warum get_source None lieferte. Nur QUELLE_FEHLT ist endgueltig (der Pi
+# hat keine .ts mehr, und hier liegt auch keine); alles andere ist
+# vorlaeufig und darf keinen Aufgabe-Strike ausloesen.
+QUELLE_OK = "ok"
+QUELLE_FEHLT = "fehlt"      # Pi 404, nichts im Cache
+QUELLE_LAEUFT = "laeuft"    # Pi 425, Aufnahme laeuft noch
+QUELLE_FEHLER = "fehler"    # 5xx, Netz, abgeschnittener Download
+
+
 def get_source(uuid):
     """Return local .ts path. Cached: serve from disk. Cold: HTTP-fetch
     + cache for next time. Falls back to None on any error — caller
     should use the HTTP URL directly as a last resort."""
+    return get_source_mit_grund(uuid)[0]
+
+
+def get_source_mit_grund(uuid):
+    """Wie get_source, aber (pfad, grund) mit grund aus QUELLE_*.
+
+    ⚠️ None allein sagt nicht, OB die Quelle fehlt. process_detect las es bis
+    2026-09-25 als "HLS-VOD-only orphan" und gab sofort auf (force-Strike +
+    detect-give-up, Marker weg) — auch bei 425, 5xx, einem Netzaussetzer
+    oder einem verworfenen abgeschnittenen Download. Ein Pi-Neustart
+    waehrend eines Detect-Schubs konnte so eine ganze Warteschlange still
+    aufgeben lassen."""
     cache_path = SOURCE_CACHE / f"{uuid}.ts"
     if cache_path.exists() and cache_path.stat().st_size > 100_000_000:
         # Source-freshness guard: if the Pi re-filtered/trimmed this recording,
@@ -1434,7 +1455,7 @@ def get_source(uuid):
             # fall through to the cold-fetch path below
         else:
             _atime_auffrischen(cache_path)  # nur atime, fuer die LRU-Raeumung
-            return cache_path
+            return cache_path, QUELLE_OK
     if cache_path.exists():
         try: cache_path.unlink()  # stub from a half-finished fetch
         except Exception: pass
@@ -1467,7 +1488,7 @@ def get_source(uuid):
             print(f"  cache-fill TRUNCATED {uuid}: "
                   f"{actual}/{expected} bytes "
                   f"({100*actual/expected:.1f}%), discarded", flush=True)
-            return None
+            return None, QUELLE_FEHLER  # abgeschnitten, naechster Zyklus
         try:
             os.replace(tmp, cache_path)  # atomic
         except OSError:
@@ -1476,7 +1497,7 @@ def get_source(uuid):
             if cache_path.exists() and cache_path.stat().st_size > 100_000_000:
                 try: tmp.unlink()
                 except Exception: pass
-                return cache_path
+                return cache_path, QUELLE_OK
             raise
         size_mb = cache_path.stat().st_size / 1e6
         print(f"  cached {uuid} ({size_mb:.0f} MB in "
@@ -1493,7 +1514,7 @@ def get_source(uuid):
             print(f"  source {uuid}: recording in progress (425), "
                   f"cooldown {FAIL_COOLDOWN_S}s", flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
-            return None
+            return None, QUELLE_LAEUFT
         if e.code == 404:
             # No raw .ts on the Pi for this uuid: HLS-VOD-only orphan (the
             # original was already dropped and never cached here). Nothing
@@ -1503,14 +1524,14 @@ def get_source(uuid):
                 _known_orphans.add(uuid)
                 print(f"  source {uuid}: 404 — HLS-VOD-only orphan, "
                       f"skipping in future prefetch", flush=True)
-            return None
+            return None, QUELLE_FEHLT
         print(f"  cache-fill err: HTTP {e.code} {e.reason}", flush=True)
-        return None
+        return None, QUELLE_FEHLER
     except Exception as e:
         print(f"  cache-fill err: {e}", flush=True)
         try: tmp.unlink()
         except Exception: pass
-        return None
+        return None, QUELLE_FEHLER
     # ⚠️ Ab hier liegt die Quelle fertig im Cache. Raeumung und Dedup-Signal
     # standen bis 2026-09-25 INNERHALB des try oben: ein stat() der Raeumung
     # auf eine parallel geloeschte Datei warf, der `except Exception` fing es
@@ -1528,7 +1549,7 @@ def get_source(uuid):
         _drop_pi_source(uuid)
     except Exception as e:
         print(f"  drop-pi-source err (Download ok): {e}", flush=True)
-    return cache_path
+    return cache_path, QUELLE_OK
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
@@ -2381,11 +2402,29 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
     full per-channel knob set — Pi-side tv-detect doesn't currently
     pass NN flags so this offload also fixes the NN-not-actually-used
     bug in production detection."""
-    cfg = http_get_json(f"{GATEWAY}/api/internal/detect-config/{uuid}")
-    local = get_source(uuid)
+    # Die detect-config ist ein Pi-Aufruf wie jeder andere: scheitert er
+    # (Neustart, Netz), ist das vorlaeufig. Bis 2026-09-25 flog die Ausnahme
+    # aus process_detect heraus und _run_detect zaehlte sie als Strike — drei
+    # Pi-Aussetzer, und eine gesunde Aufnahme galt als aufgegeben.
+    try:
+        cfg = http_get_json(f"{GATEWAY}/api/internal/detect-config/{uuid}")
+    except Exception as e:
+        print(f"  detect {uuid}: detect-config err (vorlaeufig, kein "
+              f"Strike): {e}", flush=True)
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        return False
+    local, quelle_grund = get_source_mit_grund(uuid)
+    if not local and quelle_grund != QUELLE_FEHLT:
+        # 425 (laeuft noch), 5xx, Netz, verworfener abgeschnittener Download:
+        # nichts davon sagt, dass die Aufnahme kaputt ist. Cooldown, Marker
+        # bleiben, KEIN Strike — der naechste Zyklus holt die Quelle.
+        print(f"  detect {uuid}: Quelle gerade nicht holbar "
+              f"({quelle_grund}) — Cooldown, kein Strike", flush=True)
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        return False
     if not local:
-        # No local cache and get_source could not fetch one, which for a
-        # recording whose Pi .ts is gone means 404. Falling through would hand
+        # No local cache and the Pi answered 404 for the source. Falling
+        # through would hand
         # ffmpeg an https:// URL it cannot even open (the gateway cert does not
         # verify), so the detect fails on the probe, burns a slot and collects a
         # strike — three times, then gives up anyway. An HLS-VOD-only orphan is
@@ -2395,10 +2434,12 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
         print(f"  detect {uuid}: no source (Pi 404, nothing cached) — "
               f"HLS-VOD-only orphan, giving up", flush=True)
         _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
-        try:
-            _record_detect_failure(uuid, force=True)
-        except Exception:
-            pass
+        # Ein Nur-Dump-Lauf gibt nichts auf (s. rc!=0-Zweig unten).
+        if not nur_dump:
+            try:
+                _record_detect_failure(uuid, force=True)
+            except Exception:
+                pass
         return False
     src_url = str(local)
     slug = cfg.get("channel_slug") or ""

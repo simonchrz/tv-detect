@@ -236,24 +236,55 @@ def flanken_kanten(auto, dump):
     return neu, wahl
 
 
+def je_aufnahme(eintraege):
+    """Ein Eintrag je uuid: der LETZTE menschliche, sonst der letzte.
+
+    ⚠️ Bis 2026-09-25 zaehlte je Aufnahme nur der ERSTE Fund, und spaetere
+    Staende wurden gar nicht erst geschrieben. Das passt nicht zur
+    Datenstruktur: das Ledger ist append-only (eine Zeile je gesehenem
+    Stand), ads_user.json dagegen wird bei jedem Speichern IN PLACE
+    ersetzt — und die App schickt kein reviewed_by, der Server laesst das
+    Feld dann weg (tv-recorder ads.go). Ein Agentenlabel, das ein Mensch
+    spaeter korrigiert, ist danach also eine Menschen-Datei; der
+    Agenten-Stand existiert nur noch im Ledger. Blieb die Aufnahme als
+    "agent" stehen, fehlte sie O13, obwohl ein Mensch sie beurteilt hat —
+    und zaehlte in O14 mit Kanten, die niemand mehr vertritt.
+    """
+    letzte, mensch = {}, {}
+    for e in eintraege:
+        u = e.get("uuid")
+        letzte[u] = e
+        if e.get("label_quelle", "mensch") == "mensch":
+            mensch[u] = e
+    return [mensch.get(u, e) for u, e in letzte.items()]
+
+
 def sammle():
-    gesehen = set()
+    # uuid -> Quelle des zuletzt geschriebenen Stands. Ein weiterer Stand
+    # wird nur geschrieben, wenn er MENSCHLICH ist und der bisherige nicht
+    # (s. je_aufnahme) — sonst bleibt es bei einer Zeile je Aufnahme.
+    gesehen = {}
     if LEDGER.exists():
         for z in LEDGER.read_text().splitlines():
             if z.strip():
                 try:
-                    gesehen.add(json.loads(z)["uuid"])
+                    e = json.loads(z)
+                    q = e.get("label_quelle", "mensch")
+                    if gesehen.get(e["uuid"]) != "mensch":
+                        gesehen[e["uuid"]] = q
                 except Exception:
                     pass
     neu = 0
     with open(LEDGER, "a") as f:
         for d in sorted(SNAPSHOT.glob("_rec_*")):
             u = d.name[5:]
-            if u in gesehen:
+            if gesehen.get(u) == "mensch":
                 continue
             up = d / "ads_user.json"
             quelle = label_quelle(up) if up.is_file() else None
             if quelle in (None, "auto"):
+                continue
+            if u in gesehen and quelle != "mensch":
                 continue
             # ⚠️ DER Filter: nur Labels, die nach der Aktivierung entstanden.
             if reviewed_at(up) < AKTIVIERUNG:
@@ -313,7 +344,8 @@ def auswerten():
     if not LEDGER.exists():
         print("Noch keine Schatten-Zeilen.")
         return 0
-    eintraege = [json.loads(z) for z in LEDGER.read_text().splitlines() if z.strip()]
+    eintraege = je_aufnahme(
+        [json.loads(z) for z in LEDGER.read_text().splitlines() if z.strip()])
     mit_q = [(e["uuid"], k, e.get("label_quelle", "mensch"))
              for e in eintraege for k in e["kanten"]]
     # ⚠️ "auto" fliegt auch aus O14 — anders als Agent-Labels, die dort

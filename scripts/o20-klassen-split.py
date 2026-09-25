@@ -57,8 +57,12 @@ def anker_maske(u, n):
     return m
 
 
-def lade(eimer, limit=None, schritt=1):
+def lade(eimer, limit=None, schritt=1, mit_uuids=False):
     """(X, y3, uuid-Index) fuer einen Split-Eimer.
+
+    mit_uuids=True haengt die Liste der geladenen uuids an (Position =
+    Wert im uuid-Index) — O26 braucht sie, um die OCR-Spur je Aufnahme
+    zuzuordnen. Vorgabe False: Rueckgabe unveraendert fuer O20-O22.
 
     y3: 0 = Sendung, 1 = Werbung MIT Anker, 2 = Werbung OHNE Anker.
     Der binaere Arm bildet daraus spaeter y>0.
@@ -67,7 +71,7 @@ def lade(eimer, limit=None, schritt=1):
     ziel = sorted(u for u, v in led.items() if v == eimer)
     if limit:
         ziel = ziel[:limit]
-    Xs, ys, recs = [], [], []
+    Xs, ys, recs, geladen = [], [], [], []
     for i, u in enumerate(ziel):
         f = ARCH / f"{u}.npz"
         if not f.is_file():
@@ -115,9 +119,11 @@ def lade(eimer, limit=None, schritt=1):
         Xs.append(F)
         ys.append(y)
         recs.append(np.full(F.shape[0], len(recs), np.int32))
+        geladen.append(u)
     if not Xs:
-        return None, None, None
-    return np.vstack(Xs), np.concatenate(ys), np.concatenate(recs)
+        return (None, None, None, []) if mit_uuids else (None, None, None)
+    aus = (np.vstack(Xs), np.concatenate(ys), np.concatenate(recs))
+    return aus + (geladen,) if mit_uuids else aus
 
 
 def standardisieren(Xtr, Xte):

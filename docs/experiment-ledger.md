@@ -121,6 +121,18 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O26 — Hebt OCR (Bildschirm-Text) als Zusatzspalte die binäre Leistung?
+
+*Status: **REGISTRIERT 2026-09-25**, offline-kopf-ab wie O22.
+Registrierung: `docs/o26-ocr-spalte-preregistration.md`, Skript
+`scripts/o26-ocr-spalte.py`. Kontrollarm-Rauschen vorab: sd 0.0041.
+Regel: Median ΔF1 (test mit Spur) ≥ +0.004 UND ≥ 4/5 Seeds positiv.*
+
+*Anlass: flächendeckende OCR-Spur (322 Aufnahmen); NN-Fehlersekunden
+liegen 5,5× so oft nahe einem OCR-Treffer wie richtige, auch nach Abstand
+zur Kante getrennt. Erfüllt → Produktionsweg nur VORSCHLAGEN (L5, Kosten
+im Detect messen). Verfehlt → Spur bleibt Werkzeug, kein Eingang.*
+
 ### O25 — Schadet es, die über den Defekt archivierten Aufnahmen aus dem Training zu nehmen?
 
 *Status: **ABGESCHLOSSEN 2026-09-24 — REGEL NICHT ERFÜLLT, kein belegter

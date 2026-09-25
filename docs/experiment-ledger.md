@@ -136,6 +136,14 @@ liegen 5,5× so oft nahe einem OCR-Treffer wie richtige, auch nach Abstand
 zur Kante getrennt. Erfüllt → Produktionsweg nur VORSCHLAGEN (L5, Kosten
 im Detect messen). Verfehlt → Spur bleibt Werkzeug, kein Eingang.*
 
+*Produktionsweg (L5-OK des Users 2026-09-25, "go"): MLP6-Kopf mit n_ocr=3,
+Nightly `--ocr-spalten` ab der Nacht zum 26.09. Kette: tv-detect-Lader
+0693bdc → Daemon gibt Spur mit 8d497b2 → tv-recorder with_audio für jedes
+MLP-Format e5472ce → Training. Probelauf mit Archiv-Kopie: Golden-Median
+0.958 (Nacht davor 0.961, Seed-Streuung 0.0096), Mittel 0.925 = gleich;
+head-to-head entfällt in der ersten Nacht (n_ocr 0→3). Tagesserie bleibt
+ohne OCR (O25 eingefroren).*
+
 ### O25 — Schadet es, die über den Defekt archivierten Aufnahmen aus dem Training zu nehmen?
 
 *Status: **ABGESCHLOSSEN 2026-09-24 — REGEL NICHT ERFÜLLT, kein belegter

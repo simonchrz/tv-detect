@@ -252,9 +252,17 @@ echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
     --audio-dynamik \
     --cluster-anker aus \
     --archiv-ausschluss "$HOME/src/tv-detect/docs/archiv-ausschluss-o25.json" \
+    --ocr-spalten \
     --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-25: --ocr-spalten (O26, ERFUELLT: dF1 +0.0313). Drei OCR-Spalten
+# ganz hinten, Kopf wird MLP6. Reihenfolge war Pflicht: erst tv-detect mit
+# MLP6-Lader (0693bdc), dann der Daemon, der die Spur mitgibt (8d497b2),
+# dann tv-recorder mit with_audio fuer jedes MLP-Format (e5472ce) — sonst
+# liefe der neue Kopf ohne Audio-Pegel. Erste Nacht: head-to-head entfaellt
+# (n_ocr 0 → 3), es schuetzen IoU- und Golden-Boden. Die Tagesserie bleibt
+# OHNE den Schalter (O25 laeuft, Registrierung ist eingefroren).
 # 2026-09-24: --archiv-ausschluss (O25, REGEL NICHT ERFUELLT = kein belegter
 # Schaden: Median +0.0005, 2/5 negativ). Als HYGIENE eingebaut, nicht als
 # Verbesserung: die 90 gelisteten Archiv-Eintraege tragen rohe

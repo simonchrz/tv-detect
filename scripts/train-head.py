@@ -516,9 +516,13 @@ class _DeployedMLP:
     composition changes (no historical IoU floor). Matches sklearn's
     MLPClassifier(activation='relu') binary forward: relu hidden + sigmoid out."""
 
-    def __init__(self, W1, b1, W2, b2, input_dim):
+    def __init__(self, W1, b1, W2, b2, input_dim, n_ocr=0):
         self.W1, self.b1, self.W2, self.b2 = W1, b1, W2, b2
         self.input_dim = input_dim
+        # Aus dem MLP6-Header; aeltere Formate haben keine OCR-Spalten.
+        # ⚠️ Nie aus der Breite ableiten: +3 OCR-Spalten auf einem nackten
+        # Kopf sind genau so breit wie ein v3-Zusatzblock (whisper+dp+dn).
+        self.n_ocr = n_ocr
 
     def predict_proba(self, X):
         h = np.maximum(X.astype(np.float64) @ self.W1 + self.b1, 0.0)  # relu
@@ -528,7 +532,7 @@ class _DeployedMLP:
 
 
 def load_deployed_mlp(path):
-    """Parse a v1..v5 ('MLP1'..'MLP5') head.bin into a _DeployedMLP, or
+    """Parse a v1..v6 ('MLP1'..'MLP6') head.bin into a _DeployedMLP, or
     None if it isn't one (legacy logreg head / missing / corrupt). Used for
     the head-to-head deploy gate; the caller must check .input_dim matches
     the candidate's feature dim."""
@@ -540,7 +544,17 @@ def load_deployed_mlp(path):
     if len(raw) < 40:
         return None
     magic = struct.unpack("<I", raw[:4])[0]
-    if magic == 0x35504C4D:  # "MLP5", version 5, 52-byte header
+    n_ocr = 0
+    if magic == 0x36504C4D:  # "MLP6", version 6, 56-byte header (O26)
+        if len(raw) < 56:
+            return None
+        hdr = struct.unpack("<14I", raw[:56])
+        if hdr[1] != 6 or hdr[13] not in (0, 3):
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        n_ocr = hdr[13]
+        off = 56
+    elif magic == 0x35504C4D:  # "MLP5", version 5, 52-byte header
         if len(raw) < 52:
             return None
         hdr = struct.unpack("<13I", raw[:52])
@@ -605,7 +619,7 @@ def load_deployed_mlp(path):
         b2 = take(output_dim)
     except Exception:
         return None
-    return _DeployedMLP(W1, b1, W2, b2, input_dim)
+    return _DeployedMLP(W1, b1, W2, b2, input_dim, n_ocr)
 
 
 class WeightedMLP:
@@ -2179,7 +2193,7 @@ def _churn_col(X, fenster=61):
 # Goldwert-Vektoren aneinander, wie bei hsmm.
 def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
                   kanal=True, whisper=False, temporal=False, churn=False,
-                  mp_col=None, maske=False):
+                  mp_col=None, maske=False, ocr=False):
     """Der Zusatzblock fuer EINE Aufnahme, Form (T, k).
 
     `X` sind die rohen Backbone-Merkmale der Aufnahme — zusammenhaengend und
@@ -2193,6 +2207,10 @@ def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
 
     `mp_col` ist eine Funktion (uuid, T) → (T, 1); None heisst "keine
     Minute-Prior-Spalte".
+
+    `ocr` haengt die drei OCR-Spalten (MLP6, O26) GANZ HINTEN an — aus
+    scripts/ocr_spalten.py, nach ABSOLUTER Sekunde wie Whisper, also auch
+    hier auf dem ungemaskten X. Keine Spur → drei Nullen.
     """
     T = X.shape[0]
     if n_chan is None:
@@ -2226,9 +2244,28 @@ def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
         teile.append(np.full((T, 1),
                              1.0 if _whisper_present(uuid) else 0.0,
                              dtype=np.float32))
+    if ocr:
+        teile.append(_ocr_modul().ocr_spalten(uuid, T))
     if not teile:
         return np.zeros((T, 0), dtype=np.float32)
     return np.hstack(teile).astype(np.float32)
+
+
+_OCR_MODUL = None
+
+
+def _ocr_modul():
+    """scripts/ocr_spalten.py, per Pfad geladen: train-head.py wird auch
+    ueber importlib aus anderen Verzeichnissen geholt (Audit, Sweep, Tests),
+    dann steht scripts/ nicht auf sys.path."""
+    global _OCR_MODUL
+    if _OCR_MODUL is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "ocr_spalten", Path(__file__).resolve().parent / "ocr_spalten.py")
+        _OCR_MODUL = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_OCR_MODUL)
+    return _OCR_MODUL
 
 
 def mit_zusatz(X, uuid, slug, chan_idx, n_chan=None, **kw):
@@ -2242,7 +2279,8 @@ def mit_zusatz(X, uuid, slug, chan_idx, n_chan=None, **kw):
 
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
                            wants_temporal=False, mp_col=None,
-                           wants_churn=False, wants_mask=False):
+                           wants_churn=False, wants_mask=False,
+                           wants_ocr=False):
     """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
     matrix a v2/v3 MLP teacher was trained on, so it scores identically in
     the label-hygiene pass.
@@ -2261,7 +2299,8 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
     nicht durch die Spaltenlage."""
     return mit_zusatz(X, uuid, slug, chan_idx,
                       whisper=wants_whisper, temporal=wants_temporal,
-                      churn=wants_churn, mp_col=mp_col, maske=wants_mask)
+                      churn=wants_churn, mp_col=mp_col, maske=wants_mask,
+                      ocr=wants_ocr)
 
 
 
@@ -2732,6 +2771,15 @@ def main():
                          "Aufnahmen sind nicht betroffen, das Archiv selbst "
                          "bleibt unangetastet). Siehe docs/o25-archiv-"
                          "bereinigung-preregistration.md")
+    ap.add_argument("--ocr-spalten", action="store_true",
+                    help="O26 (ERFUELLT 2026-09-25): drei OCR-Spalten "
+                         "(hinweis_nah, werbung_nah, spur_da) aus "
+                         "~/.cache/tvd-ocr-spur GANZ HINTEN anhaengen; "
+                         "schreibt einen MLP6-Kopf (n_ocr=3). Der Detect "
+                         "bekommt die Spur vom Daemon (--ocr-spur); ohne "
+                         "Spur sind die Spalten 0 wie im Training. "
+                         "Erste Nacht: head-to-head entfaellt "
+                         "(Architekturwechsel), es schuetzt der Golden-Boden.")
     ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="aus",
                     help="O24 (entschieden 2026-09-23: aus): was die "
                          "cluster_anchored-Spannen im Training "
@@ -4611,6 +4659,7 @@ def main():
     teacher_temporal = False
     teacher_churn = False
     teacher_mask = False
+    teacher_ocr = False
     teacher_mp_col = None     # v4 teacher: minute-prior closure from ITS sidecar
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
@@ -4640,7 +4689,12 @@ def main():
                 #
                 # Reihenfolge der Zusatzspalten (= Header-Vertrag):
                 #   whisper(1) temporal(2 oder 3) minuteprior(1) maske(1)
-                _extra = mlp.input_dim - (feat_dim + n_chan)
+                # OCR-Spalten (MLP6) stehen ganz hinten und kommen aus dem
+                # HEADER, nicht aus dieser Rechnung — ein nackter Kopf mit
+                # OCR (+3) waere sonst von einem v3-Block nicht zu
+                # unterscheiden.
+                teacher_ocr = mlp.n_ocr > 0
+                _extra = mlp.input_dim - (feat_dim + n_chan) - mlp.n_ocr
                 _bekannt = {
                     0: (False, False, False, False),
                     1: (True, False, False, False),   # v2
@@ -4687,7 +4741,8 @@ def main():
                           f"whisper={teacher_whisper}, "
                           f"temporal={teacher_temporal}"
                           f"{', churn' if teacher_churn else ''}"
-                          f"{', maske' if teacher_mask else ''})")
+                          f"{', maske' if teacher_mask else ''}"
+                          f"{', ocr' if teacher_ocr else ''})")
                 else:
                     print(f"label-hygiene: v2/v3 MLP teacher unalignable "
                           f"(input_dim={load_deployed_mlp(args.output).input_dim}, "
@@ -4729,7 +4784,8 @@ def main():
                 Xa = _augment_teacher_feats(r[3], uuid_slug.get(r[0], ""),
                                             teacher_chan_idx, r[0], teacher_whisper,
                                             teacher_temporal, teacher_mp_col,
-                                            teacher_churn, teacher_mask)
+                                            teacher_churn, teacher_mask,
+                                            teacher_ocr)
                 proba = teacher_mlp.predict_proba(Xa)[:, 1]
             else:
                 logits = r[3] @ teacher_w + teacher_b
@@ -5215,6 +5271,8 @@ def main():
     # die aelteren Archs schreiben n_temporal=2 in den Header, bekaemen aber
     # sonst drei Spalten — der Header-Vertrag flöge auf.
     wants_churn = wants_whispermask
+    # O26: orthogonal zur Architektur — jede Arch + OCR wird ein MLP6-Kopf.
+    wants_ocr = bool(getattr(args, "ocr_spalten", False))
     # Corpus-wide neutral fill for the minute-prior column (recordings
     # with no start_ts / channels with no histogram): mean of all prior
     # buckets ≈ base ad rate, so the column carries no signal instead of
@@ -5282,7 +5340,7 @@ def main():
                 whisper=wants_whisper, temporal=wants_temporal,
                 churn=wants_churn,
                 mp_col=_minuteprior_col if wants_minuteprior else None,
-                maske=wants_whispermask)
+                maske=wants_whispermask, ocr=wants_ocr)
 
         # Der komplette Zusatzblock, pro Aufnahme auf dem ROHEN X gebaut
         # und danach mit derselben Hygiene-Maske gesiebt wie die Basis.
@@ -5582,7 +5640,16 @@ def main():
                            int(getattr(args, "audio_dynamik_fenster", 30))
                            if getattr(args, "audio_dynamik", False) else 30)
             _audio_gleich = _audio_champ == _audio_kand
-            if (_dep is not None and _dep.input_dim == mlp_prod_in_dim
+            # O26: gleiche Breite heisst auch hier nicht gleiche Spalte —
+            # nackt+OCR (1285) ist so breit wie ein v3-Block.
+            _ocr_kand = 3 if wants_ocr else 0
+            if _dep is not None and _dep.n_ocr != _ocr_kand:
+                print(f"  ⚠️ head-to-head SKIPPED: OCR-Spalten differieren — "
+                      f"deployt n_ocr={_dep.n_ocr}, Kandidat n_ocr={_ocr_kand}. "
+                      f"Es schuetzen nur noch der historische IoU-Boden und "
+                      f"der Golden-Boden. Erwartet in der ERSTEN Nacht nach "
+                      f"dem Umschalten.")
+            elif (_dep is not None and _dep.input_dim == mlp_prod_in_dim
                     and (_dep_slugs or []) == _prod_slugs_wirksam
                     and _audio_gleich):
                 print("\n=== deployed-head re-eval (head-to-head, smooth=10s) ===")
@@ -5641,7 +5708,8 @@ def main():
         if _ho and test_recs_ch:
             ho_uuids = {u.strip() for u in _ho.split(",") if u.strip()}
             _depH = load_deployed_mlp(args.output)
-            if _depH is not None and _depH.input_dim == mlp_prod_in_dim:
+            if (_depH is not None and _depH.input_dim == mlp_prod_in_dim
+                    and _depH.n_ocr == (3 if wants_ocr else 0)):
                 test_uuids = {r[0] for r in test_recs}
                 ho_aug = _aug_test([r for r in per_rec if r[0] in ho_uuids])
                 hw = int(10 * args.fps_extract / 2)
@@ -6013,7 +6081,7 @@ def main():
                     whisper=wants_whisper, temporal=wants_temporal,
                     churn=wants_churn,
                     mp_col=_minuteprior_col if wants_minuteprior else None,
-                    maske=wants_whispermask)
+                    maske=wants_whispermask, ocr=wants_ocr)
             for _s in range(args.seed_sweep):
                 _m, _, _dim = _fit_eval(
                     f"SEED {_s} — Produktions-Architektur", _augment_prod,
@@ -6265,7 +6333,7 @@ def main():
                     whisper=wants_whisper, temporal=wants_temporal,
                     churn=wants_churn,
                     mp_col=_minuteprior_col if wants_minuteprior else None,
-                    maske=wants_whispermask)
+                    maske=wants_whispermask, ocr=wants_ocr)
             # Eintrag = (Spaltenbauer, Kopfbreite). Die Breite gehoert in
             # die Registry, nicht in den Fit-Aufruf — der Arm-NAME in den
             # Serien-Zeilen muss die ganze Architektur benennen.
@@ -7636,7 +7704,22 @@ def main():
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs) if wants_kanal else 0
-        if wants_whispermask:
+        if wants_ocr:
+            # MLP6 traegt alle Zaehler, also jede Arch + OCR. Die Werte
+            # folgen derselben Staffel wie v1..v5 darunter.
+            write_mlp_head_v6(path, clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=hd, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1 if wants_whisper else 0,
+                              n_temporal=(3 if wants_churn else
+                                          2 if wants_temporal else 0),
+                              n_minuteprior=1 if wants_minuteprior else 0,
+                              n_whispermask=1 if wants_whispermask else 0,
+                              n_ocr=3)
+        elif wants_whispermask:
             write_mlp_head_v5(path, clf,
                               input_dim=mlp_prod_in_dim,
                               hidden_dim=hd, backbone_dim=1280,
@@ -7818,7 +7901,8 @@ def main():
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
         if is_mlp_write:
-            fmt = ("MLP5 v5" if wants_whispermask else
+            fmt = ("MLP6 v6" if wants_ocr else
+                   "MLP5 v5" if wants_whispermask else
                    "MLP4 v4" if wants_minuteprior else
                    "MLP3 v3" if wants_temporal else
                    "MLP2 v2" if wants_whisper else "MLP1 v1")

@@ -4895,6 +4895,11 @@ def main():
                 if 0 <= idx < full_n:
                     yslice[idx] = 1
                     sw_full[idx] = base_w * 1.5
+            # ⚠️ y_train_parts hat OBEN schon eine KOPIE (r[4][mask]) — das
+            # Setzen hier kam im Gate-Fit nie an, nur im Refit (der r[4]
+            # liest). Das Gate pruefte also einen anderen Kopf als den
+            # ausgelieferten (Sweep 2026-09-25, E3). Teil neu nehmen.
+            y_train_parts[-1] = r[4][mask]
         # Bumper-confirmed boundaries: if an ads.json boundary has a
         # bumper within ±2 s, the ±2 s frame window around the boundary
         # gets bumper_boost× weight. Independent positive evidence that
@@ -5764,6 +5769,13 @@ def main():
              if r[3] is not None and len(r[3]) > 0])
         if len(y_test_concat) > 0:
             proba_mlp = mlp_prod_clf.predict_proba(X_test_concat)[:, 1]
+        # ⚠️ Sofort frei: eine zweite, verkettete Kopie ALLER Testmatrizen
+        # (~2-2,5 GB), die bis 2026-09-25 bis zum Refit liegen blieb — also
+        # durch den Speichergipfel (41-44 GB), dieselbe Klasse wie der
+        # SIGKILL-Fall (Memory training_stirbt_am_speicher). Sweep.
+        del X_test_concat
+        gc.collect()
+        if len(y_test_concat) > 0:
             # Clamp to (eps, 1-eps) so log(p/(1-p)) is finite even
             # when MLP saturates. eps=1e-6 keeps the tail of the
             # logit distribution sane (= log(1e6/1) ≈ 13.8) while
@@ -6870,9 +6882,22 @@ def main():
             and args.final_on_all and test_recs
             and mlp_prod_clf is not None):
         target_dim_all = max(r[3].shape[1] for r in per_rec)
+        # ⚠️ NUR train + test (Sweep 2026-09-25, E2). per_rec enthaelt auch den
+        # VERSIEGELTEN Satz ("weder Training noch Auswertung") — bis heute
+        # lernte head.bin ihn mit (821 Aufnahmen = 630 train + 139 test + 52
+        # versiegelt), und jede Gegenprobe auf den Versiegelten mass
+        # Trainingsdaten.
+        _refit_uuids = {r[0] for r in train_recs} | {r[0] for r in test_recs}
         keep_all = [r for r in per_rec
                     if r[3].shape[1] == target_dim_all
-                       and not (len(r) > 12 and r[12])]
+                       and not (len(r) > 12 and r[12])
+                       and r[0] in _refit_uuids]
+        # E3: dieselbe Hygiene-/Pseudo-Maske wie der Gate-Fit (Gewicht 0,
+        # keine Kopie — WeightedMLP.fit laesst 0-Zeilen selbst weg). Vorher
+        # lernte head.bin genau die Frames, die das Gate verworfen hatte
+        # (12101 in der Nacht zum 25.09.): ausgeliefert wurde nicht, was
+        # geprueft war. Testaufnahmen haben keine Maske (auch im Gate nicht).
+        _gate_maske = {r[0]: m for r, m in zip(train_recs, keep_masks)}
         n_chan_prod = len(mlp_prod_chan_slugs)
         prod_chan_idx_all = {s: i for i, s in enumerate(mlp_prod_chan_slugs)}
         # Zusatzblock je Aufnahme, in derselben Reihenfolge wie die
@@ -6920,6 +6945,9 @@ def main():
             nan_mask = logo_nan_mask_by_uuid.get(r[0])
             if nan_mask is not None and len(nan_mask) == T:
                 sw_arr[nan_mask] = 0.0
+            gm = _gate_maske.get(r[0])
+            if gm is not None and len(gm) == T:
+                sw_arr[~gm] = 0.0
             sw_parts.append(sw_arr)
         sw_all_ch = np.concatenate(sw_parts) if sw_parts else np.empty(0)
         # Zeilen mit Gewicht 0 (Aufnahme aelter als 180 d, Logo-NaN) bleiben
@@ -8070,9 +8098,13 @@ def main():
         # bypass turned out un-rollbackable for exactly this reason — only
         # head.bin was archived, the champion's 10-slug channel-map was gone.
         try:
+            # .audio.json gehoert dazu (Sweep 2026-09-25): sie sagt, ob die
+            # Audio-Spalte Pegel oder Schwankung traegt — ein Rollback ohne sie
+            # liess die Beilage des AKTUELLEN Kopfes liegen, und der Daemon
+            # fuetterte den alten Kopf mit der falschen Semantik.
             for suffix in (".calibration.json", ".test-set.json",
                            ".channel-map.json", ".minute-prior.json",
-                           ".per-rec-iou.json"):
+                           ".per-rec-iou.json", ".audio.json"):
                 live = Path(args.output).with_suffix(suffix)
                 if live.exists():
                     (archive_dir / f"head.{ts}{suffix}").write_text(

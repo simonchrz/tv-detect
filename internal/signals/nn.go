@@ -60,12 +60,17 @@ type NNDetector struct {
 	// missing whisper feed is indistinguishable from "audio says 50/50",
 	// and that was true for half the 2026-08 training corpus.
 	mlpNWhisperMask int
-	mlpW1           []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
-	mlpB1           []float32      // mlpHidden
-	mlpW2           []float32      // (mlpHidden, mlpOutDim) row-major
-	mlpB2           []float32      // mlpOutDim
-	mlpChanMap      map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
-	mlpChanIdx      int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
+	// 0 or 3 — OCR-Spalten (v6+, O26): hinweis_nah, werbung_nah, spur_da.
+	// Ganz HINTEN (Praefix-Vertrag). Werte je Sekunde aus mlpOCR, gesetzt
+	// per SetOCRSpalten (--ocr-spur); ohne Spur alle drei 0, wie im Training.
+	mlpNOCR    int
+	mlpOCR     *OCRSpalten
+	mlpW1      []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
+	mlpB1      []float32      // mlpHidden
+	mlpW2      []float32      // (mlpHidden, mlpOutDim) row-major
+	mlpB2      []float32      // mlpOutDim
+	mlpChanMap map[string]int // slug → idx; loaded from <head>.channel-map.json sidecar
+	mlpChanIdx int            // resolved channelSlug→mlpChanMap idx, or -1 (= unknown slug, fallback to all-zero one-hot)
 	// Per-recording whisper-prob array (length = recording duration in
 	// seconds). Set ONCE at recording start via SetWhisperProbs from
 	// the per-recording whisper.json. Indexed at inference by frame
@@ -273,6 +278,7 @@ func (d *NNDetector) reloadHead() error {
 	//   "MLP3" (v3) — v2 + L2-distance-to-prev/next-frame input slots
 	//   "MLP4" (v4) — v3 + minute-of-hour-prior input slot
 	//   "MLP5" (v5) — v4 + whisper-PRESENCE slot
+	//   "MLP6" (v6) — v5 + drei OCR-Spalten (O26), gleicher Lader wie v5
 	// Each gets its own loader because the header layout differs
 	// (v5 is 52 B, v4 48 B, v3 44 B, v2 40 B, v1 36 B). Falls through to the
 	// legacy LogReg size-detection path when no magic matches.
@@ -287,7 +293,9 @@ func (d *NNDetector) reloadHead() error {
 		case '4':
 			return d.loadMLPHeadV4(raw, mtime)
 		case '5':
-			return d.loadMLPHeadV5(raw, mtime)
+			return d.loadMLPHeadV5(raw, mtime, 5)
+		case '6':
+			return d.loadMLPHeadV5(raw, mtime, 6)
 		}
 		// Unknown MLPx version → fall through to LogReg size
 		// detection, which will fail with a clean error rather
@@ -351,6 +359,7 @@ func (d *NNDetector) reloadHead() error {
 	d.mlpNTemporal = 0
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -460,6 +469,7 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	d.mlpNTemporal = 0
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -651,6 +661,7 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	d.mlpNTemporal = nTemporal
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
 	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
@@ -766,6 +777,7 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	d.mlpNTemporal = nTemporal
 	d.mlpNMinutePrior = nMinutePrior
 	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
 	d.mlpMinutePrior = mpPrior
 	d.mlpMPNeutral = mpNeutral
 	d.mlpW1 = W1
@@ -808,23 +820,31 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 // whisper data exists for the recording, 0.0 otherwise. On this side
 // that is "the daemon passed --nn-whisper-json and it parsed", i.e.
 // d.mlpWhisperProbs != nil.
-func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64) error {
-	const headerLen = 52
+//
+// v6 (O26) ist v5 plus EIN Header-Feld n_ocr (0 oder 3) am Ende — derselbe
+// Lader, damit v5 und v6 nicht auseinanderlaufen koennen.
+func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) error {
+	headerLen := 52
+	magic := uint32(0x35504C4D) // "MLP5"
+	if version == 6 {
+		headerLen = 56
+		magic = 0x36504C4D // "MLP6"
+	}
 	if len(raw) < headerLen {
-		return fmt.Errorf("MLP5 head truncated: %d B < %d B header",
-			len(raw), headerLen)
+		return fmt.Errorf("MLP%d head truncated: %d B < %d B header",
+			version, len(raw), headerLen)
 	}
 	u32 := func(off int) uint32 {
 		return uint32(raw[off]) | uint32(raw[off+1])<<8 |
 			uint32(raw[off+2])<<16 | uint32(raw[off+3])<<24
 	}
-	if u32(0) != 0x35504C4D {
-		return fmt.Errorf("MLP5 head magic mismatch: got 0x%08x, want 0x35504C4D",
-			u32(0))
+	if u32(0) != magic {
+		return fmt.Errorf("MLP%d head magic mismatch: got 0x%08x, want 0x%08x",
+			version, u32(0), magic)
 	}
-	if version := u32(4); version != 5 {
-		return fmt.Errorf("MLP5 head version %d unsupported (this build reads v5)",
-			version)
+	if v := u32(4); v != version {
+		return fmt.Errorf("MLP%d head version %d unsupported (this build reads v%d)",
+			version, v, version)
 	}
 	inDim := int(u32(8))
 	hidden := int(u32(12))
@@ -837,18 +857,25 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64) error {
 	nTemporal := int(u32(40))
 	nMinutePrior := int(u32(44))
 	nWhisperMask := int(u32(48))
+	nOCR := 0
+	if version == 6 {
+		nOCR = int(u32(52))
+		if nOCR != 0 && nOCR != 3 {
+			return fmt.Errorf("MLP6 head n_ocr %d (erlaubt: 0 oder 3)", nOCR)
+		}
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP5 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
 			backbone, nnFeatDim)
 	}
 	if backbone+nLogo+nAudio+nChan+nWhisper+nTemporal+nMinutePrior+
-		nWhisperMask != inDim {
-		return fmt.Errorf("MLP5 head input_dim %d inconsistent with "+
+		nWhisperMask+nOCR != inDim {
+		return fmt.Errorf("MLP%d head input_dim %d inconsistent with "+
 			"backbone %d + logo %d + audio %d + chan %d + whisper %d + "+
-			"temporal %d + minuteprior %d + whispermask %d",
-			inDim, backbone, nLogo, nAudio, nChan, nWhisper, nTemporal,
-			nMinutePrior, nWhisperMask)
+			"temporal %d + minuteprior %d + whispermask %d + ocr %d",
+			version, inDim, backbone, nLogo, nAudio, nChan, nWhisper, nTemporal,
+			nMinutePrior, nWhisperMask, nOCR)
 	}
 	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
 	if len(raw) != expected {
@@ -895,6 +922,7 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64) error {
 	d.mlpNTemporal = nTemporal
 	d.mlpNMinutePrior = nMinutePrior
 	d.mlpNWhisperMask = nWhisperMask
+	d.mlpNOCR = nOCR
 	d.mlpMinutePrior = mpPrior
 	d.mlpMPNeutral = mpNeutral
 	d.mlpW1 = W1
@@ -1294,6 +1322,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	temporalOff := whisperOff + d.mlpNWhisper
 	minutePriorOff := temporalOff + d.mlpNTemporal
 	whisperMaskOff := minutePriorOff + d.mlpNMinutePrior
+	ocrOff := whisperMaskOff + d.mlpNWhisperMask
 	whisperPerSec := d.mlpWhisperProbs
 	// v5: 1.0 wenn fuer diese Aufnahme ueberhaupt Whisper-Daten
 	// vorliegen. Konstant ueber die ganze Aufnahme — der Daemon
@@ -1397,6 +1426,12 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 		if d.mlpNWhisperMask > 0 {
 			x[whisperMaskOff] = whisperMask
 		}
+		// OCR-Spalten (v6): absolute Sekunde wie bei Whisper. Ohne Spur
+		// (mlpOCR nil) alle drei 0 — genau wie ocr_spalten.py im Training.
+		if d.mlpNOCR > 0 {
+			h, w, da := d.mlpOCR.wert(int(chunkStartS + float64(i)/fps))
+			x[ocrOff], x[ocrOff+1], x[ocrOff+2] = h, w, da
+		}
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {
 			xk := x[k]
@@ -1436,6 +1471,15 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 func (d *NNDetector) SetStartTS(ts int64) {
 	d.mu.Lock()
 	d.startTS = ts
+	d.mu.Unlock()
+}
+
+// SetOCRSpalten liefert die OCR-Spalten der laufenden Aufnahme (aus
+// --ocr-spur). Nur ein v6-Kopf mit n_ocr=3 liest sie; alle anderen Formate
+// ignorieren den Aufruf. nil = keine Spur → Spalten 0.
+func (d *NNDetector) SetOCRSpalten(o *OCRSpalten) {
+	d.mu.Lock()
+	d.mlpOCR = o
 	d.mu.Unlock()
 }
 

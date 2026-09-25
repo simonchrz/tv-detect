@@ -72,6 +72,7 @@ func main() {
 		bumperStride     = flag.Int("bumper-stride", 5, "run bumper IoU every Nth frame (default 5 = 5fps at 25fps source). Boundary-snap only needs ~200ms precision so subsampling here gives ~5× speedup on the bumper-match phase without affecting block boundaries.")
 		nnBackbone       = flag.String("nn-backbone", "", "path to ONNX MobileNetV2 backbone (enables NN evidence). Empty = NN off.")
 		nnHead           = flag.String("nn-head", "", "path to head.bin (1280 weights + 1 bias as float32 LE). Auto-finds <backbone-dir>/head.bin if empty.")
+		nnOCRSpur        = flag.String("ocr-spur", "", "O26: path to the recording's full-coverage OCR track (tv-ocr-spur, ~/.cache/tvd-ocr-spur/<uuid>.json). Only a v6 head with n_ocr=3 reads it; other heads ignore it. Missing → OCR columns 0 (same as training without a spur).")
 		nnWhisperJSON    = flag.String("nn-whisper-json", "", "path to per-recording whisper.json (= ~/.cache/tv-whisper/<uuid>.whisper.json on the daemon side). When set AND the loaded head is MLP2 v2 (= n_whisper>0), each detected frame's whisper-prob is fed to the head as an additional input column. Ignored for MLP1 / LogReg heads. Missing file or unset → MLP2 forward pass falls back to neutral 0.5 per frame (= still works, just loses the +0.075 IoU Stage-4 gain).")
 		nnChannelSlug    = flag.String("channel-slug", "", "channel slug (kabel-eins/prosieben/rtl/sat-1/sixx/vox) — only used if the loaded head.bin is a +CHAN format (5148 or 5152 B). Empty / unknown slugs are silently treated as all-zero one-hot.")
 		nnStartTS        = flag.Int64("start-ts", 0, "recording wall-clock start (unix seconds, = the DVR grid's start_real). Only used when the loaded head is MLP4 v4 (n_minuteprior>0): each frame's minute-of-hour selects the per-channel P(ad|minute) prior from head.minute-prior.json. 0/unset → the sidecar's neutral value (head still works, loses the prior signal).")
@@ -303,6 +304,7 @@ func main() {
 		NNHeadPath:           *nnHead,
 		NNChannelSlug:        *nnChannelSlug,
 		NNWhisperJSON:        *nnWhisperJSON,
+		NNOCRSpur:            *nnOCRSpur,
 		NNStartTS:            *nnStartTS,
 		// Compute boundary confs when the caller will snap on them OR when
 		// dumping signals (so the replay/sweep can vary --boundary-snap

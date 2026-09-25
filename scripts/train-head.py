@@ -461,6 +461,54 @@ def write_mlp_head_v5(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+def write_mlp_head_v6(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0, n_temporal=0,
+                      n_minuteprior=0, n_whispermask=0, n_ocr=0):
+    """v6 = v5 + n_ocr (O26, 2026-09-25): drei OCR-Spalten GANZ HINTEN
+    (Praefix-Vertrag), aus scripts/ocr_spalten.py. Gleiche Pruefungen wie
+    v5; die Go-Seite liest v5 und v6 mit demselben Lader."""
+    import struct
+    if n_ocr not in (0, 3):
+        raise ValueError(f"n_ocr {n_ocr} (erlaubt: 0 oder 3)")
+    if len(mlp.coefs_) != 2 or len(mlp.intercepts_) != 2:
+        raise ValueError(f"expected single-hidden-layer MLP; got "
+                         f"{len(mlp.coefs_)} coef matrices")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if W1.shape != (input_dim, hidden_dim):
+        raise ValueError(f"W1 shape {W1.shape} != ({input_dim}, {hidden_dim})")
+    if b1.shape != (hidden_dim,):
+        raise ValueError(f"b1 shape {b1.shape} != ({hidden_dim},)")
+    output_dim = b2.shape[0]
+    if W2.shape != (hidden_dim, output_dim):
+        raise ValueError(f"W2 shape {W2.shape} != ({hidden_dim}, {output_dim})")
+    if (backbone_dim + n_logo + n_audio + n_channel + n_whisper + n_temporal
+            + n_minuteprior + n_whispermask + n_ocr != input_dim):
+        raise ValueError(
+            f"input_dim {input_dim} != backbone {backbone_dim} + "
+            f"logo {n_logo} + audio {n_audio} + chan {n_channel} + "
+            f"whisper {n_whisper} + temporal {n_temporal} + "
+            f"minuteprior {n_minuteprior} + whispermask {n_whispermask} + "
+            f"ocr {n_ocr}")
+    header = struct.pack("<14I",
+                         0x36504C4D,  # "MLP6" little-endian
+                         6, input_dim, hidden_dim, output_dim,
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper, n_temporal, n_minuteprior,
+                         n_whispermask, n_ocr)
+    body = (W1.tobytes() + b1.tobytes()
+            + W2.tobytes() + b2.tobytes())
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 class _DeployedMLP:
     """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
     so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test

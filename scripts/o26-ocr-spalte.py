@@ -51,23 +51,17 @@ def _o20():
 
 
 def ocr_spalten(uuid, n_sek):
-    """(n_sek, 3) je Sekunde: hinweis_nah, werbung_nah, spur_da."""
-    aus = np.zeros((n_sek, 3), np.float32)
-    p = SPUR / f"{uuid}.json"
-    if not p.is_file():
-        return aus
-    s = json.loads(p.read_text())
-    for sp in s.get("abgetastet") or []:
-        a, b = int(sp["von"]), min(n_sek, int(np.ceil(sp["bis"])))
-        aus[max(0, a):b, 2] = 1
-    for f in s.get("funde") or []:
-        t = int(f["time_s"])
-        lo, hi = max(0, t - FENSTER), min(n_sek, t + FENSTER + 1)
-        if f.get("hinweis"):
-            aus[lo:hi, 0] = 1
-        if f.get("werbemarker"):
-            aus[lo:hi, 1] = 1
-    return aus
+    """(n_sek, 3) je Sekunde: hinweis_nah, werbung_nah, spur_da. Die
+    Rechnung steht seit 2026-09-25 in ocr_spalten.py (eine Definition fuer
+    Training, Messung und die Go-Paritaet)."""
+    return _oc().ocr_spalten(uuid, n_sek, spur_dir=SPUR)
+
+
+def _oc():
+    spec = importlib.util.spec_from_file_location("ocr_spalten", _HIER / "ocr_spalten.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
 
 
 def spalten_fuer(rec, uuids, schritt):

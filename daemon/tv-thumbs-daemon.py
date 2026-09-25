@@ -691,8 +691,16 @@ def _maybe_evict_source_cache():
     200 Aufnahmen im Monat. Das reicht fuer etwa siebeneinhalb Monate,
     bis Stufe 1 greift — nicht fuer Jahre.
     """
-    files = sorted(SOURCE_CACHE.glob("*.ts"),
-                   key=lambda p: p.stat().st_atime)
+    # Parallel (Prefetch-Pool, Detect-Threads) kann eine Datei zwischen
+    # glob() und stat() verschwinden; die faellt dann einfach heraus.
+    def _atime(p):
+        try:
+            return p.stat().st_atime
+        except OSError:
+            return None
+    files = sorted((p for p in SOURCE_CACHE.glob("*.ts")
+                    if _atime(p) is not None),
+                   key=lambda p: _atime(p) or 0.0)
     if not files:
         return
     frei = _freier_platz_gb(SOURCE_CACHE)
@@ -750,8 +758,7 @@ def _maybe_evict_source_cache():
         if not pi_has:
             print(f"    ⚠️ raeume EINZIGE Kopie {uuid} — der Korpus "
                   f"verliert sie endgueltig", flush=True)
-        sz = oldest.stat().st_size
-        try: oldest.unlink(); total -= sz
+        try: oldest.unlink()
         except Exception: pass
 
 
@@ -1474,12 +1481,6 @@ def get_source(uuid):
         size_mb = cache_path.stat().st_size / 1e6
         print(f"  cached {uuid} ({size_mb:.0f} MB in "
               f"{time.time()-t0:.0f}s)", flush=True)
-        _maybe_evict_source_cache()
-        # T7 has it now → ask gateway to dedup the Pi-original .ts.
-        # Gateway's safety guards (age, HLS-VOD presence, sched_status)
-        # decide eligibility; daemon just signals "we have it cached".
-        _drop_pi_source(uuid)
-        return cache_path
     except urllib.error.HTTPError as e:
         try: tmp.unlink()
         except Exception: pass
@@ -1510,6 +1511,24 @@ def get_source(uuid):
         try: tmp.unlink()
         except Exception: pass
         return None
+    # ⚠️ Ab hier liegt die Quelle fertig im Cache. Raeumung und Dedup-Signal
+    # standen bis 2026-09-25 INNERHALB des try oben: ein stat() der Raeumung
+    # auf eine parallel geloeschte Datei warf, der `except Exception` fing es
+    # als "cache-fill err" und gab None zurueck — ein erfolgreicher Download
+    # galt als gescheitert (Detect ohne Quelle, Strike). Nebenarbeiten
+    # duerfen das Ergebnis nicht mehr umwerfen.
+    try:
+        _maybe_evict_source_cache()
+    except Exception as e:
+        print(f"  Quellen-Cache-Raeumung err (Download ok): {e}", flush=True)
+    # T7 has it now → ask gateway to dedup the Pi-original .ts.
+    # Gateway's safety guards (age, HLS-VOD presence, sched_status)
+    # decide eligibility; daemon just signals "we have it cached".
+    try:
+        _drop_pi_source(uuid)
+    except Exception as e:
+        print(f"  drop-pi-source err (Download ok): {e}", flush=True)
+    return cache_path
 
 CTX = ssl.create_default_context()
 CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE

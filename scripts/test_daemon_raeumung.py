@@ -85,5 +85,40 @@ class Raeumung(unittest.TestCase):
         self.assertTrue(self.f.exists())
 
 
+class DownloadBleibtErfolg(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.alt = (D.SOURCE_CACHE, D._maybe_evict_source_cache,
+                    D._drop_pi_source, D.urllib.request.urlopen)
+        D.SOURCE_CACHE = self.tmp
+        D._drop_pi_source = lambda u: "done"
+        body = b"y" * 5000
+        D.urllib.request.urlopen = lambda *a, **kw: Antwort(
+            200, body, {"Content-Length": str(len(body))})
+
+    def tearDown(self):
+        (D.SOURCE_CACHE, D._maybe_evict_source_cache,
+         D._drop_pi_source, D.urllib.request.urlopen) = self.alt
+
+    def test_raeumungsfehler_kippt_download_nicht(self):
+        def wirft():
+            raise FileNotFoundError("parallel geloescht")
+        D._maybe_evict_source_cache = wirft
+        p = D.get_source("dvr-x-2")
+        self.assertEqual(p, self.tmp / "dvr-x-2.ts")
+        self.assertTrue(p.exists())
+
+    def test_raeumung_uebersteht_verschwundene_datei(self):
+        D._maybe_evict_source_cache = self.alt[1]
+        # kaputter Symlink: glob() listet ihn, stat() wirft
+        os.symlink(self.tmp / "gibt-es-nicht", self.tmp / "dvr-weg-1.ts")
+        alt_frei = D._freier_platz_gb
+        D._freier_platz_gb = lambda p: 0.0
+        try:
+            D._maybe_evict_source_cache()   # darf nicht werfen
+        finally:
+            D._freier_platz_gb = alt_frei
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1760,9 +1760,23 @@ def http_download(url, dest_path):
                 return                          # Rueckfall ohne Header
         except Exception:
             pass
-    with urllib.request.urlopen(url, timeout=120, context=CTX) as r:
-        lm = r.headers.get("Last-Modified")
-        dest_path.write_bytes(r.read())
+    # ⚠️ tmp + rename. write_bytes schrieb IN PLACE: bei DETECT_PARALLEL=3 liest
+    # ein laufender tv-detect head.bin, waehrend ein zweiter Detect-Thread sie
+    # neu schreibt — ein halber Kopf, ohne Fehlermeldung. Ein abgebrochener
+    # Schreibvorgang (Platte voll) liess ausserdem eine gekuerzte Datei
+    # stehen. Der tmp-Name ist je Thread eindeutig (zwei Threads koennen
+    # dieselbe Datei gleichzeitig holen).
+    tmp = dest_path.with_name(
+        f"{dest_path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
+    try:
+        with urllib.request.urlopen(url, timeout=120, context=CTX) as r:
+            lm = r.headers.get("Last-Modified")
+            tmp.write_bytes(r.read())
+        os.replace(tmp, dest_path)
+    except BaseException:
+        try: tmp.unlink()
+        except OSError: pass
+        raise
     try:
         if lm:
             stand_pfad.write_text(lm.strip())
@@ -2300,7 +2314,23 @@ def _slugify_show(title: str) -> str:
     return s.strip("-")
 
 
+# Je uuid hoechstens EINE Sprecher-Extraktion zugleich. Zwei Detects derselben
+# Aufnahme (Wiederholung nach Cooldown, waehrend der alte Thread noch
+# extrahiert) schrieben sonst dieselbe .npz parallel; der zweite wartet jetzt
+# und findet danach die fertigen Artefakte vor (Sekunden statt Minuten).
+_speaker_sperren = {}
+_speaker_sperren_lock = threading.Lock()
+
+
 def _ensure_speaker_artifacts(uuid: str, src_path: str, show_title: str):
+    with _speaker_sperren_lock:
+        sperre = _speaker_sperren.setdefault(uuid, threading.Lock())
+    with sperre:
+        return _ensure_speaker_artifacts_ungesperrt(uuid, src_path, show_title)
+
+
+def _ensure_speaker_artifacts_ungesperrt(uuid: str, src_path: str,
+                                         show_title: str):
     """Three-step pre-detect: extract embeddings, update show centroid,
     compute per-recording speaker.csv. Returns CSV path or None on any
     failure (so the caller can fall through to non-speaker detect).
@@ -2505,7 +2535,13 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
         http_download(f"{GATEWAY}{cfg['head_url']}", head_path)
         http_download(f"{GATEWAY}{cfg['backbone_url']}", backbone_path)
     except Exception as e:
+        # ⚠️ Ohne Cooldown stand die uuid im naechsten Zyklus (5 s) wieder an,
+        # und jeder Versuch startete oben einen NEUEN Sprecher-Thread fuer
+        # dieselbe Aufnahme — bei einem laengeren Pi-Aussetzer Dutzende
+        # parallele Embedding-Extraktionen. Vorlaeufig, also kein Strike.
         print(f"  detect {uuid}: model fetch err: {e}", flush=True)
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        spk_executor.shutdown(wait=False)
         return False
     # MLP1 head.bin needs the channel-map sidecar to resolve the
     # recording's channel slug to a one-hot column. Fetch alongside;

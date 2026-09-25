@@ -89,5 +89,31 @@ class SpurFuerDetect(unittest.TestCase):
         self.assertIsNone(D._ocr_spur_fuer("u", self.q, TD / "mlp6-ocr.bin"))
 
 
+
+class Invalidierung(unittest.TestCase):
+    """Re-Filter: alle abgeleiteten Artefakte der ALTEN Quelle muessen weg."""
+
+    def test_raeumt_ocr_und_sprecher(self):
+        tmp = Path(tempfile.mkdtemp())
+        namen = ("OCR_SPUR_DIR", "EMB_CACHE", "SPK_CSV_CACHE",
+                 "TVD_FEATURES", "TVD_ARCHIVE", "WHISPER_CACHE")
+        alt = {n: getattr(D, n) for n in namen}
+        try:
+            for n in namen:
+                setattr(D, n, tmp / n)
+                (tmp / n).mkdir()
+            dateien = [tmp / "OCR_SPUR_DIR" / "u.json",
+                       tmp / "EMB_CACHE" / "u.npz",
+                       tmp / "SPK_CSV_CACHE" / "u.speaker.csv"]
+            for f in dateien:
+                f.write_text("x")
+            D._invalidate_derived("u")
+            for f in dateien:
+                self.assertFalse(f.exists(), f"{f.name} ueberlebt den Re-Filter")
+        finally:
+            for n, v in alt.items():
+                setattr(D, n, v)
+
+
 if __name__ == "__main__":
     unittest.main()

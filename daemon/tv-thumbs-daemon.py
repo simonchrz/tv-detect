@@ -1355,6 +1355,18 @@ def _invalidate_derived(uuid):
     try:
         if w.exists(): w.unlink(); n += 1
     except Exception: pass
+    # Dieselbe Fehlerklasse, im Sweep 2026-09-25 gefunden: die OCR-Spur
+    # (Zeitachse der ALTEN Quelle; das Training prueft sie seit O26 als
+    # Eingabespalte) und die Sprecher-Artefakte (_ensure_speaker_artifacts
+    # extrahiert nie neu, sobald die Datei existiert — der Show-Centroid
+    # lernte weiter aus dem falschen Kanal). Alle drei werden beim naechsten
+    # Zyklus neu erzeugt.
+    for p in (OCR_SPUR_DIR / f"{uuid}.json",
+              EMB_CACHE / f"{uuid}.npz",
+              SPK_CSV_CACHE / f"{uuid}.speaker.csv"):
+        try:
+            if p.exists(): p.unlink(); n += 1
+        except Exception: pass
     return n
 
 

@@ -43,9 +43,35 @@ def aus_spur(s, n_sek):
     return aus
 
 
-def ocr_spalten(uuid, n_sek, spur_dir=None):
-    """(n_sek, 3) float32 fuer eine Aufnahme; keine Spur → Nullen."""
+QUELLEN = Path.home() / ".cache/tv-detect-daemon/source"
+
+
+def spur_passt(s, quelle):
+    """Passt die Spur zur Quelle? Liegt keine Quelle im Cache, ist das nicht
+    pruefbar — dann gilt die Spur (der Daemon raeumt sie bei jedem Re-Filter
+    mit ab, _invalidate_derived)."""
+    try:
+        st = Path(quelle).stat()
+    except OSError:
+        return True
+    return (s.get("quelle_bytes") == st.st_size
+            and int(s.get("quelle_mtime", -1)) == int(st.st_mtime))
+
+
+def ocr_spalten(uuid, n_sek, spur_dir=None, quellen_dir=None):
+    """(n_sek, 3) float32 fuer eine Aufnahme; keine oder veraltete Spur →
+    Nullen.
+
+    ⚠️ Veraltet = gegen eine andere Quelle gerechnet (Groesse/mtime). Bis
+    2026-09-25 las das Training jede Spur ungeprueft, der Daemon dagegen
+    nur frische (_ocr_spur_frisch): nach einem Re-Filter lernte der Kopf
+    OCR-Spalten auf der alten Zeitachse, im Betrieb bekam dieselbe Aufnahme
+    Nullen — ein stiller Train/Serve-Bruch (Sweep).
+    """
     p = Path(spur_dir or SPUR) / f"{uuid}.json"
     if not p.is_file():
         return np.zeros((n_sek, BREITE), np.float32)
-    return aus_spur(json.loads(p.read_text()), n_sek)
+    s = json.loads(p.read_text())
+    if not spur_passt(s, Path(quellen_dir or QUELLEN) / f"{uuid}.ts"):
+        return np.zeros((n_sek, BREITE), np.float32)
+    return aus_spur(s, n_sek)

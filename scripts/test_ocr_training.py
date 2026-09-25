@@ -117,6 +117,27 @@ def test_v6_verweigert_falsche_ocr_breite():
     raise AssertionError("n_ocr=2 wurde geschrieben")
 
 
+
+
+def test_veraltete_spur_gibt_nullen():
+    """Spur gegen eine andere Quelle gerechnet → Nullen, wie im Betrieb."""
+    oc = TH._ocr_modul()
+    d = Path(tempfile.mkdtemp())
+    q = d / "quellen"; q.mkdir()
+    ts = q / "dvr-x-7.ts"; ts.write_bytes(b"x" * 1000)
+    st = ts.stat()
+    spur = dict(SPUR, quelle_bytes=1000, quelle_mtime=int(st.st_mtime))
+    (d / "dvr-x-7.json").write_text(json.dumps(spur))
+    frisch = oc.ocr_spalten("dvr-x-7", 40, spur_dir=d, quellen_dir=q)
+    assert frisch.sum() > 0, "frische Spur verworfen"
+    spur["quelle_bytes"] = 999
+    (d / "dvr-x-7.json").write_text(json.dumps(spur))
+    alt = oc.ocr_spalten("dvr-x-7", 40, spur_dir=d, quellen_dir=q)
+    assert not alt.any(), "veraltete Spur in den Spalten — Train/Serve-Bruch"
+    # Ohne Quelle im Cache nicht prüfbar → Spur gilt.
+    assert oc.ocr_spalten("dvr-x-7", 40, spur_dir=d, quellen_dir=d / "leer").sum() > 0
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

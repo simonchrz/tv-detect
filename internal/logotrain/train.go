@@ -127,7 +127,7 @@ func (t *Trainer) ComputeAt(persistence float64) Result {
 		return Result{}
 	}
 	w, h := t.opts.FrameW, t.opts.FrameH
-	threshold := uint32(float64(t.frameCount) * persistence)
+	threshold := t.schwelle(persistence)
 	minX, minY := w, h
 	maxX, maxY := -1, -1
 	edgePixels := 0
@@ -230,7 +230,7 @@ func (t *Trainer) WriteTemplateAt(w io.Writer, persistence float64) error {
 		return fmt.Errorf("no pixels met %.0f%% persistence over %d frames",
 			persistence*100, t.frameCount)
 	}
-	threshold := uint32(float64(t.frameCount) * persistence)
+	threshold := t.schwelle(persistence)
 	fmt.Fprintf(w, "logoMinX=%d\n", r.MinX)
 	fmt.Fprintf(w, "logoMaxX=%d\n", r.MaxX)
 	fmt.Fprintf(w, "logoMinY=%d\n", r.MinY)
@@ -277,6 +277,16 @@ func (t *Trainer) SaveTemplateAt(path string, persistence float64) error {
 	}
 	defer f.Close()
 	return t.WriteTemplateAt(f, persistence)
+}
+
+// schwelle is the per-pixel edge count a pixel needs at this persistence.
+//
+// ⚠️ At least 1. The product truncates, so with very few frames (1 frame ×
+// 0.85 = 0.85 → 0) the threshold was 0, every pixel's count is >= 0, and
+// the "logo" became the whole frame — a template that matches everything
+// and silently disables logo detection for that channel.
+func (t *Trainer) schwelle(persistence float64) uint32 {
+	return max(uint32(float64(t.frameCount)*persistence), 1)
 }
 
 func defaults(o *Opts) {

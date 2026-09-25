@@ -234,6 +234,17 @@ def naechte(zeilen):
     return aus
 
 
+def belegt_wechsel(zeilen):
+    """[(ts, n_belegt), …] an jeder Stelle, an der n_belegt sich aendert
+    (die erste Zeile immer). Genau ein Eintrag = konstant."""
+    aus = []
+    for e in zeilen:
+        nb = e.get("n_belegt")
+        if not aus or aus[-1][1] != nb:
+            aus.append((e.get("ts"), nb))
+    return aus
+
+
 def auswerten(pfad):
     """O23: driftet der Abstand, oder ist er ein konstanter Versatz?
 
@@ -266,6 +277,25 @@ def auswerten(pfad):
         print(f"O23 (Massstab belegt gegen alle): {len(zeilen)}/{N_SOLL} "
               f"Naechte — kein Zwischenstand, so registriert.")
         return 0
+
+    # ⚠️ Der Arm "belegt" ist nur dann EIN Arm, wenn seine Teilmenge ueber
+    # die Serie dieselbe bleibt. Die Registrierung sieht vor, dass sie
+    # waechst ("heute 22; waechst, wenn reviewt wird") — kommt ein Mitglied
+    # mitten in den zehn Naechten dazu, misst der Abstand vorher und nachher
+    # verschiedene Mengen, und ein "Drift" waere die Zusammensetzung. Bis
+    # 2026-09-25 wurde das nicht geprueft. Gezaehlt wird weiter nach der
+    # registrierten Regel (naechte()); nur das Urteil faellt dann nicht.
+    wechsel = belegt_wechsel(zeilen[:N_SOLL])
+    if len(wechsel) > 1:
+        print("\n" + "=" * 68)
+        print("O23 — KEIN URTEIL: die belegte Teilmenge hat sich innerhalb "
+              "der Serie geaendert")
+        print("=" * 68)
+        for ts, nb in wechsel:
+            print(f"  ab {ts}: n_belegt {nb}")
+        print("  Abstand vorher und nachher misst verschiedene Mengen — "
+              "die Haelften sind nicht vergleichbar.")
+        return 2
 
     erste, zweite = zeilen[:5], zeilen[5:N_SOLL]
     a1 = st.median([e.get("abstand", 0.0) for e in erste])

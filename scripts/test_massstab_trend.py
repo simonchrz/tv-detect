@@ -93,6 +93,34 @@ class DerRichtigeKopf(unittest.TestCase):
         self.assertNotIn('pr = lauf.get("champion")', SKRIPT.read_text())
 
 
+class BelegteTeilmengeBleibtGleich(unittest.TestCase):
+    """⚠️ naechte() pruefte nicht, ob n_belegt gleich bleibt. Waechst die
+    belegte Teilmenge mitten in der Serie, misst der Abstand vorher und
+    nachher verschiedene Mengen."""
+
+    @staticmethod
+    def _z(i, abstand, nb):
+        return {"ts": f"202609{i + 1:02d}T040000", "abstand": abstand,
+                "n_alle": 38, "n_belegt": nb}
+
+    def test_wechsel_gibt_kein_urteil(self):
+        r = lauf([self._z(i, -0.030 if i < 5 else -0.045, 22 if i < 7 else 23)
+                  for i in range(10)])
+        self.assertIn("KEIN URTEIL", r.stdout)
+        self.assertIn("n_belegt 23", r.stdout)
+        self.assertNotIn("REGEL ERFUELLT", r.stdout)
+        self.assertEqual(r.returncode, 2)
+
+    def test_konstant_urteilt_wie_bisher(self):
+        r = lauf([self._z(i, -0.030 if i < 5 else -0.045, 22) for i in range(10)])
+        self.assertIn("REGEL ERFUELLT", r.stdout)
+        self.assertEqual(r.returncode, 1)
+
+    def test_wechsel_nach_der_zehnten_nacht_stoert_nicht(self):
+        r = lauf([self._z(i, -0.030, 22 if i < 10 else 23) for i in range(12)])
+        self.assertIn("NICHT ERFUELLT", r.stdout)
+
+
 class DieRegelGreiftAnDerSchwelle(unittest.TestCase):
     def test_kein_zwischenstand_vor_zehn_naechten(self):
         r = lauf([-0.03] * 9)

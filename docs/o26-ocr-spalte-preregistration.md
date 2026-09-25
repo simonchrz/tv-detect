@@ -1,3 +1,12 @@
+> **ABGESCHLOSSEN 2026-09-25 — REGEL ERFÜLLT.** Median-ΔF1 **+0.0313**
+> (test mit Spur), **5 von 5** Seeds positiv (+0.022 / +0.032 / +0.023 /
+> +0.033 / +0.031); Schwelle +0.004 und 4/5. Kontrollarm reproduziert die
+> Vorabmessung Wert fuer Wert (Median 0.8815). Nebenwert alle test +0.0031
+> (nur 31 % der test-Zeilen haben eine Spur). Ergebnis:
+> `~/.cache/tvd-train-archive/o26-ergebnis.json`, Log `~/Library/Logs/o26-lauf.log`.
+> Konsequenz laut Registrierung: Produktionsweg VORSCHLAGEN, nicht bauen —
+> vorher die Kosten im Detect messen.
+
 # O26 — Hebt OCR (Bildschirm-Text) als Zusatzspalte die binäre Leistung? (Vorab-Registrierung)
 
 **Geschrieben 2026-09-25, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

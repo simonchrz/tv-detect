@@ -123,7 +123,10 @@ von 22 auf bis zu 51 heben.*
 
 ### O26 — Hebt OCR (Bildschirm-Text) als Zusatzspalte die binäre Leistung?
 
-*Status: **REGISTRIERT 2026-09-25**, offline-kopf-ab wie O22.
+*Status: **ABGESCHLOSSEN 2026-09-25 — REGEL ERFÜLLT**: Median ΔF1 +0.0313 (test
+mit Spur), 5/5 Seeds positiv, gut 7 sd des Kontrollarms; Nebenwert alle
+test +0.0031. Die erste Zusatzspalte seit O22, die NEUE Information
+bringt statt Umgerechnetes. Offline-kopf-ab wie O22.
 Registrierung: `docs/o26-ocr-spalte-preregistration.md`, Skript
 `scripts/o26-ocr-spalte.py`. Kontrollarm-Rauschen vorab: sd 0.0041.
 Regel: Median ΔF1 (test mit Spur) ≥ +0.004 UND ≥ 4/5 Seeds positiv.*

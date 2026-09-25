@@ -3,6 +3,7 @@ package signals
 import (
 	"fmt"
 	"math"
+	"os"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -34,7 +35,7 @@ import (
 //  4. ONNX forward → 1 logit
 //  5. Sigmoid → probability of "logo present" in [0, 1]
 type LogoCNNDetector struct {
-	session   *ort.AdvancedSession
+	session   ortSession
 	inTensor  *ort.Tensor[float32]
 	outTensor *ort.Tensor[float32]
 	frameW    int
@@ -47,6 +48,9 @@ type LogoCNNDetector struct {
 	// avoiding per-frame allocation. Layout: CHW (= ONNX-standard for
 	// vision nets). [3*64*64].
 	inputBuf []float32
+	// runFehlerGemeldet: one stderr line per detector (= per chunk), not
+	// one per frame.
+	runFehlerGemeldet bool
 }
 
 const (
@@ -146,13 +150,22 @@ func (d *LogoCNNDetector) Close() {
 
 // Confidence returns P(logo present) ∈ [0, 1] for this frame.
 // pixels is row-major rgb24, length 3*frameW*frameH.
+//
+// ⚠️ Without a result it answers 0.5, never 0: 0 is "logo absent", which
+// pulls the frame towards AD — a failed inference would open ad blocks in
+// running show. 0.5 is the pipeline's "no signal" (see runChunk's logo
+// default) and reads as present under Form's 0.10 threshold.
 func (d *LogoCNNDetector) Confidence(pixels []byte) float64 {
 	if d == nil || d.session == nil {
-		return 0
+		return 0.5
 	}
 	d.fillInput(pixels)
 	if err := d.session.Run(); err != nil {
-		return 0
+		if !d.runFehlerGemeldet {
+			d.runFehlerGemeldet = true
+			fmt.Fprintf(os.Stderr, "logo-cnn: inference failed (%v) — neutral 0.5\n", err)
+		}
+		return 0.5
 	}
 	logit := float64(d.outTensor.GetData()[0])
 	return 1.0 / (1.0 + math.Exp(-logit))

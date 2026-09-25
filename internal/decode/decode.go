@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
+	"strings"
 )
 
 // Frame is one decoded video frame.
@@ -43,9 +44,12 @@ type Decoder struct {
 	FPS    float64
 
 	cmd      *exec.Cmd
+	ctx      context.Context // the decoder's own context — cancelled by Close() or the caller
 	cancel   context.CancelFunc
+	stderr   *tailBuffer
 	frames   chan Frame
 	err      error
+	nFrames  int // frames delivered so far (reader goroutine only)
 	bytesPer int
 }
 
@@ -97,6 +101,11 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 
 	cctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cctx, "ffmpeg", args...)
+	// Keep the END of ffmpeg's stderr for the error message: the cause of
+	// an abort is the last line, while error-tolerant runs on corrupt TS
+	// can print thousands of harmless decode errors before it.
+	stderr := &tailBuffer{max: 2048}
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -112,7 +121,9 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 		Height:   h,
 		FPS:      info.FPS,
 		cmd:      cmd,
+		ctx:      cctx,
 		cancel:   cancel,
+		stderr:   stderr,
 		frames:   make(chan Frame, 4),
 		bytesPer: w * h * 3,
 	}
@@ -122,31 +133,47 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 
 func (d *Decoder) reader(r io.Reader) {
 	defer close(d.frames)
-	defer d.cmd.Wait()
+	d.err = d.readFrames(r)
+	if d.err != nil {
+		d.cancel() // nobody reads the pipe any more — don't let Wait hang on a blocked ffmpeg
+	}
+	waitErr := d.cmd.Wait()
+	// ⚠️ EOF on the pipe is NOT proof that ffmpeg finished: a crash or an
+	// abort mid-chunk also closes stdout, and the reader alone cannot tell
+	// that from a clean end. Until 2026-09-25 the exit status was dropped
+	// (`defer d.cmd.Wait()`), so a chunk cut short by a dying ffmpeg came
+	// back as a complete, error-free chunk with fewer frames — and every
+	// signal after it silently shifted. Only our own cancel (Close() or the
+	// caller's ctx) is an expected non-zero exit; the caller learns about
+	// that from its ctx, not from here.
+	if d.err == nil && waitErr != nil && d.ctx.Err() == nil {
+		d.err = fmt.Errorf("ffmpeg after %d frames: %w: %s",
+			d.nFrames, waitErr, d.stderr.String())
+	}
+}
+
+// readFrames slices the pipe into frames until EOF. A truncated final
+// frame (TS cut mid-stream) is a normal end; whether ffmpeg itself ended
+// cleanly is decided by the exit status in reader.
+func (d *Decoder) readFrames(r io.Reader) error {
 	buf := make([]byte, d.bytesPer)
-	idx := 0
 	for {
 		_, err := io.ReadFull(r, buf)
-		if err == io.EOF {
-			return
-		}
-		if err == io.ErrUnexpectedEOF {
-			// truncated final frame — typical for TS files cut mid-stream
-			return
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil
 		}
 		if err != nil {
-			d.err = fmt.Errorf("read frame %d: %w", idx, err)
-			return
+			return fmt.Errorf("read frame %d: %w", d.nFrames, err)
 		}
 		// Copy pixels: the receiver may stash them past the next iteration.
 		pix := make([]byte, d.bytesPer)
 		copy(pix, buf)
 		d.frames <- Frame{
-			Index:  idx,
-			TimeS:  float64(idx) / d.FPS,
+			Index:  d.nFrames,
+			TimeS:  float64(d.nFrames) / d.FPS,
 			Pixels: pix,
 		}
-		idx++
+		d.nFrames++
 	}
 }
 
@@ -161,3 +188,19 @@ func (d *Decoder) Close() error {
 	d.cancel()
 	return nil
 }
+
+// tailBuffer is an io.Writer that keeps only the last max bytes.
+type tailBuffer struct {
+	max int
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if over := len(t.buf) - t.max; over > 0 {
+		t.buf = t.buf[over:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return strings.TrimSpace(string(t.buf)) }

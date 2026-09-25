@@ -233,7 +233,12 @@ func FormHSMM(p []float64, o HSMMOpts) []Block {
 	}
 	cfg := [2]stateCfg{
 		{hsmmShowMinS, T, cumShow, logShowMu, o.ShowSD},
-		{int(o.MinBlockS), int(o.MaxBlockS), cumAd, logAdMu, o.AdSD},
+		// ⚠️ ceil, not int(): the backtrace below keeps an ad segment only
+		// if its length >= MinBlockS as a FLOAT. With int() a fractional
+		// MinBlockS (60.5) let the search pick a 60 s ad segment that the
+		// backtrace then dropped — the block vanished instead of becoming
+		// 61 s. Integer values (every production config) are unchanged.
+		{int(math.Ceil(o.MinBlockS)), int(o.MaxBlockS), cumAd, logAdMu, o.AdSD},
 	}
 
 	for t := 1; t <= T; t++ {

@@ -7,9 +7,11 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,7 +58,7 @@ type Result struct {
 	FPS              float64
 	Width            int
 	Height           int
-	FrameCount       int // total frames processed (sum of chunk frame counts)
+	FrameCount       int // length of the merged frame timeline (= every per-frame array); chunks re-anchored, see merge
 	Blackframes      []signals.BlackEvent
 	SceneCuts        []signals.SceneCut
 	IFrames          []float64 // ascending I-frame timestamps from ffprobe
@@ -167,6 +169,14 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	}
 	wg.Wait()
 	close(resCh)
+	// ⚠️ A cancelled ctx (SIGTERM/SIGINT) kills every ffmpeg; the decoder
+	// treats that as its own cancel and ends the chunk WITHOUT an error, so
+	// the chunks below look complete but are cut short. Returning them made
+	// main write a cutlist and --emit-signals-json from truncated data and
+	// exit 0. The run is only valid if nobody cancelled it.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("abgebrochen: %w", err)
+	}
 
 	results := make([]chunkRes, 0, len(plans))
 	for r := range resCh {
@@ -344,24 +354,30 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 	// deltas were ~25x smaller than trained + zeroed each batch edge).
 	// Memory: ~1280 floats/frame ≈ 13 MB per typical chunk — fine.
 	var (
-		nnPxBuf     [][]byte
-		nnEmbeds    []float32
-		nnLogoAll   []float64
-		nnRmsAll    []float64
-		nnEmbedFail bool
+		nnPxBuf   [][]byte
+		nnEmbeds  []float32
+		nnLogoAll []float64
+		nnRmsAll  []float64
+		nnErr     error
 	)
 	flushNN := func() {
 		if nn == nil || len(nnPxBuf) == 0 {
 			return
 		}
+		if nnErr != nil { // chunk already failed — don't burn backbone time
+			nnPxBuf = nnPxBuf[:0]
+			return
+		}
 		tNN := time.Now()
 		defer func() { out.nnNs += time.Since(tNN).Nanoseconds() }()
-		emb := nn.EmbedBatch(nnPxBuf)
-		if emb == nil {
-			// Backbone inference failure — mark so phase 2 falls back to
-			// neutral for the whole chunk (embedding offsets would
-			// otherwise desync from logo/rms indices).
-			nnEmbedFail = true
+		emb, err := nn.EmbedBatch(nnPxBuf)
+		if err != nil {
+			// ⚠️ Fails the chunk (and the run). Until 2026-09-25 a backbone
+			// failure silently turned the whole chunk into NN 0.5 — the
+			// HSMM then saw a flat stretch and the detect still exited 0.
+			// The frame loop keeps draining the decoder so ffmpeg ends
+			// normally; the error is returned after it.
+			nnErr = err
 		} else {
 			nnEmbeds = append(nnEmbeds, emb...)
 		}
@@ -450,6 +466,10 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		count++
 	}
 	flushNN() // any tail frames waiting in the batch buffer
+	if nnErr != nil {
+		out.err = nnErr
+		return out
+	}
 	// Phase 2: head pass over the whole chunk with correctly-timed
 	// whisper/temporal inputs (see the two-phase comment above).
 	if nn != nil {
@@ -459,9 +479,10 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		if len(audioRMS) > 0 {
 			rmsArg = nnRmsAll
 		}
-		if nnEmbedFail || len(nnEmbeds) != nFrames*1280 {
-			// Backbone failed somewhere — neutral chunk, same behaviour
-			// as the old per-batch failure path.
+		if len(nnEmbeds) != nFrames*1280 {
+			// Cannot happen after a successful backbone pass (one embedding
+			// per buffered frame); kept as a length guard so a future
+			// change can't desync the arrays.
 			neutral := make([]float64, nFrames)
 			for i := range neutral {
 				neutral[i] = 0.5
@@ -474,12 +495,12 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		}
 		out.nnNs += time.Since(tNN).Nanoseconds()
 		// Boundary scores off the SAME backbone embeddings (zero-copy
-		// per-frame views). Neutral 0 when the head is absent or the
-		// backbone failed — keeps the per-chunk length == nFrames so the
-		// merged timeline never desyncs.
+		// per-frame views). Neutral 0 when the boundary head is absent —
+		// keeps the per-chunk length == nFrames so the merged timeline
+		// never desyncs.
 		if opts.BoundaryHead {
 			bc := make([]float64, nFrames)
-			if boundary != nil && !nnEmbedFail && len(nnEmbeds) == nFrames*1280 {
+			if boundary != nil && len(nnEmbeds) == nFrames*1280 {
 				embs := make([][]float32, nFrames)
 				for i := range nFrames {
 					embs[i] = nnEmbeds[i*1280 : (i+1)*1280]
@@ -509,23 +530,76 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 // every caller.
 func toNNConfs(in []float64) []float64 { return in }
 
+// Fill values for frames a chunk did not deliver (see merge). Each is the
+// value the pipeline already uses for "this signal has nothing to say":
+//
+//   - NN 0.5: the backbone-failure fallback in runChunk and the head's
+//     no-head answer. Under the HSMM (production) 0.5 is an exactly equal
+//     ad/show emission, so the duration prior alone decides the gap.
+//   - Logo 0.5: the per-frame default in runChunk when no detector runs,
+//     and the CNN's neutral on inference failure. Form reads it as
+//     "present" (>= LogoThreshold 0.10), i.e. a gap never OPENS a block —
+//     the conservative side: a few missing frames must not cut show.
+//   - Bumper / start-bumper / boundary 0: "no match", the same value as a
+//     stride-skipped bumper frame and the absent boundary head. A padded
+//     frame must never look like a snap target.
+const (
+	fillNN      = 0.5
+	fillLogo    = 0.5
+	fillNoMatch = 0.0
+)
+
+// appendAligned appends exactly n values of src to dst: src is cut to n,
+// or padded with fill when shorter.
+func appendAligned(dst, src []float64, n int, fill float64) []float64 {
+	if len(src) >= n {
+		return append(dst, src[:n]...)
+	}
+	dst = append(dst, src...)
+	for range n - len(src) {
+		dst = append(dst, fill)
+	}
+	return dst
+}
+
 // merge stitches chunk-local results into full-file-timeline events
 // and a single logo-confidence array. Blackframe runs that span a
-// chunk boundary are reunited; suspicious scene-cuts at the very
-// first frame of chunks 2..N are dropped (they're artifacts of the
-// decoder starting fresh, not real content changes).
+// chunk boundary are reunited.
+//
+// ⚠️ Every chunk is RE-ANCHORED: chunk i owns exactly the global frames
+// [round(startS_i*fps), round(startS_{i+1}*fps)), and its per-frame arrays
+// are cut or padded (fill* above) to that span; the last chunk keeps all
+// it decoded. Plain appending, as until 2026-09-25, let every missing or
+// extra frame shift ALL later chunks along the frame axis, while the
+// time-based events (blackframes, silence, I-frames) stayed absolute — the
+// two axes drifted apart by the sum of all deviations. The ~15-20 extra
+// frames that the inexact `-ss` seek produces per recording were exactly
+// such a drift; they are now cut at each chunk's tail instead of pushing
+// the rest of the recording later. Scene-cut and letterbox frames are
+// shifted to the same global numbering; events in a cut-off tail go with
+// their frames.
 func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBumperStart, hasBoundary bool) *Result {
 	r := &Result{
 		FPS:    info.FPS,
 		Width:  info.Width,
 		Height: info.Height,
 	}
+	anchor := func(c chunkRes) int { return int(math.Round(c.startS * info.FPS)) }
+	var abweichung []string
 	for i, c := range chunks {
-		r.FrameCount += c.frameCount
 		r.LogoNs += c.logoNs
 		r.NNNs += c.nnNs
 		r.BumperNs += c.bumperNs
 		r.OtherNs += c.otherNs
+		base := anchor(c)
+		span := c.frameCount // last chunk: everything it decoded
+		if i+1 < len(chunks) {
+			span = anchor(chunks[i+1]) - base
+			if d := c.frameCount - span; d != 0 {
+				abweichung = append(abweichung, fmt.Sprintf("%d:%+d", c.index, d))
+			}
+		}
+		r.FrameCount = base + span
 		// Shift blackframes into full-file timeline.
 		for _, e := range c.blackframes {
 			r.Blackframes = append(r.Blackframes, signals.BlackEvent{
@@ -534,52 +608,58 @@ func merge(chunks []chunkRes, info decode.Info, hasLogo, hasNN, hasBumper, hasBu
 				DurationS: e.DurationS,
 			})
 		}
-		// Shift scene cuts; drop the very first cut of chunks 2..N
-		// (scene-cut requires a previous frame, and the "previous" of
-		// the first frame in a non-origin chunk comes from a different
-		// chunk's decoder state — artifact).
-		sc := c.sceneCuts
-		if i > 0 && len(sc) > 0 && sc[0].Frame == 1 {
-			sc = sc[1:]
-		}
-		for _, s := range sc {
+		// Scene cuts need no chunk-start filter: the SceneDetector only
+		// compares frames it decoded itself (hasPrev), so a cut at local
+		// frame 1 is a real cut between the chunk's first two frames. The
+		// old "drop sc[0] if Frame==1" deleted exactly those.
+		for _, sc := range c.sceneCuts {
+			if sc.Frame >= span {
+				continue
+			}
 			r.SceneCuts = append(r.SceneCuts, signals.SceneCut{
-				Frame:    s.Frame,
-				TimeS:    s.TimeS + c.startS,
-				Distance: s.Distance,
+				Frame:    base + sc.Frame,
+				TimeS:    sc.TimeS + c.startS,
+				Distance: sc.Distance,
 			})
 		}
 		if hasLogo {
-			r.LogoConfs = append(r.LogoConfs, c.logoConfs...)
+			r.LogoConfs = appendAligned(r.LogoConfs, c.logoConfs, span, fillLogo)
 		}
 		if hasNN {
-			r.NNConfs = append(r.NNConfs, c.nnConfs...)
+			r.NNConfs = appendAligned(r.NNConfs, c.nnConfs, span, fillNN)
 		}
 		if hasBumper {
-			r.BumperConfs = append(r.BumperConfs, c.bumperConfs...)
+			r.BumperConfs = appendAligned(r.BumperConfs, c.bumperConfs, span, fillNoMatch)
 		}
 		if hasBumperStart {
-			r.BumperStartConfs = append(r.BumperStartConfs, c.bumperStartConfs...)
+			r.BumperStartConfs = appendAligned(r.BumperStartConfs, c.bumperStartConfs, span, fillNoMatch)
 		}
 		if hasBoundary {
-			r.BoundaryConfs = append(r.BoundaryConfs, c.boundaryConfs...)
+			r.BoundaryConfs = appendAligned(r.BoundaryConfs, c.boundaryConfs, span, fillNoMatch)
 		}
-		// Drop the very first letterbox event of chunks 2..N — the
-		// detector emits a state-confirmation as soon as it has seen
-		// `hysteresis` frames of consistent state, which is meaningless
-		// for a chunk that started mid-stream. (We don't know the prior
-		// chunk's letterbox state without crossing the boundary.)
-		lb := c.letterbox
-		if i > 0 && len(lb) > 0 && lb[0].Frame < int(0.6*info.FPS) {
-			lb = lb[1:]
-		}
-		for _, e := range lb {
+		// Letterbox needs no chunk-start filter either: the detector takes
+		// its first frame's state silently (hasFirst) and only emits real
+		// flips it observed inside the chunk. The old "drop the first
+		// event if it is within 0.6 s" rested on a state-confirmation
+		// emission the detector does not have, and deleted real onsets /
+		// offsets right after a chunk start.
+		for _, e := range c.letterbox {
+			if e.Frame >= span {
+				continue
+			}
 			r.Letterbox = append(r.Letterbox, signals.LetterboxEvent{
-				Frame: e.Frame,
+				Frame: base + e.Frame,
 				TimeS: e.TimeS + c.startS,
 				Onset: e.Onset,
 			})
 		}
+	}
+	if len(abweichung) > 0 {
+		// chunk:delta (decoded − owned frames). Positive = cut at the
+		// chunk's tail, negative = padded. Single-digit values are the
+		// inexact -ss seek; large ones mean ffmpeg dropped frames.
+		fmt.Fprintf(os.Stderr, "merge: chunks re-anchored (chunk:frames) %s\n",
+			strings.Join(abweichung, " "))
 	}
 	// Reunite adjacent blackframes split across a chunk boundary.
 	r.Blackframes = coalesceBlack(r.Blackframes, 1.0/info.FPS+1e-3)

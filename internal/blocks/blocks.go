@@ -5,6 +5,8 @@
 package blocks
 
 import (
+	"math"
+
 	"github.com/simonchrz/tv-detect/internal/signals"
 )
 
@@ -31,7 +33,7 @@ type Opts struct {
 	NNGate            float64              // 0..0.5: ignore NN where |conf - 0.5| < NNGate (default 0 = always use NN). Set to e.g. 0.3 to only let NN vote when it's confident (conf < 0.2 or > 0.8) — keeps logo-only behaviour when NN is unsure.
 	NNSmoothS         float64              // rolling-mean window (in seconds, total) applied to nnConf before blending. 0 = off. A 10s mean (NNSmoothS=10) collapses single-frame backbone noise so the gating doesn't flip-flop boundaries; the deployed state machine already does temporal hysteresis but smoothing the raw NN signal recovers a much cleaner block-level result (per-frame acc stays similar, block-IoU jumps).
 	LogoSmoothS       float64              // rolling-mean window (s, total) applied to logoConf. 0 = off. Some channels (ProSieben/Galileo) show constant lower-third graphics that intermittently cover or noise-up the logo ROI — sub-second absent flickers prevent the state machine from ever satisfying its consecutive-present hysteresis, so a 5s mean kills the flicker without smearing real (minutes-long) ad transitions.
-	MaxAdGapS         float64              // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this (default 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
+	MaxAdGapS         float64              // post-refine merge: glue two adjacent ad blocks together if the gap between them is shorter than this. 0 = off (the CLI default is 30). Catches station promo slates between ad break halves where MinShowSegmentS already let the state machine close, but the resulting "show" gap is too short to be real show.
 	StartExtendS      float64              // pull each block's StartS back by this many seconds. Channel-specific systematic correction: users on some channels (RTL) consistently shift block-starts earlier than auto-detected, suggesting tv-detect's logo-loss latency runs late at the head of an ad break. Set per-channel from boundary-drift feedback; capped at the previous block's end (or 0 for the first block) so blocks never overlap.
 	EndExtendS        float64              // push each block's EndS forward by this many seconds. Same idea for the tail: VOX/RTL show ~30-40s of sponsor cards / "Heute 20:15" slates after the actual ad break that users systematically want skipped. Capped at the next block's start (or recording duration for the last block).
 	BumperSnapS       float64              // post-refine snap each block boundary to the bumper-match peak within ±this seconds. 0 = off (default 10). Strongest deterministic boundary signal — a per-channel bumper template ("WIE SIXX IST DAS DENN?", "Mein RTL", etc) is a programmer-placed semantic marker, not statistical inference. Used for BOTH ends: end-bumpers (passed via the bumperConf positional arg) snap block END to the LATEST high-conf frame; start-bumpers (passed via startBumperConf) snap block START to the EARLIEST high-conf frame. Same window/threshold for both kinds — the distinction is only which boundary they target.
@@ -70,7 +72,7 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 	iFrames []float64, nFrames int) []Block {
 
 	defaults(&opts)
-	if logoConf == nil || len(logoConf) == 0 {
+	if len(logoConf) == 0 {
 		return nil
 	}
 
@@ -352,154 +354,87 @@ func Form(opts Opts, logoConf, nnConf, bumperConf, startBumperConf, speakerConf,
 	// behaviour so a 20-min "no logo" stretch (e.g. live news) doesn't
 	// emit one giant block.
 	if opts.MaxBlockS > 0 {
-		blocks = splitLongBlocks(blocks, opts.MaxBlockS, black)
+		blocks = splitLongBlocks(blocks, opts.MaxBlockS, opts.MinBlockS, black)
 	}
 
 	// Step 5: per-block boundary correction from learned channel/show
-	// drift. SIGNED — positive StartExtendS pulls the block START
-	// EARLIER (extend backward), negative pushes it LATER (shrink
-	// from the front). Same symmetry for EndExtendS: positive extends
-	// forward, negative pulls back. Per-show drift learning may set
-	// either sign depending on which way the user systematically
-	// trims.
-	//
-	// Clamps:
-	//   START — between previous block's END (or 0) and current END
-	//           minus MinBlockS (don't shrink below the min-block size).
-	//   END   — between current START plus MinBlockS and next block's
-	//           START (or recording duration).
-	if opts.StartExtendS != 0 || opts.EndExtendS != 0 {
-		totalS := float64(nFrames) / opts.FPS
-		minDur := opts.MinBlockS
-		if minDur <= 0 {
-			minDur = 1.0
-		}
-		for i := range blocks {
-			ns := blocks[i].StartS - opts.StartExtendS
-			minStart := 0.0
-			if i > 0 {
-				minStart = blocks[i-1].EndS
-			}
-			maxStart := blocks[i].EndS - minDur
-			if ns < minStart {
-				ns = minStart
-			}
-			if ns > maxStart {
-				ns = maxStart
-			}
-			blocks[i].StartS = ns
+	// drift — see extendBlocks.
+	return extendBlocks(blocks, opts, nFrames)
+}
 
-			ne := blocks[i].EndS + opts.EndExtendS
-			maxEnd := totalS
-			if i+1 < len(blocks) {
-				maxEnd = blocks[i+1].StartS
-			}
-			minEnd := blocks[i].StartS + minDur
-			if ne > maxEnd {
-				ne = maxEnd
-			}
-			if ne < minEnd {
-				ne = minEnd
-			}
-			blocks[i].EndS = ne
+// extendBlocks applies Opts.StartExtendS / EndExtendS (Form step 5):
+// drift correction per block. SIGNED — positive StartExtendS pulls the
+// block START EARLIER (extend backward), negative pushes it LATER (shrink
+// from the front). Same symmetry for EndExtendS: positive extends
+// forward, negative pulls back. Per-show drift learning may set either
+// sign depending on which way the user systematically trims.
+//
+// Clamps:
+//
+//	START — between previous block's END (or 0) and current END
+//	        minus MinBlockS (don't shrink below the min-block size).
+//	END   — between current START plus MinBlockS and next block's
+//	        START (or recording duration).
+//
+// When the two limits of one edge cross, the NEIGHBOUR / recording bound
+// wins: a block may stay shorter than MinBlockS, but it never overlaps
+// another block or runs past the recording.
+func extendBlocks(blocks []Block, opts Opts, nFrames int) []Block {
+	if opts.StartExtendS == 0 && opts.EndExtendS == 0 {
+		return blocks
+	}
+	totalS := float64(nFrames) / opts.FPS
+	minDur := opts.MinBlockS
+	if minDur <= 0 {
+		minDur = 1.0
+	}
+	for i := range blocks {
+		ns := blocks[i].StartS - opts.StartExtendS
+		minStart := 0.0
+		if i > 0 {
+			minStart = blocks[i-1].EndS
 		}
+		maxStart := blocks[i].EndS - minDur
+		// ⚠️ Order matters: the neighbour / recording bounds are
+		// applied LAST so they win. When the two limits cross (a
+		// block already shorter than minDur next to its neighbour),
+		// the old order let the min-duration clamp push StartS
+		// before the previous block's END (overlap) and EndS past
+		// the next START or totalS.
+		if ns > maxStart {
+			ns = maxStart
+		}
+		if ns < minStart {
+			ns = minStart
+		}
+		blocks[i].StartS = ns
+
+		ne := blocks[i].EndS + opts.EndExtendS
+		maxEnd := totalS
+		if i+1 < len(blocks) {
+			maxEnd = blocks[i+1].StartS
+		} else if nFrames <= 0 {
+			maxEnd = math.Inf(1) // unknown length: no recording bound
+		}
+		minEnd := blocks[i].StartS + minDur
+		if ne < minEnd {
+			ne = minEnd
+		}
+		if ne > maxEnd {
+			ne = maxEnd
+		}
+		blocks[i].EndS = ne
 	}
 	return blocks
 }
 
-// refineBoundary snaps a rough boundary timestamp to the best matching
-// blackframe within radiusS, falling back to silence if no blackframe
-// fits. The snap is directional:
-//
-//   - isStart=true: logo confidence drops EARLY (logo fades out before
-//     the actual hard cut). The real ad-start blackframe is therefore
-//     LATER than the rough boundary. Prefer blackframes at or after
-//     roughS, but allow a small backward window in case the cut
-//     happened a few seconds before logo-loss (rare).
-//   - isStart=false: logo confidence rises LATE (we wait minPresent
-//     frames of "logo present" before declaring ad-end). The real
-//     ad-end blackframe is therefore EARLIER than the rough boundary.
-//     Prefer blackframes at or before roughS.
-//
-// Within the preferred direction, take the closest blackframe.
-func refineBoundary(roughS, radiusS float64, black []signals.BlackEvent,
-	silence []signals.SilenceEvent, isStart bool) float64 {
-	const backTolerance = 5.0 // small slack into the "wrong" direction
-
-	best := roughS
-	bestDist := radiusS + 1
-	for _, e := range black {
-		var anchor float64
-		if isStart {
-			anchor = e.EndS // ad starts where the black ended
-		} else {
-			anchor = e.StartS // ad ends where the black started
-		}
-		d := anchor - roughS
-		var dist float64
-		if isStart {
-			// Prefer anchor >= roughS (forward); allow small backward.
-			if d >= 0 {
-				dist = d
-			} else if -d <= backTolerance {
-				dist = -d * 2 // backward penalised
-			} else {
-				continue
-			}
-		} else {
-			// Prefer anchor <= roughS (backward); allow small forward.
-			if d <= 0 {
-				dist = -d
-			} else if d <= backTolerance {
-				dist = d * 2
-			} else {
-				continue
-			}
-		}
-		if dist <= radiusS && dist < bestDist {
-			best = anchor
-			bestDist = dist
-		}
-	}
-	if bestDist <= radiusS {
-		return best
-	}
-	// No blackframe nearby — fall back to silence boundary.
-	for _, e := range silence {
-		var anchor float64
-		if isStart {
-			anchor = e.EndS
-		} else {
-			anchor = e.StartS
-		}
-		d := anchor - roughS
-		var dist float64
-		if isStart {
-			if d >= 0 {
-				dist = d
-			} else if -d <= backTolerance {
-				dist = -d * 2
-			} else {
-				continue
-			}
-		} else {
-			if d <= 0 {
-				dist = -d
-			} else if d <= backTolerance {
-				dist = d * 2
-			} else {
-				continue
-			}
-		}
-		if dist <= radiusS && dist < bestDist {
-			best = anchor
-			bestDist = dist
-		}
-	}
-	return best
-}
-
-func splitLongBlocks(blocks []Block, maxS float64, black []signals.BlackEvent) []Block {
+// splitLongBlocks splits blocks longer than maxS at the internal
+// blackframe closest to the midpoint, recursively. A blackframe only
+// qualifies when BOTH halves keep at least minS: splitting near an edge
+// used to leave a sliver below MinBlockS (a few seconds of "ad" that no
+// other step removes), and the step-5 extend could then push that sliver
+// over its neighbour.
+func splitLongBlocks(blocks []Block, maxS, minS float64, black []signals.BlackEvent) []Block {
 	out := make([]Block, 0, len(blocks))
 	for _, b := range blocks {
 		if b.Duration() <= maxS {
@@ -510,26 +445,28 @@ func splitLongBlocks(blocks []Block, maxS float64, black []signals.BlackEvent) [
 		// closest to the midpoint; recurse on the two halves.
 		mid := (b.StartS + b.EndS) / 2
 		var splitAt float64
+		found := false
 		bestDist := b.Duration()
 		for _, e := range black {
 			anchor := (e.StartS + e.EndS) / 2
-			if anchor <= b.StartS || anchor >= b.EndS {
+			if anchor-b.StartS < minS || b.EndS-anchor < minS {
 				continue
 			}
 			d := abs(anchor - mid)
 			if d < bestDist {
 				splitAt = anchor
 				bestDist = d
+				found = true
 			}
 		}
-		if splitAt == 0 {
+		if !found {
 			out = append(out, b)
 			continue
 		}
 		left := []Block{{b.StartS, splitAt}}
 		right := []Block{{splitAt, b.EndS}}
-		out = append(out, splitLongBlocks(left, maxS, black)...)
-		out = append(out, splitLongBlocks(right, maxS, black)...)
+		out = append(out, splitLongBlocks(left, maxS, minS, black)...)
+		out = append(out, splitLongBlocks(right, maxS, minS, black)...)
 	}
 	return out
 }
@@ -559,9 +496,6 @@ func defaults(o *Opts) {
 	if o.RefineWindowS <= 0 {
 		o.RefineWindowS = 90
 	}
-	if o.MaxAdGapS <= 0 {
-		o.MaxAdGapS = 30
-	}
 	// BumperSnapS / BumperThreshold: only meaningful when the caller
 	// passed a non-empty bumperConf slice. Defaults are no-op safe (a
 	// zero-length conf slice short-circuits in snapToBumper).
@@ -584,6 +518,9 @@ func defaults(o *Opts) {
 	// "0 = off, positive = on" semantics. Production defaults live
 	// at the CLI flag declarations in cmd/tv-detect/main.go so test
 	// callers can opt out by passing 0 here without surprise.
+	// ⚠️ MaxAdGapS used to be forced to 30 here, so `--max-ad-gap 0`
+	// (documented "0 disables") silently merged at 30 s anyway. The
+	// production value is unchanged: the flag default is 30.
 }
 
 func abs(x float64) float64 {

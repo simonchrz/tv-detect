@@ -21,7 +21,7 @@ import (
 // Per-frame cost on M-series Mac CoreML execution provider: ~1-2 ms
 // for the backbone + a single fused multiply-add for the head.
 type NNDetector struct {
-	session   *ort.AdvancedSession
+	session   ortSession
 	inTensor  *ort.Tensor[float32]
 	outTensor *ort.Tensor[float32]
 	frameW    int
@@ -120,6 +120,13 @@ const (
 	nnBatch   = 32   // frames per ONNX inference call. CoreML on M-series benefits from batched matmul (= 2026-05-04 A/B 8/16/32/64 found 32 optimal: -20 % wall vs 8, -40 % backbone-phase sum). Sub-batches are zero-padded. Pairs 1:1 with pipeline/parallel.go nnBatchSize.
 )
 
+// ortSession is the part of *ort.AdvancedSession the detectors use — an
+// interface so tests can inject a failing Run without a real model.
+type ortSession interface {
+	Run() error
+	Destroy() error
+}
+
 var nnChannels = []string{
 	"kabel-eins", "prosieben", "rtl", "sat-1", "sixx", "vox",
 }
@@ -171,6 +178,32 @@ func initOrtRuntime() error {
 // one-hot feature when the loaded head is a +CHAN format. Empty or
 // unknown slugs map to all-zero one-hot — the head's bias still fires.
 func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlug string) (*NNDetector, error) {
+	chanIdx := -1
+	for i, s := range nnChannels {
+		if s == channelSlug {
+			chanIdx = i
+			break
+		}
+	}
+	d := &NNDetector{
+		frameW: frameW, frameH: frameH,
+		headPath:    headPath,
+		channelSlug: channelSlug,
+		channelIdx:  chanIdx,
+		mlpChanIdx:  -1,
+	}
+	// ⚠️ The head is loaded FIRST and a failure is FATAL. Until 2026-09-25
+	// a head that was named but not loadable (missing file, truncated
+	// download, missing channel-map / minute-prior sidecar, bad header)
+	// only printed one stderr line; every frame then scored 0.5, the HSMM
+	// decoded a flat emission (= duration prior only), the run exited 0
+	// and the daemon uploaded that as the recording's ads.json. A non-zero
+	// exit instead lands in the daemon's retry path (cooldown + counter).
+	// Loading before the ORT session also keeps this testable without a
+	// backbone.
+	if err := d.reloadHead(); err != nil {
+		return nil, fmt.Errorf("nn head %s: %w", headPath, err)
+	}
 	if err := initOrtRuntime(); err != nil {
 		return nil, fmt.Errorf("ort init: %w", err)
 	}
@@ -229,27 +262,7 @@ func NewNNDetector(backbonePath, headPath string, frameW, frameH int, channelSlu
 		outT.Destroy()
 		return nil, fmt.Errorf("session: %w", err)
 	}
-	chanIdx := -1
-	for i, s := range nnChannels {
-		if s == channelSlug {
-			chanIdx = i
-			break
-		}
-	}
-	d := &NNDetector{
-		session: sess, inTensor: inT, outTensor: outT,
-		frameW: frameW, frameH: frameH,
-		headPath:    headPath,
-		channelSlug: channelSlug,
-		channelIdx:  chanIdx,
-		mlpChanIdx:  -1,
-	}
-	if err := d.reloadHead(); err != nil {
-		// Head missing is not fatal — the detector returns 0.5 (no
-		// signal) until a head shows up. Useful for first-time runs
-		// before any training has happened.
-		fmt.Fprintf(os.Stderr, "nn: head not loaded (%v) — detector returns 0.5\n", err)
-	}
+	d.session, d.inTensor, d.outTensor = sess, inT, outT
 	return d, nil
 }
 
@@ -402,6 +415,9 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	nLogo := int(u32(24))
 	nAudio := int(u32(28))
 	nChan := int(u32(32))
+	if err := pruefeMLPKopfFelder("MLP1", hidden, outDim, nLogo, nAudio, 0, 0, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -511,6 +527,9 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	nAudio := int(u32(28))
 	nChan := int(u32(32))
 	nWhisper := int(u32(36))
+	if err := pruefeMLPKopfFelder("MLP2", hidden, outDim, nLogo, nAudio, nWhisper, 0, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP2 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -555,8 +574,14 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	d.mlpNAudio = nAudio
 	d.mlpNChannel = nChan
 	d.mlpNWhisper = nWhisper
-	// v2 → no temporal slots.
+	// v2 → no temporal/minute-prior/mask/OCR slots. Reset ALL of them:
+	// a hot reload from v4+ onto v2 kept the old counts, and the forward
+	// pass then wrote columns past the v2 input (panic or stale prior).
 	d.mlpNTemporal = 0
+	d.mlpNMinutePrior = 0
+	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
+	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
 	d.mlpW2 = W2
@@ -613,6 +638,9 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	nChan := int(u32(32))
 	nWhisper := int(u32(36))
 	nTemporal := int(u32(40))
+	if err := pruefeMLPKopfFelder("MLP3", hidden, outDim, nLogo, nAudio, nWhisper, nTemporal, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP3 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -720,6 +748,9 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	nWhisper := int(u32(36))
 	nTemporal := int(u32(40))
 	nMinutePrior := int(u32(44))
+	if err := pruefeMLPKopfFelder("MLP4", hidden, outDim, nLogo, nAudio, nWhisper, nTemporal, nMinutePrior, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP4 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -864,6 +895,10 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 			return fmt.Errorf("MLP6 head n_ocr %d (erlaubt: 0 oder 3)", nOCR)
 		}
 	}
+	if err := pruefeMLPKopfFelder(fmt.Sprintf("MLP%d", version), hidden, outDim,
+		nLogo, nAudio, nWhisper, nTemporal, nMinutePrior, nWhisperMask); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP5 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -937,6 +972,37 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 	d.headWithChan = false
 	d.headWithAudio = false
 	d.mu.Unlock()
+	return nil
+}
+
+// pruefeMLPKopfFelder rejects header values the forward pass cannot
+// represent. confidenceMLPChunk writes exactly ONE column for logo, audio,
+// whisper, minute prior and whisper mask, reads exactly one output
+// (mlpB2[0], mlpW2[j]) and fills 2 or 3 temporal columns. Anything else
+// either panics (output_dim 0, n_temporal 1 as the last block) or — worse —
+// runs: unwritten columns stay 0, n_temporal 1 overwrites the NEXT block's
+// column, output_dim 2 reads W2 with the wrong stride. All of that scores
+// like a slightly worse model, so it has to fail at load time.
+func pruefeMLPKopfFelder(name string, hidden, outDim, nLogo, nAudio, nWhisper,
+	nTemporal, nMinutePrior, nWhisperMask int) error {
+	if hidden < 1 {
+		return fmt.Errorf("%s head hidden_dim %d (mindestens 1)", name, hidden)
+	}
+	if outDim != 1 {
+		return fmt.Errorf("%s head output_dim %d (erlaubt: 1)", name, outDim)
+	}
+	for _, f := range []struct {
+		feld string
+		n    int
+	}{{"n_logo", nLogo}, {"n_audio", nAudio}, {"n_whisper", nWhisper},
+		{"n_minuteprior", nMinutePrior}, {"n_whispermask", nWhisperMask}} {
+		if f.n != 0 && f.n != 1 {
+			return fmt.Errorf("%s head %s %d (erlaubt: 0 oder 1)", name, f.feld, f.n)
+		}
+	}
+	if nTemporal != 0 && nTemporal != 2 && nTemporal != 3 {
+		return fmt.Errorf("%s head n_temporal %d (erlaubt: 0, 2 oder 3)", name, nTemporal)
+	}
 	return nil
 }
 
@@ -1090,11 +1156,12 @@ func (d *NNDetector) Confidence(pixels []byte, logoConf, rmsConf float64) float6
 // batch-locally = first 32 s repeated per batch, temporal deltas at
 // consecutive-25fps-frame scale ≈ 25x smaller than the 1 s-spacing the
 // head was trained on, zeroed at every batch edge).
-// Returns nil on inference failure (caller substitutes neutral 0.5s).
-func (d *NNDetector) EmbedBatch(framesPixels [][]byte) []float32 {
+// ⚠️ Returns the inference error instead of a silent nil: the caller used
+// to substitute 0.5 for the whole chunk without a trace in any log.
+func (d *NNDetector) EmbedBatch(framesPixels [][]byte) ([]float32, error) {
 	n := len(framesPixels)
 	if n == 0 {
-		return nil
+		return nil, nil
 	}
 	if n > nnBatch {
 		n = nnBatch
@@ -1110,11 +1177,11 @@ func (d *NNDetector) EmbedBatch(framesPixels [][]byte) []float32 {
 		clear(in[i*stride : (i+1)*stride])
 	}
 	if err := d.session.Run(); err != nil {
-		return nil
+		return nil, fmt.Errorf("nn backbone: %w", err)
 	}
 	out := make([]float32, n*nnFeatDim)
 	copy(out, d.outTensor.GetData()[:n*nnFeatDim])
-	return out
+	return out, nil
 }
 
 // ConfidenceChunk runs the head pass over a whole chunk's embeddings with
@@ -1212,8 +1279,8 @@ func (d *NNDetector) ConfidenceBatch(framesPixels [][]byte, logoConfs, rmsConfs 
 			rmsConfs = rmsConfs[:nnBatch]
 		}
 	}
-	embeds := d.EmbedBatch(framesPixels)
-	if embeds == nil {
+	embeds, err := d.EmbedBatch(framesPixels)
+	if err != nil || embeds == nil {
 		out := make([]float64, n)
 		for i := range out {
 			out[i] = 0.5
@@ -1378,7 +1445,6 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 				rms = rmsConfs[i]
 			}
 			x[off] = float32(rms)
-			off++
 		}
 		if d.mlpNChannel > 0 {
 			for k := 0; k < d.mlpNChannel; k++ {

@@ -35,7 +35,7 @@ Output:
   ~/.../boundary_head.history.json — train metrics
 """
 import argparse
-import hashlib
+import importlib.util
 import json
 import os
 import struct
@@ -291,7 +291,6 @@ def build_temporal_features(embeds, window_offsets,
         chunks.append(_windowed_mean(embeds, SUMMARY_HALF_S))
     if channel_onehot is not None:
         # Constant per-frame block (= same one-hot all rows). Tile.
-        k = len(channel_onehot)
         block = np.tile(channel_onehot.astype(np.float32), (n, 1))
         chunks.append(block)
     return np.concatenate(chunks, axis=1)
@@ -327,10 +326,97 @@ def find_latest_cache(cache_dir, uuid):
     return candidates[0] if candidates else None
 
 
-def is_test_uuid(uuid, test_frac=0.20):
-    """Same uuid-hash split as train-head.py — deterministic across runs."""
-    h = int(hashlib.sha256(uuid.encode()).hexdigest()[:8], 16)
-    return (h % 100) / 100.0 < test_frac
+# ── Split: aus dem Ledger von train-head.py, NUR LESEN (2026-09-25) ──
+#
+# ⚠️ Bis 2026-09-25 hatte dieses Skript einen EIGENEN 20-%-Hash-Split
+# (sha256, nicht einmal dieselbe Hashfunktion wie train-head.py). Folge:
+# versiegelte Aufnahmen und Golden-Pins landeten im Training, und
+# quarantaenierte (zeitachsen-versatz.json) ebenso — der Grenz-Kopf hat
+# damit genau die Labels gelernt, die der Hauptkopf aus gutem Grund nicht
+# sieht. Jetzt entscheidet das Ledger, das train-head.py unmittelbar vorher
+# fortgeschrieben hat; hier wird es nie geschrieben.
+_HIER = Path(__file__).resolve().parent
+
+
+def _lade_modul(name, datei):
+    spec = importlib.util.spec_from_file_location(name, _HIER / datei)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+# Dieselben Definitionen wie train-head.py, keine Kopien.
+_lh = _lade_modul("label_herkunft", "label_herkunft.py")
+_aus = _lade_modul("test_ausschluss", "test_ausschluss.py")
+
+
+def lade_split(train_archive):
+    """(ledger, golden_pin, versetzt) aus dem Train-Archiv. Wirft, wenn das
+    Ledger fehlt oder unlesbar ist — ohne Ledger gibt es keinen Split, der
+    den versiegelten Satz respektiert, und ein Rueckfall auf einen eigenen
+    Hash waere genau der alte Fehler."""
+    a = Path(train_archive)
+    ledger = json.loads((a / "split-ledger.json").read_text())
+    try:
+        golden = set(json.loads((a / "golden-eval-set.json").read_text())
+                     .get("uuids", []))
+    except FileNotFoundError:
+        golden = set()
+    # Wie train-head.zeitachsen_quarantaene: fehlt die Datei, wird nichts
+    # uebersprungen (ein Netzproblem soll nie den Korpus aussortieren).
+    try:
+        versetzt = set((json.loads((a / "zeitachsen-versatz.json").read_text())
+                        .get("versetzt") or {}))
+    except FileNotFoundError:
+        versetzt = set()
+    return ledger, golden, versetzt
+
+
+def eimer(uuid, ledger, golden, versetzt):
+    """"train" | "test" | None (= gar nicht verwenden), wie train-head.py.
+
+    Reihenfolge wie dort: Quarantaene und Versiegelung schlagen alles;
+    Golden-Pins sind immer test; TEST_SET_EXCLUDE nie test (bleibt aber
+    trainierbar, wie im Hauptkopf); sonst der Ledger-Eimer. Eine uuid, die
+    das Ledger nicht kennt, wird NICHT verwendet: train-head.py haette sie
+    beim ersten Sehen womoeglich versiegelt.
+    """
+    if uuid in versetzt:
+        return None
+    b = ledger.get(uuid)
+    if b == "versiegelt":
+        return None
+    if uuid in golden:
+        return "test"
+    if b not in ("train", "test"):
+        return None
+    if uuid in _aus.TEST_SET_EXCLUDE:
+        return "train"
+    return b
+
+
+def label_maschinell(rec_dir):
+    """True, wenn ads_user.json nachweislich von einer Maschine stammt.
+
+    Eindeutig ist das nur ueber die MARKER in der Datei (auto_confirmed_at,
+    auto_confirmed_via_fingerprint, reviewed_by eines Werkzeugs) — die
+    schreiben die Maschinen-Schreiber selbst, und der Snapshot reicht die
+    Datei unveraendert durch (tv-train-snapshot-fetch.py). Gefiltert wird
+    deshalb NUR bei mensch_aus_markern(...) is False. `None` (Listenform
+    von vor den Markern, nicht entscheidbar) bleibt drin: das ist der
+    Altbestand, und ihn als Maschine zu werten waere eine Vermutung.
+
+    Warum ueberhaupt filtern, wenn train-head.py sie behaelt: der Hauptkopf
+    gewichtet sie herunter, dieser Kopf hat keine Gewichte. Und bei
+    Auto-Confirm ist user == auto per Konstruktion — die Kanten SIND die
+    Detektorausgabe; der Grenz-Kopf wuerde lernen, den Detektor
+    nachzumachen, dessen Kantenfehler er beheben soll.
+    """
+    try:
+        raw = json.loads((rec_dir / "ads_user.json").read_text())
+    except Exception:
+        return False
+    return _lh.mensch_aus_markern(raw) is False
 
 
 def load_recording(rec_dir, cache_dir, fps):
@@ -563,6 +649,10 @@ def main():
                     help="path to the head.channel-map.json sidecar")
     ap.add_argument("--output", default=os.path.expanduser(
                     "~/mnt/pi-tv/hls/.tvd-models/boundary_head.bin"))
+    ap.add_argument("--train-archive", default=os.path.expanduser(
+                    "~/.cache/tvd-train-archive"),
+                    help="Verzeichnis mit split-ledger.json, golden-eval-set.json "
+                         "und zeitachsen-versatz.json (wird nur GELESEN)")
     ap.add_argument("--no-write", action="store_true",
                     help="skip writing boundary_head.bin (= eval-only run)")
     args = ap.parse_args()
@@ -574,6 +664,11 @@ def main():
     if not hls_root.is_dir():
         sys.exit(f"hls root not found: {hls_root}")
     window_offsets = make_window_offsets(args.window_half)
+    try:
+        ledger, golden, versetzt = lade_split(args.train_archive)
+    except Exception as e:
+        sys.exit(f"split-ledger.json nicht lesbar ({e}) — ohne Ledger kein "
+                 f"Split, der den versiegelten Satz respektiert")
 
     print(f"loading recordings from {hls_root}")
     print(f"feature cache: {cache_dir} ({len(list(cache_dir.glob('*.npy')))} files)")
@@ -608,7 +703,15 @@ def main():
     n_skipped = 0
     n_loaded = 0
     n_empty = 0
+    n_ohne_eimer = n_maschine = 0
     for rec_dir in sorted(hls_root.glob("_rec_*")):
+        b = eimer(rec_dir.name[len("_rec_"):], ledger, golden, versetzt)
+        if b is None:
+            n_ohne_eimer += 1
+            continue
+        if label_maschinell(rec_dir):
+            n_maschine += 1
+            continue
         loaded = load_recording(rec_dir, cache_dir, args.fps_extract)
         if loaded is None:
             n_skipped += 1
@@ -661,10 +764,10 @@ def main():
             # boundaries to evaluate against). The test set is held
             # out for boundary-recall measurement, where empty-ads
             # would just add zero true positives.
-            if not is_test_uuid(uuid):
+            if b == "train":
                 per_rec_empty_train.append(rec_data)
             continue
-        if is_test_uuid(uuid):
+        if b == "test":
             per_rec_test.append(rec_data)
         else:
             per_rec_train.append(rec_data)
@@ -672,6 +775,9 @@ def main():
           f"({len(per_rec_train)} train+pos, "
           f"{len(per_rec_empty_train)} train empty-ads neg-only, "
           f"{len(per_rec_test)} test); skipped {n_skipped}")
+    print(f"  nicht verwendet: {n_ohne_eimer} versiegelt/quarantaeniert/"
+          f"nicht im Ledger, {n_maschine} mit maschinellem Label "
+          f"(Auto-Confirm/Fingerprint/Agent)")
     if not per_rec_train:
         sys.exit("no train recordings with boundaries — cannot fit")
 

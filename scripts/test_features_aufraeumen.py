@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import importlib.util, sys
+import importlib.util, json, sys
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
@@ -37,6 +37,24 @@ def test_dvr_form_erkannt():
 def test_dvr_form_stempel_nicht_mit_start_verwechselt():
     m = fa.NAME.match(f(D, 1785000000))
     assert m and m.group(1) == D and m.group(2) == "1785000000"
+
+def test_gesperrte_uuid_bleibt_ganz():
+    assert fa.zu_loeschen([f(U, 10), f(U, 30), f(V, 10), f(V, 30)], set(),
+                          gesperrt={U}) == [f(V, 10)]
+
+def test_unlesbare_npz_sperrt():
+    import tempfile, numpy as np
+    with tempfile.TemporaryDirectory() as t:
+        a = Path(t)
+        np.savez(a / (V + ".npz"), meta=np.array(json.dumps({"feature_npy": "/x/" + f(V, 10)})))
+        (a / (U + ".npz")).write_bytes(b"kaputt")
+        refs, unlesbar = fa.archiv_referenzen(a)
+    assert refs == {f(V, 10)}, refs
+    assert set(unlesbar) == {U}, unlesbar
+    # Ende zu Ende: U's alter Stand (evtl. referenziert) bleibt stehen
+    assert fa.zu_loeschen([f(U, 10), f(U, 30), f(V, 10), f(V, 30)], refs,
+                          gesperrt=set(unlesbar)) == []
+
 
 if __name__ == "__main__":
     fails = 0

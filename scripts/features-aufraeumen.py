@@ -24,16 +24,20 @@ ARCHIV = Path.home() / ".cache/tvd-train-archive"
 NAME = re.compile(r"^([0-9a-f]{32}|dvr-[a-z0-9-]+?-\d{9,10})-(\d{9,10})-(.+)\.npy$")
 
 
-def zu_loeschen(dateien, referenzen):
-    """dateien: Namen im Cache; referenzen: vom Archiv referenzierte Namen.
+def zu_loeschen(dateien, referenzen, gesperrt=frozenset()):
+    """dateien: Namen im Cache; referenzen: vom Archiv referenzierte Namen;
+    gesperrt: uuids, deren Archiv-.npz unlesbar war.
     Liefert die Namen, die weg können: pro (uuid, key) alles außer dem
-    Stand mit dem höchsten mtime-Stempel — nie ein referenzierter."""
+    Stand mit dem höchsten mtime-Stempel — nie ein referenzierter, und
+    nichts einer gesperrten uuid."""
     staende = defaultdict(list)
     for name in dateien:
         m = NAME.match(name)
         if not m:
             continue  # fremde Datei, nicht anfassen
         uuid, stempel, key = m.groups()
+        if uuid in gesperrt:
+            continue  # Referenz unbekannt → fail closed
         staende[(uuid, key)].append((int(stempel), name))
     weg = []
     for gruppe in staende.values():
@@ -45,17 +49,26 @@ def zu_loeschen(dateien, referenzen):
 
 
 def archiv_referenzen(archiv):
+    """(referenzierte .npy-Namen, uuids mit unlesbarer .npz).
+
+    ⚠️ Eine unlesbare .npz ist KEINE .npz ohne Referenz. Bis 2026-09-25
+    fiel sie still heraus, ihre Referenz fehlte in der Menge, und ein
+    aelterer, vom Archiv referenzierter Stand dieser Aufnahme konnte
+    geloescht werden — die Aufnahme fiel danach still aus dem Training.
+    Jetzt wird ihre uuid gesperrt (nichts loeschen) und laut gemeldet.
+    """
     import numpy as np
-    refs = set()
+    refs, unlesbar = set(), {}
     for npz in archiv.glob("*.npz"):
         try:
             meta = json.loads(str(np.load(npz, allow_pickle=False)["meta"]))
-        except Exception:
+        except Exception as e:
+            unlesbar[npz.stem] = str(e) or type(e).__name__
             continue
         p = meta.get("feature_npy")
         if p:
             refs.add(Path(p).name)
-    return refs
+    return refs, unlesbar
 
 
 def main():
@@ -65,9 +78,12 @@ def main():
     ap.add_argument("--archiv", type=Path, default=ARCHIV)
     args = ap.parse_args()
 
-    refs = archiv_referenzen(args.archiv)
+    refs, unlesbar = archiv_referenzen(args.archiv)
+    for u, grund in sorted(unlesbar.items()):
+        print("⚠️ Archiv %s.npz unlesbar (%s) — von %s wird NICHTS gelöscht"
+              % (u, grund, u), file=sys.stderr)
     dateien = [p.name for p in args.features.glob("*.npy")]
-    weg = zu_loeschen(dateien, refs)
+    weg = zu_loeschen(dateien, refs, gesperrt=set(unlesbar))
     groesse = sum((args.features / n).stat().st_size for n in weg)
     print("Stände: %d Dateien, %d Aufnahmen, %d Archiv-Referenzen" % (
         len(dateien), len({NAME.match(n).group(1) for n in dateien if NAME.match(n)}),

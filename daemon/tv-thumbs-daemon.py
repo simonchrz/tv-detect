@@ -1981,6 +1981,38 @@ def _chase_offen_loeschen(uuid):
         print(f"  chase-offen {uuid} nicht ausgetragen: {e}", flush=True)
 
 
+# Der laufende tv-spot-extract (Popen) — hoechstens einer zugleich.
+_spot_proc = None
+
+
+def _spot_extract_starten(qlen):
+    """Einen Spot-Extract-Lauf starten, aber nur, wenn der vorige fertig ist.
+
+    ⚠️ Bis 2026-09-25 startete der Daemon alle ~30 s einen NEUEN Lauf, ohne
+    nach dem alten zu sehen. Ein Batch dauert oft laenger (5 Aufnahmen x
+    Dutzende ffmpeg/fpcalc-Paare); dann liefen mehrere Laeufe gleichzeitig
+    ueber DIESELBE Queue-Spitze, extrahierten dieselben Aufnahmen doppelt
+    und luden sie doppelt hoch. poll() raeumt nebenbei den Zombie ab.
+    Gibt True zurueck, wenn gestartet wurde."""
+    global _spot_proc
+    if _spot_proc is not None and _spot_proc.poll() is None:
+        return False
+    print(f"  spot-fp queue: {qlen} → drain {SPOT_EXTRACT_BATCH}",
+          flush=True)
+    try:
+        _spot_proc = subprocess.Popen(
+            [sys.executable, str(SPOT_EXTRACT_SCRIPT),
+             "--queue", "--limit", str(SPOT_EXTRACT_BATCH)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=SPAWN_ENV)
+        return True
+    except Exception as e:
+        print(f"  spot-fp drain spawn err: {e}", flush=True)
+        return False
+
+
 def _hls_gate(hls, cooled, n_hls_inflight):
     """(hls_live, aktiv): haelt die HLS-Arbeit das Detect-Gate zu?
 
@@ -3580,18 +3612,7 @@ def main():
             except Exception:
                 qlen = 0
             if qlen > 0:
-                print(f"  spot-fp queue: {qlen} → drain {SPOT_EXTRACT_BATCH}",
-                      flush=True)
-                try:
-                    subprocess.Popen(
-                        [sys.executable, str(SPOT_EXTRACT_SCRIPT),
-                         "--queue", "--limit", str(SPOT_EXTRACT_BATCH)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                        env=SPAWN_ENV)
-                except Exception as e:
-                    print(f"  spot-fp drain spawn err: {e}", flush=True)
+                _spot_extract_starten(qlen)
         if (thumbs or hls or detect or detect_low or in_flight_n
                 or cycle % 12 == 1):
             print(f"  [cycle {cycle}] thumbs={len(thumbs)} "

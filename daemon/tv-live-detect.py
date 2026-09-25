@@ -646,7 +646,40 @@ def analyze(slug, state, window_end_seg=None, window_size=WINDOW_SIZE):
             fetched_n += 1
         except Exception as e:
             log(f"[{slug}] fetch {n}: {e}")
+            # Ein halb geschriebenes Segment galt sonst im naechsten Zyklus
+            # als "cached" und wurde nie neu geholt.
+            try:
+                (cache_dir / n).unlink()
+            except Exception:
+                pass
     fetch_dt = time.time() - fetch_t0
+
+    # ⚠️ Luecken in der Zeitachse. Die Umrechnung unten (window_first_pdt +
+    # Sekunde im merged.ts) setzt voraus, dass merged.ts JEDES Segment des
+    # Fensters enthaelt. Bis 2026-09-25 wurde ein fehlendes Segment beim
+    # Zusammenfuegen still uebersprungen: jeder Block NACH der Luecke kam um
+    # die Laenge der Luecke zu frueh heraus — der Skip-Knopf sprang mitten in
+    # die Sendung, ohne Fehlermeldung. Nachrechnen ueber die Luecke hinweg
+    # ginge nur fuer Bloecke, die sie nicht ueberspannen, und Schwarzbild/
+    # Stille laufen ebenfalls auf dem gekuerzten Material. Deshalb wird nur
+    # der lueckenlose Schwanz NACH der letzten Luecke ausgewertet: dessen
+    # Zeitachse ist exakt, fruehere Bloecke bleiben ueber `retained` stehen,
+    # und das fehlende Segment wird im naechsten Zyklus erneut geholt. Ist
+    # der Schwanz zu kurz, wird das Fenster gar nicht ausgewertet (alter
+    # Stand bleibt, nichts wird gePOSTet).
+    fehlend = [i for i, n in enumerate(window)
+               if not (cache_dir / n).exists()]
+    if fehlend:
+        rest = len(window) - fehlend[-1] - 1
+        if rest < MIN_BUFFER_SEGS:
+            log(f"[{slug}] {len(fehlend)} Segment(e) fehlen, lueckenloser "
+                f"Schwanz nur {rest} s — Fenster nicht ausgewertet")
+            return False
+        log(f"[{slug}] {len(fehlend)} Segment(e) fehlen — werte nur die "
+            f"letzten {rest} s nach der Luecke aus")
+        start_idx += fehlend[-1] + 1
+        window = all_segs[start_idx:end_idx]
+        window_first_pdt = first_pdt + start_idx * SEGMENT_TIME
 
     # ---- concat from local cache ----
     work = WORK_DIR / slug
@@ -700,12 +733,24 @@ def analyze(slug, state, window_end_seg=None, window_size=WINDOW_SIZE):
         cmd += ["--min-block-sec", str(cfg["min_block_s"]),
                 "--max-block-sec", str(cfg["max_block_s"])]
     cmd += [str(merged)]
+    # ⚠️ Scheitert tv-detect (rc!=0) oder laeuft es in den Timeout, gibt es
+    # KEINE Aussage ueber das Fenster. Bis 2026-09-25 lief es trotzdem weiter:
+    # die alten *.txt waren oben geloescht, parse_comskip lieferte [], und
+    # `retained` verwarf alle bekannten Bloecke im Fenster — gePOSTet als
+    # "hier ist keine Werbung". Jetzt bleibt der alte Stand stehen.
     try:
         proc = subprocess.run(cmd, timeout=600, check=False,
                                 capture_output=True, text=True)
-        out_txt.write_text(proc.stdout)
     except Exception as e:
-        log(f"[{slug}] tv-detect: {e}")
+        log(f"[{slug}] tv-detect: {e} — alter Stand bleibt")
+        merged.unlink(missing_ok=True)
+        return False
+    if proc.returncode != 0:
+        log(f"[{slug}] tv-detect rc={proc.returncode}: "
+            f"{(proc.stderr or '')[-300:]} — alter Stand bleibt")
+        merged.unlink(missing_ok=True)
+        return False
+    out_txt.write_text(proc.stdout)
     ads_raw = parse_comskip(work)
     # tv-detect already does multi-signal voting (blackframe + silence
     # + scene-cut) and I-frame snap internally — its boundaries are

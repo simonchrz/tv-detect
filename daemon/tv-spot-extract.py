@@ -58,6 +58,45 @@ def get_local_ts(uuid):
     return None
 
 
+# Aufnahmen, die nichts zum Fingerabdruck hergeben (0 Bloecke oder 0 Spots).
+# Der Pi kann sie nicht als "erledigt" fuehren: der Upload-Endpunkt
+# (spot_extract.go handleSpotUpload) loescht und fuegt nur ein, und die Queue
+# (spot.go handleSpotQueue) zaehlt eine uuid erst mit >=1 Fingerprint-Zeile
+# als indexiert — ein leerer Upload aendert also nichts. Ohne lokales Merken
+# standen diese Aufnahmen fuer immer vorn in der Queue, jeder Lauf zog sie
+# erneut durch ffmpeg und verbrauchte damit sein --limit.
+# Nach SPOT_LEER_TTL_S wird neu versucht (ein Review kann Bloecke bringen).
+SPOT_LEER_FILE = SOURCE_CACHE.parent / "spot-fp-leer.json"
+SPOT_LEER_TTL_S = 3 * 86400
+
+
+def _leer_laden():
+    try:
+        d = json.loads(SPOT_LEER_FILE.read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def leer_bekannt(uuid):
+    ts = _leer_laden().get(uuid)
+    return isinstance(ts, (int, float)) and time.time() - ts < SPOT_LEER_TTL_S
+
+
+def leer_merken(uuid):
+    try:
+        d = _leer_laden()
+        jetzt = time.time()
+        d = {u: t for u, t in d.items()
+             if isinstance(t, (int, float)) and jetzt - t < SPOT_LEER_TTL_S}
+        d[uuid] = jetzt
+        tmp = SPOT_LEER_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d))
+        tmp.replace(SPOT_LEER_FILE)
+    except Exception as e:
+        print(f"  {uuid[:8]}: leer-Vermerk err: {e}", file=sys.stderr)
+
+
 def fetch_ads_user(uuid, retries=3):
     """Read confirmed ad blocks via gateway /recording/<uuid>/ads.
     Returns:
@@ -135,6 +174,12 @@ def spots_from_silences(silences, block_dur_s):
     return out
 
 
+# Zahl der fpcalc/ffmpeg-FEHLER (nicht: zu kurz, zu wenig Fingerprint). Eine
+# Aufnahme wird nur als "gibt nichts her" gemerkt, wenn waehrend ihrer
+# Extraktion kein Fehler auftrat — ein Aussetzer ist kein Befund.
+_chromaprint_fehler = 0
+
+
 def extract_chromaprint(ts_path, abs_start_s, dur_s):
     """Mac's homebrew ffmpeg lacks the chromaprint muxer; we use the
     standalone `fpcalc -raw` CLI (chromaprint package) instead. Pipe
@@ -142,7 +187,9 @@ def extract_chromaprint(ts_path, abs_start_s, dur_s):
     inner_dur = dur_s - 2 * SPOT_TRIM_EDGE_S
     if inner_dur < (SPOT_MIN_DUR_S - 2 * SPOT_TRIM_EDGE_S):
         return None
+    global _chromaprint_fehler
     inner_start = abs_start_s + SPOT_TRIM_EDGE_S
+    ff = None
     try:
         # Stage 1: ffmpeg → mono 22050 Hz raw PCM s16le on stdout
         ff = subprocess.Popen(
@@ -158,13 +205,28 @@ def extract_chromaprint(ts_path, abs_start_s, dur_s):
             ["fpcalc", "-raw", "-length",
              str(int(inner_dur) + 1), "-"],
             stdin=ff.stdout, capture_output=True, timeout=30)
-        ff.stdout.close()
-        ff.wait(timeout=5)
         if fp.returncode != 0:
+            _chromaprint_fehler += 1
             return None
     except Exception as e:
         print(f"  chromaprint err: {e}", file=sys.stderr)
+        _chromaprint_fehler += 1
         return None
+    finally:
+        # ⚠️ Bei fpcalc-Timeout (subprocess.run toetet nur fpcalc) oder
+        # wait-Timeout blieb ffmpeg bis 2026-09-25 einfach stehen: er haengt
+        # an der vollen Pipe bzw. an der Eingabe, und jeder weitere Spot legte
+        # einen dazu. Pipe zu, kurz warten, sonst toeten und abraeumen.
+        if ff is not None:
+            try:
+                ff.stdout.close()
+            except Exception:
+                pass
+            try:
+                ff.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                ff.kill()
+                ff.wait()
     # Parse "FINGERPRINT=12345,67890,..." line, pack as big-endian
     # uint32 stream so Pi-side matcher can process bytewise.
     out_text = fp.stdout.decode("utf-8", errors="replace")
@@ -246,8 +308,10 @@ def process_uuid(uuid):
         return (0, False)
     if not ads:
         print(f"  {uuid[:8]}: no ad blocks")
+        leer_merken(uuid)
         return (0, True)
     spots_payload = []
+    fehler_vorher = _chromaprint_fehler
     for bi, blk in enumerate(ads):
         try:
             bs, be = float(blk[0]), float(blk[1])
@@ -278,6 +342,8 @@ def process_uuid(uuid):
             })
     if not spots_payload:
         print(f"  {uuid[:8]}: 0 spots extracted")
+        if _chromaprint_fehler == fehler_vorher:
+            leer_merken(uuid)
         return (0, True)
     # POST
     body = json.dumps({"spots": spots_payload}).encode()
@@ -318,11 +384,14 @@ def main():
     # cached, drainable recordings — the queue looked permanently stuck. Now we
     # skip non-local for free and spend the budget on real work.
     budget = args.limit if args.limit > 0 else len(uuids)
-    n_ok = n_err = total_spots = n_done = n_skip = 0
+    n_ok = n_err = total_spots = n_done = n_skip = n_leer = 0
     t0 = time.time()
     for u in uuids:
         if n_done >= budget:
             break
+        if leer_bekannt(u):
+            n_leer += 1   # gibt nichts her, s. SPOT_LEER_FILE — kein Budget
+            continue
         if get_local_ts(u) is None:
             n_skip += 1
             continue
@@ -342,7 +411,8 @@ def main():
                   f"{n_ok} ok / {n_err} err, {n_skip} non-local skipped",
                   flush=True)
     print(f"done: {n_ok}/{n_done} ok, {total_spots} spots, "
-          f"{n_skip} non-local skipped, {(time.time()-t0)/60:.1f} min total")
+          f"{n_skip} non-local skipped, {n_leer} ohne Spots uebersprungen, "
+          f"{(time.time()-t0)/60:.1f} min total")
 
 
 if __name__ == "__main__":

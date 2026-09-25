@@ -174,6 +174,78 @@ SPAWN_ENV = {**os.environ, "PATH": (
     f"{os.path.expanduser('~/.local/bin')}:"
     f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")}
 
+# ── O26: OCR-Spur fuer den Kopf ─────────────────────────────────────────
+# Ein MLP6-Kopf mit n_ocr=3 liest drei OCR-Spalten (scripts/ocr_spalten.py,
+# internal/signals/ocrspalten.go). Die Spur (tv-ocr-spur, flaechendeckend)
+# muss dann VOR dem Detect da sein. Erzeugt wird sie hier NUR, wenn der
+# geladene Kopf sie braucht — solange MLP1 laeuft, haelt die naechtliche
+# Kampagne (com.user.ocr-spur) die Abdeckung fuers Training aktuell, und der
+# Detect wird nicht langsamer. Eine vorhandene, frische Spur wird immer
+# mitgegeben; fuer einen MLP1-Kopf ist --ocr-spur nachweislich wirkungslos
+# (Detect bitgleich, 2026-09-25).
+OCR_SPUR_DIR = Path.home() / ".cache" / "tvd-ocr-spur"
+OCR_SPUR_BIN = os.path.expanduser("~/.local/bin/tv-ocr-spur")
+
+
+def _kopf_braucht_ocr(head_path):
+    """True, wenn head.bin ein MLP6-Kopf mit n_ocr > 0 ist."""
+    try:
+        with open(head_path, "rb") as f:
+            kopf = f.read(56)
+    except OSError:
+        return False
+    if len(kopf) < 56 or kopf[:4] != b"MLP6":
+        return False
+    import struct
+    return struct.unpack("<14I", kopf)[13] > 0
+
+
+def _ocr_spur_frisch(pfad, quelle):
+    """Spur passt zur Quelle (Groesse + mtime) und hat keine Luecken."""
+    try:
+        s = json.loads(Path(pfad).read_text())
+        st = os.stat(quelle)
+    except Exception:
+        return False
+    return (s.get("quelle_bytes") == st.st_size
+            and s.get("quelle_mtime") == int(st.st_mtime)
+            and not s.get("fehlgeschlagen"))
+
+
+def _ocr_spur_fuer(uuid, quelle, head_path):
+    """Pfad der OCR-Spur fuer diesen Detect, oder None.
+
+    ⚠️ Darf einen Detect NIE aufhalten: scheitert die Erzeugung, laeuft der
+    Detect ohne Spur weiter — der Kopf sieht dann OCR-Spalten 0, genau wie im
+    Training fuer Aufnahmen ohne Spur. Ein veralteter Stand (Quelle neu
+    geholt oder getrimmt) wird NIE mitgegeben: er laege auf einer anderen
+    Zeitachse (dieselbe Klasse wie die veralteten Fingerprints, 2026-09-22).
+    """
+    pfad = OCR_SPUR_DIR / f"{uuid}.json"
+    if quelle and _ocr_spur_frisch(pfad, quelle):
+        return pfad
+    if not quelle or not _kopf_braucht_ocr(head_path):
+        return None
+    if not os.path.exists(OCR_SPUR_BIN):
+        print(f"  detect {uuid}: Kopf braucht OCR, aber {OCR_SPUR_BIN} fehlt "
+              f"— Spalten 0", flush=True)
+        return None
+    t0 = time.time()
+    try:
+        OCR_SPUR_DIR.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([OCR_SPUR_BIN, "--quelle", str(quelle), "--aus", str(pfad)],
+                           capture_output=True, text=True, timeout=3600, env=SPAWN_ENV)
+    except Exception as e:
+        print(f"  detect {uuid}: OCR-Spur gescheitert ({e}) — Spalten 0", flush=True)
+        return None
+    if r.returncode != 0 or not _ocr_spur_frisch(pfad, quelle):
+        print(f"  detect {uuid}: OCR-Spur gescheitert (rc={r.returncode}: "
+              f"{r.stderr.strip()[-200:]}) — Spalten 0", flush=True)
+        return None
+    print(f"  detect {uuid}: OCR-Spur erzeugt in {time.time() - t0:.0f}s", flush=True)
+    return pfad
+
+
 # Local cache for model files (head.bin, backbone.onnx) — refreshed
 # on size change so a nightly retrain auto-propagates without daemon
 # restart. Keyed by remote ETag/size; head.bin is small (~5 KB),
@@ -2785,6 +2857,10 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
         print(f"  detect {uuid}: emit-signals dir nicht nutzbar: {e}",
               flush=True)
 
+    # O26: OCR-Spur (s. _ocr_spur_fuer) — nur wenn frisch oder vom Kopf verlangt.
+    spur = _ocr_spur_fuer(uuid, local, head_path)
+    if spur:
+        cmd += ["--ocr-spur", str(spur)]
     cmd += ["--output", "cutlist", src_url]
     # Run detect below an on-demand HLS remux in CPU priority (children
     # inherit the niceness). No-op-safe if /usr/bin/nice is missing.

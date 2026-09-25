@@ -101,6 +101,35 @@ def label_fingerabdruck(ub, uuids):
     return h.hexdigest()[:12]
 
 
+def vergleich_mit_vorlauf(vorher, fehlend, n_soll):
+    """None, wenn der Vorlauf denselben Satz gemessen hat, sonst der Grund.
+
+    ⚠️ Der Median ueber 95 Aufnahmen ist nicht der Median ueber 98. Bis
+    2026-09-25 verglich der Trend zwei Laeufe ohne auf n zu schauen: ein
+    Replay-Fehler oder ein fehlendes Menschenlabel nahm eine Aufnahme still
+    heraus, und die Bewegung sah aus wie eine des Modells. Zeilen vor der
+    Einfuehrung von "fehlend" gelten nur als vollstaendig, wenn ihr n dem
+    Soll entspricht.
+    """
+    vf = vorher.get("fehlend")
+    if vf is None:
+        if vorher.get("n") != n_soll:
+            return (f"Vorlauf mass {vorher.get('n')} von {n_soll} Aufnahmen "
+                    f"und nennt die fehlenden nicht")
+        vf = {}
+    weg, dazu = sorted(set(fehlend) - set(vf)), sorted(set(vf) - set(fehlend))
+    if not weg and not dazu:
+        return None
+    teile = []
+    if weg:
+        teile.append(f"jetzt ohne {', '.join(weg[:5])}"
+                     + (" …" if len(weg) > 5 else ""))
+    if dazu:
+        teile.append(f"Vorlauf ohne {', '.join(dazu[:5])}"
+                     + (" …" if len(dazu) > 5 else ""))
+    return "; ".join(teile)
+
+
 def block_iou(pred, gt):
     """Definition aus eval_production_cutlists.py = train-head.py."""
     if not pred and not gt:
@@ -270,10 +299,19 @@ def main():
     zeilen = []
     ges = collections.Counter()
     ges_label = collections.Counter()
+    # ⚠️ Jede Aufnahme, die hier NICHT gemessen wird, wird benannt. Bis
+    # 2026-09-25 fielen fehlendes Menschenlabel, ein waehrend des Laufs
+    # verschwundener Dump und ein Replay-Fehler still heraus, und die
+    # Trendzeile stand trotzdem da, als waere der ganze Satz gemessen.
+    fehlend = {}
     for i, u in enumerate(uuids, 1):
         truth = ub.get(u)
         dp = DUMPS / f"{u}.json"
-        if not truth or not dp.is_file():
+        if not truth:
+            fehlend[u] = "kein Menschenlabel"
+            continue
+        if not dp.is_file():
+            fehlend[u] = "kein Signal-Dump"
             continue
         dump = json.loads(dp.read_text())
         fps = float(dump.get("fps") or 25)
@@ -286,6 +324,7 @@ def main():
         nur = nn_nur(nn, fps)
         if prod is None or orak is None:
             print(f"  {u}: Replay fehlgeschlagen", file=sys.stderr)
+            fehlend[u] = "Replay fehlgeschlagen"
             continue
         z = {"uuid": u, "eimer": led.get(u, "?"), "n": n,
              "iou_prod": block_iou(prod, truth),
@@ -301,6 +340,11 @@ def main():
         if i % 10 == 0:
             print(f"  {i}/{len(uuids)}", flush=True)
 
+    if fehlend:
+        print(f"\n  ⚠ {len(fehlend)} von {len(uuids)} Aufnahmen NICHT gemessen "
+              f"— die Zahlen unten gelten fuer {len(zeilen)}:")
+        for u, g in sorted(fehlend.items()):
+            print(f"    {u}  {g}")
     if not zeilen:
         print("nichts gemessen"); return 1
 
@@ -332,6 +376,7 @@ def main():
     print(f"\n=== Label-Seite (kein Modellfehler, getrennt gezaehlt) ===")
     for k, v in ges_label.most_common():
         print(f"  {k:<40}{v:>8}s")
+    print(f"  {'SUMME':<40}{tl:>8}s")
 
     if a.json:
         Path(a.json).write_text(json.dumps(
@@ -362,8 +407,14 @@ def main():
                  # Dump-Satzes war. dumps-erneuern.py legt .kopf neben die
                  # Dumps; DAS ist die Herkunft der gemessenen Zahlen.
                  "dump_kopf": dump_kopf(Path(a.dumps)),
-                 "label_hash": label_fingerabdruck(ub, [z["uuid"] for z in zeilen]),
+                 # Ueber den GANZEN Messsatz, nicht nur die gemessenen: sonst
+                 # aendert ein Replay-Fehler den Hash, und der Vergleich
+                 # meldet "Labels geaendert", wo nur eine Aufnahme fehlt.
+                 # Bei vollstaendigem Lauf identisch mit den alten Zeilen.
+                 "label_hash": label_fingerabdruck(ub, uuids),
                  "n": len(zeilen),
+                 "n_soll": len(uuids),
+                 "fehlend": fehlend,
                  "iou_prod": round(med("iou_prod"), 4),
                  "iou_orakel_nn": round(med("iou_orakel_nn"), 4),
                  "iou_nn_nur": round(med("iou_nn_nur"), 4),
@@ -379,7 +430,13 @@ def main():
                 pass
         with tp.open("a") as fh:
             fh.write(json.dumps(zeile) + "\n")
-        if vorher:
+        anders = (vergleich_mit_vorlauf(vorher, fehlend, len(uuids))
+                  if vorher else None)
+        if anders:
+            print(f"\n=== gegen den vorigen Lauf ({vorher['ts']}) ===")
+            print(f"  ⚠ ZUSAMMENSETZUNG GEAENDERT ({anders}). Die Mediane "
+                  f"messen verschiedene Saetze — kein Vergleich.")
+        elif vorher:
             print(f"\n=== gegen den vorigen Lauf ({vorher['ts']}) ===")
             lv = vorher.get("label_hash")
             if lv and lv != zeile["label_hash"]:

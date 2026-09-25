@@ -725,12 +725,26 @@ def _maybe_evict_source_cache():
             req = urllib.request.Request(
                 f"{GATEWAY}/recording/{uuid}/source", method="HEAD")
             with urllib.request.urlopen(req, timeout=4, context=CTX) as r:
-                pi_has = r.status == 200
+                status = r.status
         except urllib.error.HTTPError as e:
-            pi_has = (e.code != 404)
+            # ⚠️ NUR 404 heisst "der Pi hat sie nicht". Bis 2026-09-25 stand
+            # hier `e.code != 404`: ein 502/503 (Caddy ohne Backend,
+            # tv-recorder im Neustart), ein 400 oder ein 425 galt damit als
+            # "Pi hat sie" — und die Stufe-1-Raeumung loeschte womoeglich die
+            # EINZIGE Kopie, ganz still, weil sie sie fuer ein Duplikat hielt.
+            # Jeder andere Code sagt nichts ueber die Kopie aus, also wie beim
+            # Netzfehler: Raeumung fuer diesen Zyklus abbrechen.
+            if e.code != 404:
+                print(f"  Quellen-Cache: HEAD {uuid} -> HTTP {e.code}, "
+                      f"Raeumung pausiert (Kopie-Lage unbekannt)", flush=True)
+                break
+            status = 404
         except Exception:
             # Gateway unreachable → don't risk evicting; pause cycle.
             break
+        if status not in (200, 404):
+            break  # 2xx ohne Inhalt o. ae. — dieselbe Unklarheit wie oben
+        pi_has = status == 200
         if not pi_has and not notlage:
             continue  # protected — try older dups instead
         if not pi_has:

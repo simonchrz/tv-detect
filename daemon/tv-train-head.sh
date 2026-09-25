@@ -417,11 +417,17 @@ if [ "$rc" -eq 0 ]; then
       head.*.json head.*.txt archive 2>/dev/null )
   size_mb=$(du -m "$BUNDLE" | cut -f1)
   echo "  bundle: ${size_mb} MB"
+  # ⚠️ Status SOFORT sichern. Bis 2026-09-25 stand die Pruefung hinter dem
+  # echo — `$?` war dessen Status, also immer 0: ein gescheiterter Upload
+  # (Pi weg, 5xx) galt als Deploy, Anker und Snapshot-Marker folgten fuer
+  # einen Kopf, den der Pi nie bekam (Sweep). curl -f macht HTTP-Fehler
+  # zu einem Exit-Code ungleich 0.
+  upload_rc=0
   resp=$($CURL -X POST --data-binary "@$BUNDLE" \
       -H "Content-Type: application/gzip" \
-      "$GATEWAY/api/internal/head-bundle")
-  echo "  upload response: $resp"
-  if [ "$?" -ne 0 ]; then
+      "$GATEWAY/api/internal/head-bundle") || upload_rc=$?
+  echo "  upload response: $resp (rc=$upload_rc)"
+  if [ "$upload_rc" -ne 0 ]; then
       echo "  WARN: upload failed — head NOT deployed"
       rc=2
   fi

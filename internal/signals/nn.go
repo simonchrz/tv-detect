@@ -415,6 +415,9 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	nLogo := int(u32(24))
 	nAudio := int(u32(28))
 	nChan := int(u32(32))
+	if err := pruefeMLPKopfFelder("MLP1", hidden, outDim, nLogo, nAudio, 0, 0, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -524,6 +527,9 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	nAudio := int(u32(28))
 	nChan := int(u32(32))
 	nWhisper := int(u32(36))
+	if err := pruefeMLPKopfFelder("MLP2", hidden, outDim, nLogo, nAudio, nWhisper, 0, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP2 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -568,8 +574,14 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	d.mlpNAudio = nAudio
 	d.mlpNChannel = nChan
 	d.mlpNWhisper = nWhisper
-	// v2 → no temporal slots.
+	// v2 → no temporal/minute-prior/mask/OCR slots. Reset ALL of them:
+	// a hot reload from v4+ onto v2 kept the old counts, and the forward
+	// pass then wrote columns past the v2 input (panic or stale prior).
 	d.mlpNTemporal = 0
+	d.mlpNMinutePrior = 0
+	d.mlpNWhisperMask = 0
+	d.mlpNOCR = 0
+	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
 	d.mlpW2 = W2
@@ -626,6 +638,9 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	nChan := int(u32(32))
 	nWhisper := int(u32(36))
 	nTemporal := int(u32(40))
+	if err := pruefeMLPKopfFelder("MLP3", hidden, outDim, nLogo, nAudio, nWhisper, nTemporal, 0, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP3 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -733,6 +748,9 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	nWhisper := int(u32(36))
 	nTemporal := int(u32(40))
 	nMinutePrior := int(u32(44))
+	if err := pruefeMLPKopfFelder("MLP4", hidden, outDim, nLogo, nAudio, nWhisper, nTemporal, nMinutePrior, 0); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP4 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -877,6 +895,10 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 			return fmt.Errorf("MLP6 head n_ocr %d (erlaubt: 0 oder 3)", nOCR)
 		}
 	}
+	if err := pruefeMLPKopfFelder(fmt.Sprintf("MLP%d", version), hidden, outDim,
+		nLogo, nAudio, nWhisper, nTemporal, nMinutePrior, nWhisperMask); err != nil {
+		return err
+	}
 	if backbone != nnFeatDim {
 		return fmt.Errorf("MLP5 head backbone_dim %d != nnFeatDim %d "+
 			"(rebuild head against the current backbone)",
@@ -950,6 +972,37 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 	d.headWithChan = false
 	d.headWithAudio = false
 	d.mu.Unlock()
+	return nil
+}
+
+// pruefeMLPKopfFelder rejects header values the forward pass cannot
+// represent. confidenceMLPChunk writes exactly ONE column for logo, audio,
+// whisper, minute prior and whisper mask, reads exactly one output
+// (mlpB2[0], mlpW2[j]) and fills 2 or 3 temporal columns. Anything else
+// either panics (output_dim 0, n_temporal 1 as the last block) or — worse —
+// runs: unwritten columns stay 0, n_temporal 1 overwrites the NEXT block's
+// column, output_dim 2 reads W2 with the wrong stride. All of that scores
+// like a slightly worse model, so it has to fail at load time.
+func pruefeMLPKopfFelder(name string, hidden, outDim, nLogo, nAudio, nWhisper,
+	nTemporal, nMinutePrior, nWhisperMask int) error {
+	if hidden < 1 {
+		return fmt.Errorf("%s head hidden_dim %d (mindestens 1)", name, hidden)
+	}
+	if outDim != 1 {
+		return fmt.Errorf("%s head output_dim %d (erlaubt: 1)", name, outDim)
+	}
+	for _, f := range []struct {
+		feld string
+		n    int
+	}{{"n_logo", nLogo}, {"n_audio", nAudio}, {"n_whisper", nWhisper},
+		{"n_minuteprior", nMinutePrior}, {"n_whispermask", nWhisperMask}} {
+		if f.n != 0 && f.n != 1 {
+			return fmt.Errorf("%s head %s %d (erlaubt: 0 oder 1)", name, f.feld, f.n)
+		}
+	}
+	if nTemporal != 0 && nTemporal != 2 && nTemporal != 3 {
+		return fmt.Errorf("%s head n_temporal %d (erlaubt: 0, 2 oder 3)", name, nTemporal)
+	}
 	return nil
 }
 
@@ -1392,7 +1445,6 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 				rms = rmsConfs[i]
 			}
 			x[off] = float32(rms)
-			off++
 		}
 		if d.mlpNChannel > 0 {
 			for k := 0; k < d.mlpNChannel; k++ {

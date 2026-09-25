@@ -354,24 +354,30 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 	// deltas were ~25x smaller than trained + zeroed each batch edge).
 	// Memory: ~1280 floats/frame ≈ 13 MB per typical chunk — fine.
 	var (
-		nnPxBuf     [][]byte
-		nnEmbeds    []float32
-		nnLogoAll   []float64
-		nnRmsAll    []float64
-		nnEmbedFail bool
+		nnPxBuf   [][]byte
+		nnEmbeds  []float32
+		nnLogoAll []float64
+		nnRmsAll  []float64
+		nnErr     error
 	)
 	flushNN := func() {
 		if nn == nil || len(nnPxBuf) == 0 {
 			return
 		}
+		if nnErr != nil { // chunk already failed — don't burn backbone time
+			nnPxBuf = nnPxBuf[:0]
+			return
+		}
 		tNN := time.Now()
 		defer func() { out.nnNs += time.Since(tNN).Nanoseconds() }()
-		emb := nn.EmbedBatch(nnPxBuf)
-		if emb == nil {
-			// Backbone inference failure — mark so phase 2 falls back to
-			// neutral for the whole chunk (embedding offsets would
-			// otherwise desync from logo/rms indices).
-			nnEmbedFail = true
+		emb, err := nn.EmbedBatch(nnPxBuf)
+		if err != nil {
+			// ⚠️ Fails the chunk (and the run). Until 2026-09-25 a backbone
+			// failure silently turned the whole chunk into NN 0.5 — the
+			// HSMM then saw a flat stretch and the detect still exited 0.
+			// The frame loop keeps draining the decoder so ffmpeg ends
+			// normally; the error is returned after it.
+			nnErr = err
 		} else {
 			nnEmbeds = append(nnEmbeds, emb...)
 		}
@@ -460,6 +466,10 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		count++
 	}
 	flushNN() // any tail frames waiting in the batch buffer
+	if nnErr != nil {
+		out.err = nnErr
+		return out
+	}
 	// Phase 2: head pass over the whole chunk with correctly-timed
 	// whisper/temporal inputs (see the two-phase comment above).
 	if nn != nil {
@@ -469,9 +479,10 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		if len(audioRMS) > 0 {
 			rmsArg = nnRmsAll
 		}
-		if nnEmbedFail || len(nnEmbeds) != nFrames*1280 {
-			// Backbone failed somewhere — neutral chunk, same behaviour
-			// as the old per-batch failure path.
+		if len(nnEmbeds) != nFrames*1280 {
+			// Cannot happen after a successful backbone pass (one embedding
+			// per buffered frame); kept as a length guard so a future
+			// change can't desync the arrays.
 			neutral := make([]float64, nFrames)
 			for i := range neutral {
 				neutral[i] = 0.5
@@ -484,12 +495,12 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		}
 		out.nnNs += time.Since(tNN).Nanoseconds()
 		// Boundary scores off the SAME backbone embeddings (zero-copy
-		// per-frame views). Neutral 0 when the head is absent or the
-		// backbone failed — keeps the per-chunk length == nFrames so the
-		// merged timeline never desyncs.
+		// per-frame views). Neutral 0 when the boundary head is absent —
+		// keeps the per-chunk length == nFrames so the merged timeline
+		// never desyncs.
 		if opts.BoundaryHead {
 			bc := make([]float64, nFrames)
-			if boundary != nil && !nnEmbedFail && len(nnEmbeds) == nFrames*1280 {
+			if boundary != nil && len(nnEmbeds) == nFrames*1280 {
 				embs := make([][]float32, nFrames)
 				for i := range nFrames {
 					embs[i] = nnEmbeds[i*1280 : (i+1)*1280]

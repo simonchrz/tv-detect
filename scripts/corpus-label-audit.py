@@ -95,10 +95,10 @@ Column layout, from train-head.py `_augment_cwt_minuteprior`:
     [ X(1282) | channel one-hot(13) | whisper(1) | dp(1) | dn(1) | prior(1) ]
 """
 import argparse
-import glob
 import importlib.util
 import json
 import os
+import re
 import struct
 import sys
 
@@ -124,6 +124,46 @@ ARCH = os.path.expanduser("~/.cache/tvd-train-archive")
 MODELS = os.path.expanduser("~/.cache/tv-detect-daemon")
 WHISPER = os.path.expanduser("~/.cache/tv-whisper")
 DUMPS = os.path.expanduser("~/.cache/tv-detect-daemon/emit-signals")
+
+# Archivnamen, wie train-head.py sie schreibt: f"{uuid}.npz". uuid ist
+# dvr-<slug>-<start> ODER eine 32-stellige Hex-uuid aus der tvh-Zeit.
+# ⚠️ Bis 2026-09-25 stand hier glob("dvr-*.npz") — 93 von 912 Eintraegen
+# (die Hex-uuids) hat der Audit nie gesehen.
+ARCHIV_NAME = re.compile(r"^(dvr-.+|[0-9a-f]{32})\.npz$")
+
+
+def archiv_dateien(arch):
+    return sorted(os.path.join(arch, n) for n in os.listdir(arch)
+                  if ARCHIV_NAME.match(n))
+
+
+def _dumps_erneuern():
+    """modelle_frisch NICHT nachbauen — dieselbe Funktion wie die
+    Messsatz-Kampagne, die ihre Falle schon hinter sich hat."""
+    spec = importlib.util.spec_from_file_location(
+        "dumps_erneuern", os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), "dumps-erneuern.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def modelle_holen():
+    """Kopf und Beilagen vom Gateway holen, BEVOR head.bin gelesen wird.
+
+    ⚠️ Dieselbe Falle wie in dumps-erneuern.modelle_frisch (2026-09-10):
+    der Modell-Cache des Mac erneuert sich nur beim naechsten Detect. Direkt
+    nach einem Deploy lag darin noch der Kopf von gestern, und ein Audit mit
+    dem Vortageskopf meldet Widersprueche eines Modells, das nicht mehr
+    laeuft. Scheitert der Abruf, wird es laut gesagt, nicht verschwiegen.
+    """
+    try:
+        de = _dumps_erneuern()
+        return de.modelle_frisch(de.daemon_laden())
+    except Exception as e:
+        print(f"⚠️ Modelle nicht frisch geholt ({e}) — head.bin aus dem "
+              f"Cache kann der Kopf von gestern sein.")
+        return None
 
 
 def load_head(path):
@@ -300,8 +340,15 @@ def main():
                     dest="zeige_eingefrorene",
                     help="eingefrorene Archiveintraege einzeln auflisten "
                          "(normalerweise nur als Zahl, weil nicht handhabbar)")
+    ap.add_argument("--ohne-abruf", action="store_true", dest="ohne_abruf",
+                    help="Modelle NICHT vom Gateway holen (dann kann head.bin "
+                         "der Kopf von gestern sein)")
     args = ap.parse_args()
 
+    if args.ohne_abruf:
+        print("⚠️ --ohne-abruf: head.bin aus dem Cache, kann veraltet sein.")
+    else:
+        modelle_holen()
     idim, params, felder = load_head(os.path.join(MODELS, "head.bin"))
     # Sidecar is {"ts","version","n","slugs":[...]}; one-hot index is the
     # position in "slugs", which is the order train-head.py built it in.
@@ -330,7 +377,7 @@ def main():
     if n_chan != len(chan_idx):
         print(f"  WARNUNG: n_chan {n_chan} != channel-map {len(chan_idx)}")
 
-    files = sorted(glob.glob(os.path.join(ARCH, "dvr-*.npz")))
+    files = archiv_dateien(ARCH)
     if args.limit:
         files = files[:args.limit]
     newest_npz = max((os.path.getmtime(f) for f in files), default=0.0)

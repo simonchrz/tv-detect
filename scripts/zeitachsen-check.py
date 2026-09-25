@@ -29,6 +29,7 @@ import concurrent.futures as cf
 import json
 import ssl
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -66,13 +67,27 @@ def quelldauer(rec_dir):
     return None
 
 
+class AbrufFehler(Exception):
+    """VOD-Dauer unbekannt (Timeout, 5xx, Netz) — NICHT dasselbe wie "kein VOD"."""
+
+
 def voddauer(uuid):
+    # ⚠️ Bis 2026-09-25 lieferte JEDER Fehler None, und pruefe() liess die
+    # Aufnahme dann einfach weg. Ein Timeout beim Abruf nahm eine
+    # quarantaenierte Aufnahme so aus der Liste, die Datei wurde ohne sie
+    # neu geschrieben, und train-head trainierte die versetzten Labels in
+    # der naechsten Nacht wieder mit. Jetzt: 404 = kein VOD (Dauer 0, siehe
+    # main), alles andere = AbrufFehler, und main behaelt den alten Stand.
     try:
         with urllib.request.urlopen(f"{GATEWAY}/recording/{uuid}/index.m3u8",
                                     context=CTX, timeout=25) as r:
             txt = r.read().decode("utf-8", "replace")
-    except Exception:
-        return None
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return 0.0
+        raise AbrufFehler(f"HTTP {e.code}") from e
+    except Exception as e:
+        raise AbrufFehler(str(e) or type(e).__name__) from e
     s = 0.0
     for z in txt.splitlines():
         if z.startswith("#EXTINF:"):
@@ -88,10 +103,30 @@ def pruefe(rec_dir):
     q = quelldauer(rec_dir)
     if q is None:
         return None
-    v = voddauer(uuid)
-    if v is None:
-        return None
+    try:
+        v = voddauer(uuid)
+    except AbrufFehler as e:
+        return uuid, None, None, str(e)
     return uuid, q, v, q - v
+
+
+def versatz_liste(res, schwelle, alt):
+    """Quarantaene aus den Messungen, Abruffehler behalten den alten Stand.
+
+    res: Tupel aus pruefe(); q None = Abruf fehlgeschlagen.
+    alt: das bisherige "versetzt" aus der Datei ({} wenn keine).
+    """
+    # ⚠️ VOD-Dauer 0 heisst "kein VOD", nicht "Versatz gleich Laufzeit".
+    # Beides gehoert in die Quarantaene, aber aus verschiedenen Gruenden —
+    # ohne VOD konnte niemand Labels darauf setzen, die vorhandenen stammen
+    # dann aus einer anderen Quelle und sind erst recht nicht vertrauenswuerdig.
+    versetzt = {u: round(d, 1) for u, q, v, d in res
+                if q is not None and (v <= 0 or abs(d) > schwelle)}
+    # Nicht gemessen heisst nicht entlastet: wer vorher drin war, bleibt.
+    for u, q, v, d in res:
+        if q is None and u in alt:
+            versetzt[u] = alt[u]
+    return versetzt
 
 
 def main():
@@ -112,24 +147,42 @@ def main():
     dirs = [d for d in sorted(Path(a.hls_root).glob("_rec_*"))
             if (d / "ads_user.json").is_file()]
     with cf.ThreadPoolExecutor(8) as ex:
-        res = [r for r in ex.map(pruefe, dirs) if r]
+        alle = [r for r in ex.map(pruefe, dirs) if r]
+    fehler = [r for r in alle if r[1] is None]
+    res = [r for r in alle if r[1] is not None]
 
-    # ⚠️ VOD-Dauer 0 heisst "kein VOD", nicht "Versatz gleich Laufzeit".
-    # Beides gehoert in die Quarantaene, aber aus verschiedenen Gruenden —
-    # ohne VOD konnte niemand Labels darauf setzen, die vorhandenen stammen
-    # dann aus einer anderen Quelle und sind erst recht nicht vertrauenswuerdig.
-    versetzt = {u: round(d, 1) for u, q, v, d in res
-                if v <= 0 or abs(d) > a.schwelle}
     ARCHIV.mkdir(parents=True, exist_ok=True)
     ziel = ARCHIV / "zeitachsen-versatz.json"
+    try:
+        alt = json.loads(ziel.read_text()).get("versetzt", {})
+    except FileNotFoundError:
+        alt = {}
+    except Exception as e:
+        # Unlesbar = der alte Stand ist unbekannt. Dann nicht mit einer
+        # Liste ueberschreiben, in der die Abruffehler fehlen.
+        if fehler:
+            print(f"FEHLER: {ziel} unlesbar ({e}) und {len(fehler)} Abrufe "
+                  f"fehlgeschlagen — Datei bleibt unveraendert",
+                  file=sys.stderr)
+            return 1
+        alt = {}
+    versetzt = versatz_liste(alle, a.schwelle, alt)
     tmp = ziel.with_suffix(".tmp")
     tmp.write_text(json.dumps({
         "geprueft": len(res), "schwelle_s": a.schwelle,
+        "abruf_fehler": sorted(r[0] for r in fehler),
         "versetzt": versetzt}, indent=1))
     tmp.replace(ziel)
 
     print(f"{len(res)} Aufnahmen mit Labels geprueft, "
           f"{len(versetzt)} quarantaeniert (> {a.schwelle:.0f}s)")
+    if fehler:
+        behalten = [r[0] for r in fehler if r[0] in alt]
+        print(f"  ⚠️ {len(fehler)} VOD-Abrufe fehlgeschlagen, "
+              f"{len(behalten)} davon bleiben aus dem Vorlauf quarantaeniert:")
+        for u, _, _, grund in fehler:
+            print(f"    {u:36} {grund}"
+                  + ("   (alter Eintrag behalten)" if u in alt else ""))
     # Auch die knapp darunter zeigen — wer die Schwelle spaeter anzweifelt,
     # soll sehen, was sie gerade durchlaesst.
     knapp = [(u, q, v, d) for u, q, v, d in res

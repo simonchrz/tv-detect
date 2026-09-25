@@ -91,35 +91,51 @@ def _laeuft_noch():
         return False
 
 
-def boden_und_champion(gt):
-    """Muss dieselbe Rechnung sein wie golden_bestwert() im Trainer."""
-    deployt = [e for e in gt if e.get("deployed") and e.get("golden_median")]
-    if not deployt:
+def _golden_bestwert():
+    """golden_bestwert() aus dem Trainer selbst — keine Kopie."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "train_head", REPO / "scripts/train-head.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.golden_bestwert, " ".join(m.EVAL_DECODER) or "form"
+
+
+def boden_und_champion(gt, trend_pfad=None):
+    """Boden: DIESELBE Rechnung wie das Gate, weil es dieselbe Funktion ist.
+
+    ⚠️ Bis 2026-09-25 stand hier eine Kopie von golden_bestwert(), der die
+    Filter auf `missing` und `select_rule` fehlten (loop-status.py hatte
+    beide). Ein Bericht, der anders rechnet als das Gate, meldet Latten, die
+    es nicht gibt: eine Zeile mit fehlenden Gepinnten (17.09.: n=30-Kopf) oder
+    ein Bestwert aus der alten Auswahlregel landete als Boden im Bericht.
+    Jetzt wird golden_bestwert() aus train-head.py importiert und genau so
+    aufgerufen wie im Gate (golden_boden).
+
+    Champion = die juengste deployte Zeile derselben Epoche (gleiche Filter,
+    die eigene Zeile ausgenommen) — ein Wert, den das Gate nicht rechnet.
+    """
+    if not gt:
         return None, None
-    hash_jetzt, dec_jetzt = gt[-1].get("set_hash"), gt[-1].get("decoder")
-    # ⚠️ label_hash gehört in denselben Filter wie set_hash und decoder.
-    # `set_hash` sichert nur die ZUSAMMENSETZUNG; werden die LABELS eines
-    # Mitglieds korrigiert, misst der Satz danach etwas anderes, ohne dass
-    # eine Kennzahl es anzeigt. Am 2026-08-13 sprang Golden so 0.906 → 0.937
-    # (87 Kanten-Korrekturen) und die Latte stieg mit — als hätte das Modell
-    # zugelegt. Ab 2026-08-14 schneidet der Boden an jeder Label-Änderung.
-    # Alte Zeilen tragen kein Feld (None) und fallen damit korrekt heraus.
-    lab_jetzt = gt[-1].get("label_hash")
-    # ⚠️ Die eigene Zeile zaehlt nicht — sonst ist die Latte bei einer
-    # frischen Epoche der heutige Wert minus Toleranz, und jeder Lauf meldet
-    # +0.0100 gegen sich selbst (beobachtet 2026-08-15).
-    ts_jetzt = gt[-1].get("ts")
-    passend = [e for e in deployt
-               if e.get("set_hash") == hash_jetzt and e.get("decoder") == dec_jetzt
-               and e.get("label_hash") == lab_jetzt and e.get("ts") != ts_jetzt]
-    if not passend:
+    trend_pfad = trend_pfad or (ARCHIV / "golden-trend.jsonl")
+    bestwert, dec = _golden_bestwert()
+    jetzt = gt[-1]
+    regel = jetzt.get("select_rule") or "median-seed"
+    wert, ts = bestwert(trend_pfad, jetzt.get("set_hash"),
+                        jetzt.get("label_hash"), ohne_ts=jetzt.get("ts"),
+                        select_rule=regel)
+    if wert is None:
         return None, None
-    je_tag = {}
-    for e in passend:
-        je_tag[e["ts"][:8]] = e
-    sortiert = sorted(je_tag.values(), key=lambda e: e["golden_median"], reverse=True)
-    best = sortiert[1] if len(sortiert) >= 3 else sortiert[0]
-    return best, passend[-1]
+    passend = [e for e in gt
+               if e.get("deployed") and e.get("golden_median") is not None
+               and not e.get("missing")
+               and e.get("set_hash") == jetzt.get("set_hash")
+               and e.get("label_hash") == jetzt.get("label_hash")
+               and (e.get("decoder") or "form") == dec
+               and (e.get("select_rule") or "median-seed") == regel
+               and str(e.get("ts")) != str(jetzt.get("ts"))]
+    champ = passend[-1] if passend else None
+    return {"golden_median": wert, "ts": ts}, champ
 
 
 def audit():
@@ -190,7 +206,7 @@ def baue():
             e = gt[-1]
             med = e.get("golden_median")
             zeile += f", Golden {med}"
-            best, champ = boden_und_champion(gt)
+            best, champ = boden_und_champion(gt, ARCHIV / "golden-trend.jsonl")
             if best is None and gt[-1].get("label_hash"):
                 # Sichtbar machen, statt die Latte stillschweigend wegfallen
                 # zu lassen: nach einer Label-Korrektur gibt es schlicht noch

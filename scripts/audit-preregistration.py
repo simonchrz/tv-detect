@@ -19,6 +19,8 @@ Rückgabewert: 0 = alle Serien noch offen oder erfüllt, 1 = mindestens eine
 Regel verletzt oder Integritätsproblem. Damit taugt es als cron-Wächter.
 """
 import argparse
+import contextlib
+import io
 import json
 import re
 import statistics
@@ -85,15 +87,134 @@ def regel_zuletzt_geaendert(pfad):
 
 
 def ts_zu_unix(ts):
-    """'20260810T040512' → Unix-Zeit (lokal). Nur für den Integritätsvergleich."""
+    """'20260810T040512' → Unix-Zeit (lokal). Nur für den Integritätsvergleich.
+
+    ⚠️ Auch die kurzen Formen (20260913T0921, 20260913T09, 20260913). Bis
+    2026-09-25 lief hier strptime mit "%Y%m%dT%H%M%S", und dessen Regex
+    backtrackt: "20260913T0921" wurde zu 09:02:01 statt 09:21 gelesen —
+    nicht als Fehler, sondern als falsche Zeit. Deshalb die Stellen selbst
+    abzaehlen: je zwei fuer Stunde, Minute, Sekunde.
+    """
     import time
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})(?:T(\d{1,6}))?", str(ts or ""))
+    if not m:
+        return None
+    d = m.group(4) or ""
+    if len(d) == 1:
+        d = "0" + d
+    if len(d) % 2:
+        return None                  # 3 oder 5 Stellen: nicht eindeutig
+    h, mi, se = (int(d[i:i + 2]) if len(d) > i else 0 for i in (0, 2, 4))
+    if h > 23 or mi > 59 or se > 59:
+        return None
     try:
-        return int(time.mktime(time.strptime(ts, "%Y%m%dT%H%M%S")))
+        return int(time.mktime((int(m.group(1)), int(m.group(2)),
+                                int(m.group(3)), h, mi, se, 0, 0, -1)))
     except Exception:
         return None
 
 
-def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
+def regel_historie(pfad, rid):
+    """[(commit_unix, commit, regel), …] aeltester zuerst — die Regel mit
+    dieser id in jedem Commit, der die Datei angefasst hat. [] ohne git."""
+    try:
+        r = subprocess.run(["git", "log", "--reverse", "--format=%H %at",
+                            "--", pfad.name],
+                           cwd=pfad.parent, capture_output=True, text=True,
+                           timeout=20)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    out = []
+    for zeile in r.stdout.split("\n"):
+        if not zeile.strip():
+            continue
+        h, t = zeile.split()
+        try:
+            txt = subprocess.run(["git", "show", f"{h}:./{pfad.name}"],
+                                 cwd=pfad.parent, capture_output=True,
+                                 text=True, timeout=20).stdout
+        except Exception:
+            continue
+        for m in re.finditer(r"^```regel\n(.*?)^```", txt, flags=re.M | re.S):
+            try:
+                rg = json.loads(m.group(1))
+            except json.JSONDecodeError:
+                continue
+            if rg.get("id") == rid:
+                out.append((int(t), h, rg))
+    return out
+
+
+def war_zurueckgestellt(pfad, commit, rid):
+    """Stand die Regel im Commit VOR `commit` als zurueckgestellt in
+    serien-abschluss.json? Das ist der dokumentierte Weg, serie_ab neu zu
+    setzen (Eintrag entfernen, serie_ab neu — s. main)."""
+    try:
+        txt = subprocess.run(["git", "show",
+                              f"{commit}^:./serien-abschluss.json"],
+                             cwd=pfad.parent, capture_output=True, text=True,
+                             timeout=20).stdout
+        return bool((json.loads(txt).get(rid) or {}).get("zurueckgestellt"))
+    except Exception:
+        return False
+
+
+def paare_der_regel(nach_ts, regel):
+    """ts aller Gruppen, die ein ECHTES Paar dieser Regel tragen."""
+    art = regel.get("serie_art", "naechte")
+    quelle_soll = "tagesserie" if art == "tagesserie" else "nightly"
+    arme = set((regel.get("arme") or {}).values())
+    aus = []
+    for ts in sorted(nach_ts):
+        da = {z.get("arch") for z in nach_ts[ts].values()
+              if z.get("quelle") == quelle_soll}
+        if arme and arme <= da:
+            aus.append(ts)
+    return aus
+
+
+def pruefe_serie_ab_historie(pfad, nach_ts, regel):
+    """Wurde serie_ab verschoben, nachdem unter dem alten Anker schon Paare
+    dieser Regel lagen?
+
+    ⚠️ Der Anker des Integritaetsvergleichs kommt aus der Registrierung
+    selbst. Wer die Regel nach Serienbeginn aendert und im selben Zug
+    serie_ab hinter die Aenderung legt, verschiebt den Anker mit — die
+    Pruefung unten sieht dann eine Regel, die "vor ihren Daten" stand. Die
+    git-Historie kennt den alten Anker noch. Ausgenommen ist der
+    dokumentierte Weg: Wiederaufnahme einer zurueckgestellten Serie (O18,
+    2026-09-13), dort MUSS serie_ab neu gesetzt werden.
+    """
+    hist = regel_historie(pfad, regel.get("id"))
+    paare = paare_der_regel(nach_ts, regel)
+    ok = True
+    for (_, _, alt), (t_neu, h_neu, neu) in zip(hist, hist[1:]):
+        a_alt = str(alt.get("serie_ab") or "")
+        a_neu = str(neu.get("serie_ab") or "")
+        if a_alt == a_neu:
+            continue
+        # Paare, die unter dem ALTEN Anker schon vorlagen, als verschoben wurde
+        vorher = [ts for ts in paare
+                  if (not a_alt or ts[:len(a_alt)] >= a_alt)
+                  and (ts_zu_unix(ts.split("p")[0]) or 0) < t_neu]
+        if not vorher:
+            continue
+        if war_zurueckgestellt(pfad, h_neu, regel.get("id")):
+            print(f"\n  serie_ab {a_alt} → {a_neu} ({h_neu[:7]}): "
+                  f"Wiederaufnahme einer zurückgestellten Serie — zulässig.")
+            continue
+        print(f"\n  ⚠ INTEGRITAET: {pfad.name} — serie_ab wurde von {a_alt} "
+              f"auf {a_neu} verschoben ({h_neu[:7]}), als unter dem alten "
+              f"Anker schon {len(vorher)} Paar(e) dieser Regel lagen "
+              f"(erstes {vorher[0]}). Der Anker ist damit nicht mehr "
+              f"vorab festgelegt:\n     git show {h_neu} -- {pfad}")
+        ok = False
+    return ok
+
+
+def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset(), ergebnis=None):
     print(f"\n{'=' * 68}")
     print(f"{regel.get('id', '?')} — {regel.get('frage', '')}")
     print(f"  Registrierung: {pfad.name}")
@@ -216,6 +337,8 @@ def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
         # spaetere Serie hier als "ein Arm fehlt", fuer immer.
         if n_soll and len(gueltig) >= n_soll:
             break
+    if ergebnis is not None:
+        ergebnis.update(gueltig=len(gueltig), n_soll=n_soll, art=art)
 
     for ts, grund in verworfen:
         print(f"  verworfen {ts}: {grund} — Serie verlängert sich")
@@ -315,6 +438,14 @@ def pruefe(pfad, regel, nach_ts, fremd_belegt=frozenset()):
 
 
 def pruefe_integritaet(pfad, nach_ts, regel):
+    # Die Anker-Historie ZUERST und unabhaengig vom Rest: ein nach hinten
+    # verschobener Anker laesst den Rest oft gar keine erste Nacht mehr
+    # finden (return True unten).
+    hist_ok = pruefe_serie_ab_historie(pfad, nach_ts, regel)
+    return _pruefe_aenderung(pfad, nach_ts, regel) and hist_ok
+
+
+def _pruefe_aenderung(pfad, nach_ts, regel):
     """Wurde die Regel angefasst, nachdem die Serie begonnen hatte?
 
     ⚠️ Geankert wird auf der ersten Zeile, die zu DIESER Regel gehoert
@@ -354,13 +485,47 @@ def pruefe_integritaet(pfad, nach_ts, regel):
     # Tagesserien-ts tragen ein p-Suffix (…T172134p00) — fuer den
     # Zeitvergleich zaehlt die Basis.
     erste_unix = ts_zu_unix(erste.split("p")[0])
-    if erste_unix and stand > erste_unix:
+    if erste_unix is None:
+        # Nicht lesbar heisst nicht geprueft — und das darf nicht als
+        # bestanden durchgehen.
+        print(f"\n  ⚠ INTEGRITAET: Zeitstempel {erste!r} nicht lesbar — "
+              f"ob {pfad.name} danach geändert wurde, ist NICHT geprüft.")
+        return False
+    if stand > erste_unix:
         print(f"\n  ⚠ INTEGRITAET: {pfad.name} wurde zuletzt NACH der ersten "
               f"gezählten Nacht ({erste}) geändert. Regel und Ergebnis sind "
               f"nicht mehr unabhängig — prüfen, was sich geändert hat:\n"
               f"     git log -p -- {pfad}")
         return False
     return True
+
+
+def vollstaendig_pruefen(pfad, regel, nach_ts, regeln, belegt_von):
+    """Warnung, wenn ein Abschluss-Eintrag vor der registrierten Zahl
+    gueltiger Naechte/Paare steht.
+
+    ⚠️ Ein Eintrag in serien-abschluss.json schaltet die Neubewertung ab —
+    bis 2026-09-25 ohne jede Pruefung, ob die Serie ueberhaupt voll war.
+    Eine Serie nach drei guenstigen Naechten "abzuschliessen" waere damit
+    derselbe Weg zurueck zur Nachher-Registrierung, den das Audit sonst
+    verschliesst. Nur eine WARNUNG (Exit bleibt), weil ein bewusster
+    Abbruch mit Begruendung legitim sein kann; er soll aber sichtbar sein.
+    """
+    if regel.get("nicht_in_serienabschluss"):
+        return
+    fremd = set()
+    for _, andere in regeln:
+        if andere.get("id") != regel.get("id"):
+            fremd |= belegt_von(andere, nach_ts)
+    erg = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        pruefe(pfad, regel, nach_ts, fremd_belegt=fremd, ergebnis=erg)
+    n, soll = erg.get("gueltig", 0), erg.get("n_soll", 0)
+    if soll and n < soll:
+        einheit = "Paaren" if erg.get("art") == "tagesserie" else "Nächten"
+        print(f"  ⚠ WARNUNG: abgeschlossen mit {n}/{soll} gültigen "
+              f"{einheit} — die registrierte Zahl war nicht erreicht. "
+              f"(Oder die Zeilen sind aus shadow-trend.jsonl verschwunden.)")
 
 
 def main():
@@ -424,6 +589,10 @@ def main():
                 print(f"  → abgeschlossen am {a.get('datum')}: "
                       f"{a.get('urteil')} (verbucht in "
                       f"{a.get('verbucht', 'experiment-ledger.md')})")
+                vollstaendig_pruefen(pfad, regel, nach_ts, regeln,
+                                     _belegt_von)
+                # Ein Abschluss darf den verschobenen Anker nicht verdecken.
+                ok &= pruefe_serie_ab_historie(pfad, nach_ts, regel)
             continue
         fremd = set()
         for _, andere_regel in regeln:

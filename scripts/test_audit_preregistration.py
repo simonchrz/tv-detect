@@ -583,5 +583,153 @@ class Abschlussdatei(unittest.TestCase):
         self.assertNotIn("zurückgestellt", txt)
 
 
+class Zeitstempel(unittest.TestCase):
+    """ts_zu_unix las kurze Zeitstempel falsch: strptime backtrackt,
+    "20260913T0921" wurde 09:02:01 statt 09:21:00."""
+
+    def test_kurz_gleich_lang(self):
+        self.assertEqual(A.ts_zu_unix("20260913T0921"),
+                         A.ts_zu_unix("20260913T092100"))
+        self.assertEqual(A.ts_zu_unix("20260913T09"),
+                         A.ts_zu_unix("20260913T090000"))
+        self.assertEqual(A.ts_zu_unix("20260913"),
+                         A.ts_zu_unix("20260913T000000"))
+        self.assertEqual(A.ts_zu_unix("20260810T0"),
+                         A.ts_zu_unix("20260810T000000"))
+
+    def test_lang_unveraendert(self):
+        import time
+        self.assertEqual(A.ts_zu_unix("20260810T040512"),
+                         int(time.mktime(time.strptime("20260810T040512",
+                                                       "%Y%m%dT%H%M%S"))))
+
+    def test_unlesbar_ist_none(self):
+        for ts in ("", "kaputt", "20260913T092", "20260913T2561",
+                   "20260913T0921001"):
+            self.assertIsNone(A.ts_zu_unix(ts), ts)
+
+    def test_unlesbarer_anker_ist_kein_bestanden(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Integritaet()._repo(d)
+            doc = p / "x-preregistration.md"
+            doc.write_text("Regel v1")
+            subprocess.run(["git", "add", "-A"], cwd=p, check=True)
+            subprocess.run(["git", "commit", "-qm", "v1"], cwd=p, check=True)
+            nach_ts = {"19700102Tkaputt": {
+                "arm-mit": {"quelle": "nightly", "arch": "arm-mit"},
+                "arm-ohne": {"quelle": "nightly", "arch": "arm-ohne"}}}
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ok = A.pruefe_integritaet(doc, nach_ts,
+                                          dict(REGEL, serie_ab="19700101"))
+            self.assertFalse(ok)
+            self.assertIn("nicht lesbar", buf.getvalue())
+
+
+class AnkerVerschoben(unittest.TestCase):
+    """serie_ab kommt aus der Registrierung selbst — wer ihn nach
+    Serienbeginn hinter eine Aenderung legt, verschiebt den Anker mit.
+    Die git-Historie kennt den alten Anker."""
+
+    PAAR = {"19700102T000000": {
+        "arm-mit": {"quelle": "nightly", "arch": "arm-mit"},
+        "arm-ohne": {"quelle": "nightly", "arch": "arm-ohne"}}}
+
+    def _commit(self, p, regel, abschluss=None, msg="x"):
+        (p / "x-preregistration.md").write_text(
+            "# X\n\n```regel\n" + json.dumps(regel) + "\n```\n")
+        if abschluss is not None:
+            (p / "serien-abschluss.json").write_text(json.dumps(abschluss))
+        subprocess.run(["git", "add", "-A"], cwd=p, check=True)
+        subprocess.run(["git", "commit", "-qm", msg], cwd=p, check=True)
+
+    def test_anker_nach_datenbeginn_verschoben_schlaegt_alarm(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Integritaet()._repo(d)
+            self._commit(p, dict(REGEL, serie_ab="19700101"))
+            neu = dict(REGEL, serie_ab="20990101")
+            self._commit(p, neu)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ok = A.pruefe_integritaet(p / "x-preregistration.md",
+                                          self.PAAR, neu)
+        self.assertFalse(ok, buf.getvalue())
+        self.assertIn("serie_ab wurde von 19700101 auf 20990101", buf.getvalue())
+
+    def test_wiederaufnahme_nach_zurueckstellung_ist_zulaessig(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Integritaet()._repo(d)
+            self._commit(p, dict(REGEL, serie_ab="19700101"),
+                         {"OTEST": {"zurueckgestellt": True}})
+            neu = dict(REGEL, serie_ab="20990101")
+            self._commit(p, neu, {})
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ok = A.pruefe_integritaet(p / "x-preregistration.md",
+                                          self.PAAR, neu)
+        self.assertTrue(ok, buf.getvalue())
+        self.assertIn("zulässig", buf.getvalue())
+
+    def test_anker_vor_datenbeginn_verschoben_ist_in_ordnung(self):
+        # Verschoben, als es unter dem alten Anker noch keine Paare gab
+        # (O2 am 2026-08-12: 0813 → 0812, Daten erst danach).
+        with tempfile.TemporaryDirectory() as d:
+            p = Integritaet()._repo(d)
+            self._commit(p, dict(REGEL, serie_ab="20990102"))
+            neu = dict(REGEL, serie_ab="20990101")
+            self._commit(p, neu)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                ok = A.pruefe_integritaet(p / "x-preregistration.md",
+                                          {"20991231T000000": {}}, neu)
+        self.assertTrue(ok, buf.getvalue())
+
+    def test_abschluss_verdeckt_den_verschobenen_anker_nicht(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Integritaet()._repo(d)
+            (p / "archiv").mkdir()
+            with open(p / "archiv" / "shadow-trend.jsonl", "w") as f:
+                for z in nacht("19700102T000000", 0.9, 0.9):
+                    f.write(json.dumps(z) + "\n")
+            self._commit(p, dict(REGEL, serie_ab="19700101"))
+            self._commit(p, dict(REGEL, serie_ab="20990101"),
+                         {"OTEST": {"datum": "x", "urteil": "y"}})
+            buf = io.StringIO()
+            argv = ["audit", "--archiv", str(p / "archiv"), "--docs", str(p)]
+            with redirect_stdout(buf), unittest.mock.patch.object(
+                    sys, "argv", argv):
+                rc = A.main()
+        self.assertEqual(rc, 1, buf.getvalue())
+        self.assertIn("serie_ab wurde", buf.getvalue())
+
+
+class AbschlussVollstaendig(Abschlussdatei):
+    """Ein Abschluss-Eintrag vor der registrierten Zahl gueltiger Paare
+    wird angesagt (Warnung, Exit unveraendert)."""
+
+    def test_zu_frueher_abschluss_warnt(self):
+        ab = {"OTEST": {"datum": "2026-09-06", "urteil": "REGEL ERFUELLT"}}
+        with tempfile.TemporaryDirectory() as d:
+            rc, txt = self._main(self._docs(d, ab))
+        self.assertEqual(rc, 0)
+        self.assertIn("WARNUNG: abgeschlossen mit 0/", txt)
+
+    def test_voller_abschluss_warnt_nicht(self):
+        ab = {"OTEST": {"datum": "2026-09-06", "urteil": "REGEL ERFUELLT"}}
+        with tempfile.TemporaryDirectory() as d:
+            p = self._docs(d, ab)
+            with open(p / "archiv" / "shadow-trend.jsonl", "a") as f:
+                for i in range(TAGES_REGEL["naechte"]):
+                    for arm in ("arm-mit", "arm-ohne"):
+                        f.write(json.dumps({
+                            "ts": f"20260907T100000p{i:02d}", "arch": arm,
+                            "golden_median": 0.9, "seed": 200 + i,
+                            "quelle": "tagesserie", "set_hash": HASH,
+                            "decoder": DEC, "golden_n": 38}) + "\n")
+            rc, txt = self._main(p)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("WARNUNG", txt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

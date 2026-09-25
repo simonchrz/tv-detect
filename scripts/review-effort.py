@@ -46,6 +46,7 @@ täglich 04:32 vom Pi).
    und wird dazuvereinigt (er kann nur Dateien kennen, die es gab).
 """
 import argparse
+import importlib.util
 import json
 import statistics
 import subprocess
@@ -59,6 +60,12 @@ from pathlib import Path
 LEDGER = Path.home() / ".cache/tvd-train-archive/split-ledger.json"
 SPIEGEL = Path.home() / "tv-labels-backup"
 
+# Herkunfts-Regel: EINE Definition fuer alle Leser (s. label_herkunft.py).
+_lh_spec = importlib.util.spec_from_file_location(
+    "label_herkunft", Path(__file__).resolve().parent / "label_herkunft.py")
+_lh = importlib.util.module_from_spec(_lh_spec)
+_lh_spec.loader.exec_module(_lh)
+
 
 def auto_bestaetigte(spiegel):
     """uuids, deren ads_user.json von Auto-Confirm stammt, nicht vom Menschen.
@@ -71,6 +78,12 @@ def auto_bestaetigte(spiegel):
         plus `reviewed_at`, OHNE `auto_confirmed_at`. Sah hier wie ein
         Mensch mit 0 s/h aus und hat fuer 2026-09 "n=2, 100 % exakt"
         gemeldet — beide Aufnahmen waren Fingerprint-Bestaetigungen.
+
+    ⚠️ Und ein dritter: `reviewed_by` eines Werkzeugs (agent-review.py,
+    folgen-vergleich.py, zurueckgenommen, …). Bis 2026-09-25 las dieses
+    Skript das Feld nicht, Agentenlabels zaehlten als Mensch. Die Regel
+    kommt jetzt aus label_herkunft.mensch_aus_markern — dieselbe wie in
+    massstab-audit und train-head, keine eigene Kopie.
     """
     out = set()
     for p in spiegel.glob("_rec_*/ads_user.json"):
@@ -78,7 +91,7 @@ def auto_bestaetigte(spiegel):
             d = json.loads(p.read_text())
             if not isinstance(d, dict):
                 continue
-            if d.get("auto_confirmed_at") or d.get("auto_confirmed_via_fingerprint"):
+            if _lh.mensch_aus_markern(d) is False:
                 out.add(p.parent.name[len("_rec_"):])
         except Exception:
             continue
@@ -87,7 +100,34 @@ def auto_bestaetigte(spiegel):
 
 PI_HOST = "raspberrypi5lan"
 PI_HLS = "/mnt/tv/hls"
-MARKIERUNGEN = ("auto_confirmed_at", "auto_confirmed_via_fingerprint")
+MARKIERUNGEN = ("auto_confirmed_at", "auto_confirmed_via_fingerprint",
+                "reviewed_by")
+
+
+def nicht_mensch_aus_grep(ausgabe):
+    """uuids aus `grep -oH` (Zeilen `pfad:"feld":wert`), die NICHT Mensch sind.
+
+    Je Datei wird aus den gefundenen Feldern ein Mini-Dict gebaut und durch
+    label_herkunft.mensch_aus_markern geschickt — so entscheidet der Wert
+    (reviewed_by "golden-audit" ist Mensch, "agent-review.py" nicht), nicht
+    die blosse Existenz des Feldes.
+    """
+    felder = defaultdict(dict)
+    for zeile in ausgabe.splitlines():
+        pfad, sep, treffer = zeile.partition(":")
+        if not sep:
+            continue
+        name = Path(pfad.strip()).parent.name
+        if not name.startswith("_rec_"):
+            continue
+        k, _, v = treffer.partition(":")
+        k = k.strip().strip('"')
+        try:
+            wert = json.loads(v.strip())
+        except ValueError:
+            wert = v.strip() or True
+        felder[name[len("_rec_"):]][k] = wert
+    return {u for u, d in felder.items() if _lh.mensch_aus_markern(d) is False}
 
 
 def auto_bestaetigte_live(host=PI_HOST, hls=PI_HLS, timeout=20):
@@ -97,21 +137,17 @@ def auto_bestaetigte_live(host=PI_HOST, hls=PI_HLS, timeout=20):
     den Spiegel zurueck und sagt das. Ein leeres Set ist ein Ergebnis
     (keine Markierung), None ist keins.
     """
-    muster = "|".join(MARKIERUNGEN)
+    # -o statt -l: fuer reviewed_by entscheidet der WERT, nicht die Existenz.
+    muster = '"(' + "|".join(MARKIERUNGEN) + ')" *: *("[^"]*"|[^,}]*)'
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
-           f"grep -lE '{muster}' {hls}/_rec_*/ads_user.json; true"]
+           f"grep -oHE '{muster}' {hls}/_rec_*/ads_user.json; true"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except Exception:
         return None
     if r.returncode != 0:
         return None
-    out = set()
-    for zeile in r.stdout.splitlines():
-        name = Path(zeile.strip()).parent.name
-        if name.startswith("_rec_"):
-            out.add(name[len("_rec_"):])
-    return out
+    return nicht_mensch_aus_grep(r.stdout)
 
 
 def auto_bestaetigte_vereinigt(live, spiegel_uuids):
@@ -213,7 +249,7 @@ def main():
         if not a.get("edited"):
             return None          # kein Review = keine menschliche Wahrheit
         if r["uuid"] in auto_uuids:
-            return None          # Auto-Confirm: user == auto per Konstruktion
+            return None          # Auto-Confirm/Agent: kein menschliches Urteil
         dauer = float(a.get("duration_s") or r.get("duration") or 0)
         if dauer < 60:
             return None
@@ -239,7 +275,8 @@ def main():
     print("KORREKTURAUFWAND — Sekunden je Stunde, die der Mensch verschoben hat")
     print("=" * 68)
     print(f"  {len(zeilen)} von Menschen reviewte Aufnahmen "
-          f"({len(recs)} gesamt, {len(auto_uuids)} auto-bestaetigt und "
+          f"({len(recs)} gesamt, {len(auto_uuids)} maschinell (Auto-Confirm/"
+          f"Agent) und "
           f"deshalb ausgeschlossen; Markierung aus: {quelle})\n")
 
     def block(name, teil):

@@ -96,7 +96,7 @@ class EineDefinition(unittest.TestCase):
 
     def test_niemand_legt_eine_eigene_liste_an(self):
         for name in ("train-head.py", "massstab-audit.py",
-                     "golden_v3_vorschlag.py"):
+                     "golden_v3_vorschlag.py", "review-effort.py"):
             with self.subTest(datei=name):
                 baum = ast.parse((_HIER / name).read_text(encoding="utf-8"))
                 literale = [n for n in ast.walk(baum)

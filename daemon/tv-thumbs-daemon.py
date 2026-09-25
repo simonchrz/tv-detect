@@ -116,6 +116,22 @@ HLS_PARALLEL = max(1, int(os.environ.get("HLS_PARALLEL", "2")))
 #     pending or in flight, so the latency-critical window has fewer GPU/ANE
 #     competitors. In-flight detects finish; detect resumes once HLS drains.
 DETECT_NICE = max(0, int(os.environ.get("DETECT_NICE", "5")))
+# Chase-Remux (Aufnahme laeuft noch, ffmpeg liest die mitwachsende /source).
+# Laeuft stundenlang, im Takt der Sendung — eigener Pool, damit er keinen der
+# HLS_PARALLEL-Plaetze fuer Stunden belegt (bei 2 Plaetzen und 2 Chases stand
+# sonst jeder andere Remux still), und er haelt das Detect-Gate NICHT zu
+# (Begruendung beim Gate in main()).
+CHASE_PARALLEL = max(1, int(os.environ.get("CHASE_PARALLEL", "2")))
+# ffmpeg -rw_timeout in µs: so lange darf die Tail-Verbindung stumm sein. Die
+# /source sendet waehrend der Aufnahme ~1 MB/s; 2 min Stille heisst halboffene
+# Verbindung, nicht Pause. Ohne das hielt ein Chase den Slot ewig.
+CHASE_RW_TIMEOUT_US = 120 * 1_000_000
+# Obere Wandzeit: Aufnahmeende (stop_real aus grid_recording, alle
+# CHASE_FRIST_PRUEF_S neu gelesen — die EIT-Verlaengerung schiebt es) plus
+# Puffer. Ist das Ende nie bekannt geworden, gilt CHASE_MAX_S ab Start.
+CHASE_PUFFER_S = 15 * 60
+CHASE_FRIST_PRUEF_S = 5 * 60
+CHASE_MAX_S = 12 * 3600
 # Watchdog: if a uuid sits in detect_in_flight longer than this AND no
 # subprocess for it exists, the worker thread leaked the slot (= hung
 # HTTP POST, segfault in ONNX/ffmpeg ext, etc) and never decremented.
@@ -1915,6 +1931,118 @@ def _upload_files_put(url_template, files):
         conn.close()
 
 
+# ── Chase: halb fertige VODs nachbauen ─────────────────────────────────
+# Sobald ein Chase die wachsende EVENT-Playlist hochlaedt, steht auf dem Pi
+# eine index.m3u8. Scheitert der Chase danach (rc!=0, Wandzeit, Daemon-
+# Neustart) und endet die Aufnahme, sieht hls-pending (recqueue.go) "index
+# exists, nicht forced, kein Chase mehr" und LOESCHT den Marker als veraltet:
+# das Teil-VOD bleibt fuer immer stehen, und der Mac hat keinen Weg, einen
+# forced-Marker zu setzen (nur cutlistguard.go auf dem Pi tut das, und nur
+# mit einer vollstaendigen Cutlist). Deshalb merkt sich der Daemon selbst,
+# welche Chase-Playlist live ist, bis ein hls-done sie abloest, und baut sie
+# nach Aufnahmeende als normalen Remux neu (_chase_nachbau). Die Datei
+# ueberlebt den Neustart; ein pl_pushed im Speicher tat das nicht.
+CHASE_OFFEN_FILE = MODEL_CACHE / "chase-offen.json"
+_chase_offen_lock = threading.Lock()
+
+
+def _chase_offen_laden():
+    try:
+        d = json.loads(CHASE_OFFEN_FILE.read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _chase_offen_schreiben(d):
+    tmp = CHASE_OFFEN_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(CHASE_OFFEN_FILE)
+
+
+def _chase_offen_setzen(uuid):
+    try:
+        with _chase_offen_lock:
+            d = _chase_offen_laden()
+            if uuid not in d:
+                d[uuid] = {"seit": int(time.time())}
+                _chase_offen_schreiben(d)
+    except Exception as e:
+        print(f"  ⚠️ chase-offen {uuid} nicht vermerkt: {e}", flush=True)
+
+
+def _chase_offen_loeschen(uuid):
+    try:
+        with _chase_offen_lock:
+            d = _chase_offen_laden()
+            if d.pop(uuid, None) is not None:
+                _chase_offen_schreiben(d)
+    except Exception as e:
+        print(f"  chase-offen {uuid} nicht ausgetragen: {e}", flush=True)
+
+
+def _hls_gate(hls, cooled, n_hls_inflight):
+    """(hls_live, aktiv): haelt die HLS-Arbeit das Detect-Gate zu?
+
+    Chase-Jobs zaehlen NICHT. Das Gate schuetzt einen latenzkritischen
+    Voll-Remux, der ~8 Kerne in Minuten verbrennt, waehrend ein Nutzer auf
+    den Ladebalken schaut. Ein Chase liest dagegen eine mitwachsende Quelle
+    und kann nicht schneller sein als die Sendung: copy kostet fast nichts,
+    ein Deinterlace-Transcode (ultrafast, 90x Echtzeit) im Sendetakt etwa
+    ein Hundertstel davon. Er laeuft aber STUNDEN — als HLS-Job gezaehlt
+    stand jeder Detect fuer die ganze Aufnahmedauer still. Die Chase-
+    Prozesse laufen im eigenen Zaehler (chase_in_flight) und sind in
+    n_hls_inflight nicht enthalten."""
+    hls_live = [j for j in hls
+                if j.get("uuid") not in cooled and not j.get("chase")]
+    return hls_live, bool(hls_live) or n_hls_inflight > 0
+
+
+def _laufende_aufnahmen():
+    """{uuid: stop_real} der gerade laufenden Aufnahmen, None wenn der Pi
+    nicht antwortet (dann weiss man es NICHT — der Aufrufer wartet)."""
+    try:
+        g = http_get_json(f"{GATEWAY}/api/dvr/entry/grid_recording")
+        return {e["uuid"]: float(e.get("stop_real") or 0)
+                for e in g.get("entries", []) if e.get("uuid")}
+    except Exception:
+        return None
+
+
+def _chase_nachbau_kandidaten(pending, belegt, cooled):
+    """Offene Chase-VODs, die JETZT nachgebaut werden duerfen: nicht mehr in
+    hls-pending (sonst kuemmert sich der normale Weg darum — laeuft die
+    Aufnahme noch, startet dort ein neuer Chase von vorn), in keinem Pool,
+    nicht im Cooldown, und die Aufnahme laeuft nicht mehr. Leere Liste, wenn
+    der Pi das nicht beantworten kann."""
+    offen = [u for u in sorted(_chase_offen_laden())
+             if u not in pending and u not in belegt and u not in cooled]
+    if not offen:
+        return []
+    laufend = _laufende_aufnahmen()
+    if laufend is None:
+        return []
+    return [u for u in offen if u not in laufend]
+
+
+def _chase_nachbau(uuid):
+    """Teil-VOD eines gescheiterten Chase durch einen normalen Remux ersetzen.
+    Nur aus der lokalen Quelle: ein HTTP-Rueckfall wuerde hier gegen eine
+    womoeglich wieder laufende /source lesen."""
+    local, grund = get_source_mit_grund(uuid)
+    if grund == QUELLE_FEHLT:
+        print(f"  ⚠️ chase-nachbau {uuid}: Quelle weg (Pi 404, kein Cache) — "
+              f"das Teil-VOD bleibt so stehen", flush=True)
+        _chase_offen_loeschen(uuid)
+        return False
+    if not local:
+        _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+        return False
+    print(f"  chase-nachbau {uuid}: Chase endete ohne hls-done, baue das "
+          f"VOD neu", flush=True)
+    return process_recording(uuid, True, False)
+
+
 def process_recording(uuid, do_hls, do_thumbs, chase=False):
     """Combined job: single ffmpeg pass produces HLS bundle AND
     thumbs from one .ts download. Source resolved via local cache
@@ -1965,8 +2093,10 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
         pass  # probe failed → fall through to ffmpeg, normal failure path will catch
     with tempfile.TemporaryDirectory() as td:
         td_p = Path(td)
+        # Chase: halboffene Tail-Verbindung darf ffmpeg nicht ewig halten.
+        rw_opts = ["-rw_timeout", str(CHASE_RW_TIMEOUT_US)] if chase else []
         cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
-               *tls_opts, "-i", src_url]
+               *tls_opts, *rw_opts, "-i", src_url]
         if do_hls:
             try:
                 probe = subprocess.run(
@@ -2100,6 +2230,7 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
         pl_url = f"{GATEWAY}/api/internal/hls-segment/{uuid}/index.m3u8"
         uploaded = set()
         pl_pushed = False  # chase: whether the growing EVENT playlist is live on the Pi
+        chase_pruef, chase_frist = 0.0, None  # chase: naechste Pruefung, Frist
         errf = open(td_p / "ffmpeg.stderr", "w+")
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                  stderr=errf, env=SPAWN_ENV)
@@ -2131,6 +2262,8 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
                     if pl.exists():
                         try:
                             _upload_files_put(pl_url, [pl])
+                            if not pl_pushed:
+                                _chase_offen_setzen(uuid)
                             pl_pushed = True
                         except Exception as e:
                             print(f"  chase playlist push err: {e}", flush=True)
@@ -2142,6 +2275,27 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
             if not chase and time.time() - t0 > TIMEOUT_S:
                 proc.kill(); proc.wait(); rc = -9
                 break
+            # …aber ganz ohne Grenze hielt ein Chase, dessen Verbindung nie
+            # sauber endet, seinen Slot fuer immer. Grenze = Aufnahmeende +
+            # Puffer (s. CHASE_PUFFER_S).
+            if chase:
+                jetzt = time.time()
+                if jetzt >= chase_pruef:
+                    chase_pruef = jetzt + CHASE_FRIST_PRUEF_S
+                    laufend = _laufende_aufnahmen()
+                    if laufend is not None:
+                        if uuid in laufend and laufend[uuid] > 0:
+                            chase_frist = laufend[uuid] + CHASE_PUFFER_S
+                        elif uuid not in laufend and chase_frist is None:
+                            chase_frist = jetzt + CHASE_PUFFER_S
+                grenze = chase_frist if chase_frist is not None \
+                    else t0 + CHASE_MAX_S
+                if jetzt > grenze:
+                    print(f"  chase {uuid}: ueber der Wandzeit-Grenze "
+                          f"(Aufnahmeende + {CHASE_PUFFER_S//60} min) — "
+                          f"ffmpeg beendet", flush=True)
+                    proc.kill(); proc.wait(); rc = -9
+                    break
             time.sleep(1.0)
         errf.seek(0); _err_all = errf.read(); errf.close()
         err_tail = _err_all[-500:]
@@ -2149,6 +2303,12 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
         if rc != 0:
             print(f"  ffmpeg {uuid} rc={rc} — last stderr:\n"
                   f"{err_tail}", flush=True)
+            if pl_pushed:
+                # Teil-VOD live auf dem Pi; chase-offen.json haelt es fest,
+                # _chase_nachbau ersetzt es nach Aufnahmeende.
+                print(f"  chase {uuid}: gescheitert mit live EVENT-Playlist "
+                      f"({len(uploaded)} Segmente) — Nachbau vorgemerkt",
+                      flush=True)
             _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
             return False
         ok_hls = ok_thumbs = True
@@ -2171,6 +2331,7 @@ def process_recording(uuid, do_hls, do_thumbs, chase=False):
                     http_post_stream(
                         f"{GATEWAY}/api/internal/hls-done/{uuid}",
                         b"")
+                    _chase_offen_loeschen(uuid)  # vollstaendiges VOD steht
                     print(f"  hls {uuid}: {len(segs)+1} files "
                           f"({size_mb:.0f} MB), encode {encode_s:.0f}s "
                           f"+ tail {time.time()-t1:.0f}s", flush=True)
@@ -3175,6 +3336,10 @@ def main():
                                        thread_name_prefix="hls")
     hls_in_flight = set()
     hls_lock = threading.Lock()
+    # Chase: eigener Pool + Zaehler (unter hls_lock), s. CHASE_PARALLEL/_hls_gate.
+    chase_executor = ThreadPoolExecutor(max_workers=CHASE_PARALLEL,
+                                         thread_name_prefix="chase")
+    chase_in_flight = set()
 
     def _gc_stuck_in_flight():
         """Free slots leaked by abnormally-exited worker threads (= the
@@ -3456,10 +3621,9 @@ def main():
         # A remux stuck in failure-cooldown (bad source) keeps its marker, so
         # it'd block detect forever — exclude cooled jobs so the gate only
         # honours remuxes that can actually make progress.
-        hls_live = [j for j in hls if j.get("uuid") not in cooled]
         with hls_lock:
             n_hls_inflight = len(hls_in_flight)
-            hls_active = bool(hls_live) or n_hls_inflight > 0
+        hls_live, hls_active = _hls_gate(hls, cooled, n_hls_inflight)
         if hls_active and (detect or detect_low) and not _hls_gate[0]:
             print(f"  [cycle {cycle}] detect paused — "
                   f"{len(hls_live)} hls pending / {n_hls_inflight} in flight "
@@ -3511,23 +3675,41 @@ def main():
         # worker-thread that runs process_recording (= HLS+thumbs in one
         # shot). Pool cap = HLS_PARALLEL. Skip if already in-flight on
         # this pool OR on the detect pool (= same uuid being touched).
-        def _run_hls(uuid, do_hls, do_thumbs, chase=False):
+        def _run_hls(uuid, do_hls, do_thumbs, chase=False, nachbau=False):
             try:
-                process_recording(uuid, do_hls, do_thumbs, chase=chase)
+                if nachbau:
+                    _chase_nachbau(uuid)
+                else:
+                    process_recording(uuid, do_hls, do_thumbs, chase=chase)
             except Exception as e:
                 print(f"  hls {uuid}: unhandled err: {e}", flush=True)
             finally:
                 with hls_lock:
                     hls_in_flight.discard(uuid)
-        for uuid in sorted((hls_uuids | thumb_uuids) - cooled):
+                    chase_in_flight.discard(uuid)
+        # Chase zuerst und im eigenen Pool: ein voller HLS-Pool darf ihn nicht
+        # verdraengen (unten bricht die Schleife bei vollem Pool ab).
+        for uuid in sorted(hls_chase - cooled):
+            with hls_lock:
+                if uuid in chase_in_flight or uuid in hls_in_flight:
+                    continue
+                if len(chase_in_flight) >= CHASE_PARALLEL:
+                    break
+                chase_in_flight.add(uuid)
+            do_thumbs = uuid in thumb_uuids
+            print(f"  → {uuid} hls=True thumbs={do_thumbs} chase=True "
+                  f"(chase {len(chase_in_flight)}/{CHASE_PARALLEL})",
+                  flush=True)
+            chase_executor.submit(_run_hls, uuid, True, do_thumbs, True)
+        for uuid in sorted((hls_uuids | thumb_uuids) - cooled - hls_chase):
             do_hls = uuid in hls_uuids
             do_thumbs = uuid in thumb_uuids
-            do_chase = uuid in hls_chase
+            do_chase = False
             with detect_lock:
                 if uuid in detect_in_flight:
                     continue
             with hls_lock:
-                if uuid in hls_in_flight:
+                if uuid in hls_in_flight or uuid in chase_in_flight:
                     continue
                 if len(hls_in_flight) >= HLS_PARALLEL:
                     break  # pool full, try again next cycle
@@ -3536,6 +3718,20 @@ def main():
                   f"chase={do_chase} (pool {len(hls_in_flight)}/{HLS_PARALLEL})",
                   flush=True)
             hls_executor.submit(_run_hls, uuid, do_hls, do_thumbs, do_chase)
+        # Gescheiterte Chases mit live Teil-VOD nach Aufnahmeende neu bauen
+        # (s. CHASE_OFFEN_FILE). Normaler HLS-Platz: das ist ein Voll-Remux.
+        with hls_lock:
+            belegt = set(hls_in_flight) | set(chase_in_flight)
+            frei = len(hls_in_flight) < HLS_PARALLEL
+        if frei:
+            with detect_lock:
+                belegt |= set(detect_in_flight)
+            for uuid in _chase_nachbau_kandidaten(hls_uuids, belegt, cooled)[:1]:
+                with hls_lock:
+                    hls_in_flight.add(uuid)
+                print(f"  → {uuid} chase-nachbau (pool "
+                      f"{len(hls_in_flight)}/{HLS_PARALLEL})", flush=True)
+                hls_executor.submit(_run_hls, uuid, True, False, False, True)
         time.sleep(POLL_INTERVAL_S)
 
 

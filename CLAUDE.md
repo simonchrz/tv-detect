@@ -109,9 +109,11 @@ Drei Dinge, die man ohne das Ledger falsch macht:
   audio-only (low CPU), already runs concurrent with the video
   pipeline, and chunking it complicates merge with no benefit.
 
-- **Scene-cut at chunk boundaries is suppressed**, because the first
-  frame of a non-origin chunk has no real "previous frame" and would
-  fire a spurious cut.
+- **Scene-cut at chunk boundaries is suppressed** by the detector
+  itself: the first frame of a chunk has no "previous frame", and
+  `SceneDetector` only compares frames it decoded (`hasPrev`). merge
+  does NOT filter on top — the old "drop a cut at local frame 1" (and
+  the letterbox twin) deleted real events (fixed 2026-09-25).
 
 - **Blackframe runs that span chunk boundaries are coalesced** at
   merge time — a black flash at the seam shows up as two truncated
@@ -508,9 +510,11 @@ Drei Dinge, die man ohne das Ledger falsch macht:
 
 - **`-ss X -t Y` seek is approximate.** ffmpeg seeks to the nearest
   I-frame ≤ X. On a 30-min recording with 8 chunks we observe
-  ~15-20 extra frames total across all chunks — minor over-counting
-  vs single-pipeline. Acceptable for our cutlist tolerance (±2
-  frames per boundary).
+  ~15-20 extra frames total across all chunks. Since 2026-09-25
+  merge re-anchors every chunk at `round(startS*fps)` and cuts/pads its
+  tail (stderr `merge: chunks re-anchored`), so these frames no longer
+  accumulate into a drift of the per-frame arrays against the absolute
+  event times (blackframes, silence, I-frames).
 
 - **`--max-ad-gap` (default 30 s)** post-merges adjacent ad blocks
   whose post-refinement gap is shorter than this. Catches the case

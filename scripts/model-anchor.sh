@@ -66,7 +66,7 @@ elif ssh -o ConnectTimeout=3 -o BatchMode=yes "$PI_HOST" "test -d $PI_REMOTE_DIR
   # manual `auto` from the Mac (SMB unmounted) skip with "no channel-map".
   for f in head.bin backbone.onnx head.history.json \
            head.calibration.json head.channel-map.json head.test-set.json \
-           head.minute-prior.json; do
+           head.minute-prior.json head.audio.json; do
     scp -q "$PI_HOST:$PI_REMOTE_DIR/$f" "$MODELS_DIR/$f" 2>/dev/null || true
   done
 else
@@ -154,6 +154,10 @@ cmd_create() {
   # Gefunden 2026-08-05: KEIN Anker seit der MLP4-Umstellung hatte sie.
   [ -f "$MODELS_DIR/head.minute-prior.json" ] && \
     cp "$MODELS_DIR/head.minute-prior.json" "$stage/head.minute-prior.json"
+  # Audio-Semantik (Pegel/Schwankung, seit 2026-09-08) — ohne sie ist ein
+  # Anker nicht korrekt restaurierbar (Sweep 2026-09-25).
+  [ -f "$MODELS_DIR/head.audio.json" ] && \
+    cp "$MODELS_DIR/head.audio.json" "$stage/head.audio.json"
 
   local body; body=$(mktemp)
   {
@@ -191,6 +195,7 @@ cmd_create() {
   # hochgeladen — der Anker sieht lokal vollstaendig aus und ist es im
   # Release nicht. Genau so ist der erste Versuch dieses Fixes gescheitert.
   [ -f "$stage/head.minute-prior.json" ] && assets+=("$stage/head.minute-prior.json")
+  [ -f "$stage/head.audio.json" ] && assets+=("$stage/head.audio.json")
   gh release create "$tag" --repo "$ANCHOR_REPO" \
     --title "Model anchor: $raw_tag" \
     --notes-file "$body" \
@@ -251,8 +256,17 @@ cmd_install() {
   mkdir -p "$MODELS_DIR"
   # head.bin LAST so a daemon watching it never sees a new head with the
   # old (mismatched) channel-map.
+  # ⚠️ Ein Anker von vor 2026-09-25 hat keine head.audio.json. Weglassen
+  # hiesse: die Beilage des AKTUELLEN Kopfes bleibt liegen (dynamik=true)
+  # und der restaurierte Kopf bekaeme die falsche Audio-Semantik. Vor dem
+  # 08.09. galt der Pegel — also ausdruecklich mitliefern.
+  if [ ! -f "$stage/head.audio.json" ]; then
+    printf '{"dynamik": false, "fenster": 30, "quelle": "anker-ohne-beilage"}\n' \
+      > "$stage/head.audio.json"
+    echo "  Anker ohne audio-Beilage — installiere Pegel-Semantik (dynamik=false)" >&2
+  fi
   for f in backbone.onnx head.history.json head.calibration.json \
-           head.channel-map.json head.test-set.json head.minute-prior.json head.bin; do
+           head.channel-map.json head.test-set.json head.minute-prior.json head.audio.json head.bin; do
     [ -f "$MODELS_DIR/$f" ] && cp "$MODELS_DIR/$f" "$MODELS_DIR/$f.bak.$ts"
     [ -f "$stage/$f" ] && cp "$stage/$f" "$MODELS_DIR/$f"
   done
@@ -266,12 +280,12 @@ cmd_install() {
   if [ "${MODELS_REMOTE:-0}" = "1" ]; then
     echo "→ pushing models back to $PI_HOST:$PI_REMOTE_DIR ..."
     ssh "$PI_HOST" "mkdir -p '$PI_REMOTE_DIR/rollback-bak-$ts' && \
-      for f in head.bin backbone.onnx head.history.json head.calibration.json head.channel-map.json head.test-set.json head.minute-prior.json; do \
+      for f in head.bin backbone.onnx head.history.json head.calibration.json head.channel-map.json head.test-set.json head.minute-prior.json head.audio.json; do \
         [ -f '$PI_REMOTE_DIR'/\$f ] && cp '$PI_REMOTE_DIR'/\$f '$PI_REMOTE_DIR/rollback-bak-$ts/'; \
       done"
     # head.bin LAST (daemon mtime-watch consistency, see above).
     for f in backbone.onnx head.history.json head.calibration.json \
-             head.channel-map.json head.test-set.json head.minute-prior.json head.bin; do
+             head.channel-map.json head.test-set.json head.minute-prior.json head.audio.json head.bin; do
       [ -f "$MODELS_DIR/$f" ] && scp -q "$MODELS_DIR/$f" \
         "$PI_HOST:$PI_REMOTE_DIR/$f"
     done
@@ -314,7 +328,7 @@ cmd_auto() {
   # cmd_create ergaenzt — der Anker der Nacht kam prompt wieder ohne sie.
   for f in head.bin head.channel-map.json head.calibration.json \
            head.test-set.json head.history.json head.minute-prior.json \
-           backbone.onnx; do
+           head.audio.json backbone.onnx; do
     [ -f "$MODELS_DIR/$f" ] && { cp "$MODELS_DIR/$f" "$stage/$f"; assets+=("$stage/$f"); }
   done
   # Capture gh's stderr so a failure is debuggable (the old >/dev/null 2>&1 hid

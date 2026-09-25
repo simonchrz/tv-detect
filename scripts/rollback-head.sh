@@ -91,9 +91,19 @@ case "$1" in
 
     stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
     cp "$h" "$stage/head.bin"
-    for suf in channel-map calibration test-set minute-prior; do
+    for suf in channel-map calibration test-set minute-prior audio; do
       [ -f "$ARCHIVE/head.$ts.$suf.json" ] && cp "$ARCHIVE/head.$ts.$suf.json" "$stage/head.$suf.json"
     done
+    # ⚠️ Audio-Semantik IMMER mitliefern. Der Pi loescht nichts, was nicht im
+    # Bundle ist: fehlt sie, bleibt die Beilage des AKTUELLEN Kopfes liegen
+    # (dynamik=true seit 2026-09-08) und der zurueckgerollte Kopf bekommt die
+    # Schwankung statt des Pegels — still schlechtere Bloecke. Archive vor
+    # dem 2026-09-25 haben keine: dann galt der Pegel (audio_semantik_beilage).
+    if [ ! -f "$stage/head.audio.json" ]; then
+      printf '{"dynamik": false, "fenster": 30, "ts": "%s", "quelle": "rollback-ohne-beilage"}\n' "$ts" \
+        > "$stage/head.audio.json"
+      echo "  head.$ts hat keine audio-Beilage — liefere Pegel-Semantik (dynamik=false) mit" >&2
+    fi
     # ⚠️ Ein MLP4-Kopf braucht seine eigene minute-prior-Tabelle; das Archiv
     # legt sie bis heute nicht ab (dort liegen head.<ts>.bin + channel-map/
     # calibration/test-set). Der zurueckgerollte Kopf rechnet dann gegen die

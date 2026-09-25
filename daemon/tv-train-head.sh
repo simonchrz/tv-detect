@@ -400,8 +400,10 @@ if [ "$rc" -eq 0 ]; then
   "$VENV_PY" "$HOME/src/tv-detect/scripts/train-boundary-head.py" \
       --hls-root "$SNAPSHOT_DIR" \
       --feature-cache "$HOME/.cache/tvd-features" \
-      --output "$TRAIN_OUT/boundary_head.bin" 2>&1 | sed 's/^/  /' \
-    || echo "  boundary-head train FAILED (non-fatal, main head unaffected)"
+      --output "$TRAIN_OUT/boundary_head.bin" 2>&1 | sed 's/^/  /'
+  # PIPESTATUS[0] = Python, nicht sed: das `|| echo FAILED` pruefte bis
+  # 2026-09-25 den Status von sed und meldete nie etwas.
+  [ "${PIPESTATUS[0]}" -eq 0 ] || echo "  boundary-head train FAILED (non-fatal, main head unaffected)"
 fi
 
 # Bundle head.bin + sidecars + archive/ into a tar.gz and POST to
@@ -532,7 +534,9 @@ fi
 # makes it a property.
 echo "=== label audit (report only) ==="
 "$VENV_PY" "$HOME/src/tv-detect/scripts/corpus-label-audit.py" 2>&1 \
-  | tail -30 || echo "label audit failed (non-fatal)"
+  | tail -30
+# PIPESTATUS[0] = das Audit, nicht tail (s. boundary-head oben).
+[ "${PIPESTATUS[0]}" -eq 0 ] || echo "label audit failed (non-fatal)"
 echo "=== label audit end ==="
 
 # ── Fehlerbudget ─────────────────────────────────────────────────────────

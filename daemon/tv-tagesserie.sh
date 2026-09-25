@@ -55,8 +55,14 @@ print(','.join(str((b + 1 + 997*i) % 10000) for i in range($N)))")
 STICHTAG=$(( $(date +%s) / 3600 * 3600 ))
 echo "Tagesserie $TS — Arme: $ARME, $N Paare, Seeds: $SEEDS, Stichtag: $STICHTAG"
 
+# ⚠️ Eigener Snapshot, NICHT /tmp/tv-train-snapshot: der Fetch macht rmtree +
+# Neuaufbau, und der Nightly (03:30) liest dasselbe Verzeichnis — liefen
+# beide ueberlappend, las der eine halb geschriebene ads_user.json und
+# rechnete einen fremden golden label_hash (Golden-Boden ohne Bestwert).
+# Gleiche Daten, nur kein geteilter Ort (Sweep 2026-09-25).
+SNAP=/tmp/tv-tagesserie-snapshot
 "$PY" "$HOME/bin/tv-train-snapshot-fetch.py" \
-  --gateway-url https://raspberrypi5lan:8443 --out /tmp/tv-train-snapshot \
+  --gateway-url https://raspberrypi5lan:8443 --out "$SNAP" \
   || { echo "Snapshot-Fetch scheiterte"; exit 1; }
 
 # ⚠️ Arme NACHEINANDER, nicht parallel. Der erste Parallel-Versuch
@@ -72,7 +78,9 @@ IFS=',' read -ra ARMLISTE <<< "$ARME"
 for ARM in "${ARMLISTE[@]}"; do
   D="$BASIS/$ARM"
   mkdir -p "$D/out"
-  cp -R "$ECHT" "$D/archive"
+  # Scheitert die Kopie teilweise, fittet dieser Arm auf einem anderen Korpus
+  # als der andere — die Paarung waere wertlos, ohne dass es auffiele.
+  cp -R "$ECHT" "$D/archive" || { echo "Archiv-Kopie fuer Arm $ARM gescheitert — Abbruch"; exit 1; }
   # ⚠️ BEIDE Arme bekommen DENSELBEN eingefrorenen Label-Hygiene-Lehrer.
   # Der Lehrer wird aus dem --output-PFAD geladen, und am Ende seines
   # Laufs schreibt ein Arm genau dorthin seinen Kopf. Teilen sich zwei
@@ -129,7 +137,7 @@ for ARM in "${ARMLISTE[@]}"; do
       --backbone "$HOME/.cache/tv-detect-daemon/backbone.onnx" \
       --logo-dir "$HOME/.cache/tv-detect-daemon/logos" \
       --output "$D/out/head.bin" \
-      --hls-root /tmp/tv-train-snapshot \
+      --hls-root "$SNAP" \
       --with-logo --with-audio --with-minute-prior --with-self-training \
       --audio-dynamik \
       --herkunft-belegt \

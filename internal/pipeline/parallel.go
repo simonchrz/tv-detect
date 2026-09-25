@@ -167,6 +167,14 @@ func Run(ctx context.Context, opts Opts) (*Result, error) {
 	}
 	wg.Wait()
 	close(resCh)
+	// ⚠️ A cancelled ctx (SIGTERM/SIGINT) kills every ffmpeg; the decoder
+	// treats that as its own cancel and ends the chunk WITHOUT an error, so
+	// the chunks below look complete but are cut short. Returning them made
+	// main write a cutlist and --emit-signals-json from truncated data and
+	// exit 0. The run is only valid if nobody cancelled it.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("abgebrochen: %w", err)
+	}
 
 	results := make([]chunkRes, 0, len(plans))
 	for r := range resCh {

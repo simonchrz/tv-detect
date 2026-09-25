@@ -328,6 +328,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "iframes:", ifr.err)
 	}
 	res.IFrames = ifr.times
+	// Silence/I-frames run on the same ctx and stop just as silently.
+	if err := abgebrochen(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "pipeline:", err)
+		os.Exit(1)
+	}
 	elapsed := time.Since(t0).Seconds()
 	if !*quiet {
 		fmt.Fprintf(os.Stderr,
@@ -451,6 +456,13 @@ func main() {
 	if *ocrMarker {
 		ocrFunde = leseBildschirmText(flag.Arg(0), blockList, res,
 			*ocrHelfer, *ocrFensterS, *ocrSchrittS, *ocrCrop)
+	}
+
+	// Last gate before anything is written: a SIGTERM during OCR or block
+	// formation must not leave a dump/cutlist behind either.
+	if err := abgebrochen(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "tv-detect:", err)
+		os.Exit(1)
 	}
 
 	// Optional raw-signals dump — everything Form() consumes, plus die
@@ -584,6 +596,10 @@ func autoTrainLogo(ctx context.Context, input string, info decode.Info,
 	if err := d.Err(); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
+	// Cancelled mid-sampling = too few frames; never cache a template from that.
+	if err := abgebrochen(ctx); err != nil {
+		return nil, err
+	}
 	// Adaptive sweep: bump persistence upward until the bbox fits in
 	// 5000 px² (typical real-logo size) or we run out of room. Same
 	// behaviour as tv-detect-train-logo's default --max-bbox-area=5000.
@@ -655,11 +671,28 @@ func parseFFmpegExtraArgs(s string) []string {
 	return strings.Fields(s)
 }
 
+// abgebrochen reports a cancelled run (SIGTERM/SIGINT via signalContext).
+//
+// ⚠️ Cancellation is SILENT everywhere below main: the decoder treats the
+// kill of its ffmpeg as its own cancel and ends the chunk without an error
+// (internal/decode). Every stage that produces output therefore has to ask
+// the ctx itself — until 2026-09-25 a SIGTERM mid-decode wrote a cutlist
+// and --emit-signals-json from the truncated signals and exited 0, which
+// the daemon took as a finished detect.
+func abgebrochen(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("abgebrochen (Signal), keine Ausgabe geschrieben: %w", err)
+	}
+	return nil
+}
+
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
+	// Notify BEFORE returning, not inside the goroutine: otherwise a signal
+	// in the first instant still hits the default action.
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 		<-ch
 		cancel()
 	}()

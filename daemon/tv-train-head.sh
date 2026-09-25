@@ -593,6 +593,21 @@ else
   echo "  ⚠️ com.user.dumps-erneuern nicht registriert -- Plist aus daemon/launchd nach ~/Library/LaunchAgents kopieren und bootstrappen"
 fi
 
+# ── OCR-Spur nachfuehren (eigener launchd-Dienst) ────────────────────────
+# O26 (2026-09-25, ERFUELLT): OCR als Kopf-Spalte hebt F1 um +0.031. Damit
+# die Abdeckung waechst statt am Quellen-Bestand zu haengen, rechnet die
+# Kampagne jede Nacht die Spuren neuer Aufnahmen nach (und veraltete neu,
+# wenn sich eine Quelle geaendert hat). Sie wartet selbst auf laufende
+# Detects und Ausbildung und ist fortsetzbar — ein Anstoss pro Nacht reicht.
+# Kosten ~1,3 s je Minute Video, bei 5-7 Aufnahmen am Tag ~10 min.
+# Ohne -k: laeuft sie schon, bleibt sie.
+echo "=== OCR-Spur nachfuehren (eigener launchd-Dienst) ==="
+if launchctl kickstart gui/501/com.user.ocr-spur 2>/dev/null; then
+  echo "  angestossen, Protokoll: ~/Library/Logs/ocr-spur.log"
+else
+  echo "  ⚠️ com.user.ocr-spur nicht registriert -- Plist aus daemon/launchd nach ~/Library/LaunchAgents kopieren und bootstrappen"
+fi
+
 # ── O13-Schattenlauf ─────────────────────────────────────────────────────
 # Schreibt mit, was die OCR-Regel an den Kanten GETAN HAETTE. Wendet nichts
 # an; die Cutlist bleibt unberuehrt.

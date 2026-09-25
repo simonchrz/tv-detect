@@ -74,6 +74,15 @@ class Abbruch(unittest.TestCase):
         self.assertTrue(M.PFAD.startswith("/opt/homebrew/bin:"))
 
 
+class NightlyStoesstAn(unittest.TestCase):
+    def test_nightly_stoesst_die_kampagne_an(self):
+        # Ohne Anstoss waechst die Abdeckung nicht: die Spur neuer
+        # Aufnahmen entsteht nur, wenn die Kampagne laeuft (O26 erfuellt).
+        n = (HIER.parent / "daemon/tv-train-head.sh").read_text()
+        self.assertIn("launchctl kickstart gui/501/com.user.ocr-spur", n)
+        self.assertNotIn("kickstart -k gui/501/com.user.ocr-spur", n)
+
+
 class Reihenfolge(unittest.TestCase):
     def test_messsatz_und_golden_zuerst(self):
         tmp = Path(tempfile.mkdtemp())

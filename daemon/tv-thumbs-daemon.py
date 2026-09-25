@@ -1570,6 +1570,21 @@ DETECT_RETRY_FILE = MODEL_CACHE / "detect-retries.json"
 MAX_DETECT_RETRIES = 3   # 3 attempts then give up + clear marker via gateway
 
 
+# ⚠️ detect-retries.json wird Lesen-Aendern-Schreiben aktualisiert, und das
+# aus bis zu DETECT_PARALLEL Detect-Threads plus dem Watchdog. Ohne Sperre
+# ueberschreibt der zweite Schreiber den Strike des ersten — ein verlorener
+# Strike laesst eine kaputte Aufnahme eine Runde laenger die Schlange
+# blockieren, ein verlorenes pop() laesst einen alten Strike stehen.
+_detect_retries_lock = threading.RLock()
+
+# uuids, deren Haenger der Watchdog schon als Strike gezaehlt hat. Das
+# subprocess.run des getoeteten Detects kehrt danach mit rc=-9 zurueck und
+# wuerde denselben Haenger ein zweites Mal zaehlen (ein Haenger = zwei von
+# drei Strikes). Der naechste Fehler-Eintrag fuer die uuid wird deshalb
+# einmal verschluckt; ein Erfolg raeumt die Markierung ebenfalls ab.
+_strike_schon_gezaehlt = set()
+
+
 def _load_detect_retries():
     try:
         return json.loads(DETECT_RETRY_FILE.read_text())
@@ -1609,45 +1624,70 @@ def _record_detect_failure(uuid, force=False):
     MAX_DETECT_RETRIES instead of inheriting stale strikes. Entries are
     {"n": count, "size": bytes}; legacy plain-int entries (pre-format)
     are read as size-unknown and keep their count."""
-    retries = _load_detect_retries()
-    entry = retries.get(uuid, 0)
-    if isinstance(entry, dict):
-        prev_n, prev_size = int(entry.get("n", 0)), entry.get("size")
-    else:
-        prev_n, prev_size = int(entry), None
-    size = _detect_src_size(uuid)
-    if (prev_n and prev_size is not None and size is not None
-            and size != prev_size):
-        print(f"  detect {uuid}: source size changed "
-              f"({prev_size} → {size}) — resetting retry budget",
-              flush=True)
-        prev_n = 0
-    n = prev_n + 1
-    retries[uuid] = {"n": n, "size": size}
-    _save_detect_retries(retries)
+    with _detect_retries_lock:
+        if uuid in _strike_schon_gezaehlt:
+            # derselbe Haenger, den der Watchdog schon gezaehlt hat
+            _strike_schon_gezaehlt.discard(uuid)
+            if not force:
+                entry = _load_detect_retries().get(uuid, 0)
+                return int(entry.get("n", 0)) if isinstance(entry, dict) \
+                    else int(entry)
+        retries = _load_detect_retries()
+        entry = retries.get(uuid, 0)
+        if isinstance(entry, dict):
+            prev_n, prev_size = int(entry.get("n", 0)), entry.get("size")
+        else:
+            prev_n, prev_size = int(entry), None
+        size = _detect_src_size(uuid)
+        if (prev_n and prev_size is not None and size is not None
+                and size != prev_size):
+            print(f"  detect {uuid}: source size changed "
+                  f"({prev_size} → {size}) — resetting retry budget",
+                  flush=True)
+            prev_n = 0
+        n = prev_n + 1
+        retries[uuid] = {"n": n, "size": size}
+        _save_detect_retries(retries)
     if force or n >= MAX_DETECT_RETRIES:
         print(f"  detect {uuid}: giving up after {n} failure(s)"
               f"{' (unrecoverable)' if force else ''}, "
               f"asking gateway to clear marker", flush=True)
         try:
+            # POST ausserhalb der Sperre (bis 10 s Netz), danach frisch lesen
             req = urllib.request.Request(
                 f"{GATEWAY}/api/internal/detect-give-up/{uuid}",
                 method="POST")
             urllib.request.urlopen(req, timeout=10, context=CTX).read()
-            retries.pop(uuid, None)
-            _save_detect_retries(retries)
+            with _detect_retries_lock:
+                retries = _load_detect_retries()
+                retries.pop(uuid, None)
+                _save_detect_retries(retries)
         except Exception as e:
             print(f"  detect-give-up err: {e}", flush=True)
+    return n
+
+
+def _watchdog_strike(uuid):
+    """Strike fuer einen vom Watchdog getoeteten Detect — und nur einen: der
+    getoetete Lauf meldet gleich darauf rc=-9, der zaehlt nicht nochmal."""
+    # Zaehlen und Markieren in EINER Sperre, und der Watchdog ruft das VOR
+    # dem kill: sonst kann das rc=-9 des getoeteten Laufs dazwischenkommen
+    # und doppelt zaehlen (RLock, weil _record_detect_failure selbst sperrt).
+    with _detect_retries_lock:
+        n = _record_detect_failure(uuid)
+        _strike_schon_gezaehlt.add(uuid)
     return n
 
 
 def _record_detect_success(uuid):
     """Drop any persisted retry count after a successful detect (=
     next failure starts the counter from 0 again)."""
-    retries = _load_detect_retries()
-    if uuid in retries:
-        retries.pop(uuid, None)
-        _save_detect_retries(retries)
+    with _detect_retries_lock:
+        _strike_schon_gezaehlt.discard(uuid)
+        retries = _load_detect_retries()
+        if uuid in retries:
+            retries.pop(uuid, None)
+            _save_detect_retries(retries)
 
 
 def http_get_json(url):
@@ -3171,17 +3211,18 @@ def main():
                       f"past hard bound {hard/60:.0f} min — killing "
                       f"{len(pids)} worker pid(s) and freeing the slot",
                       flush=True)
+                # Strike VOR dem kill (s. _watchdog_strike).
+                _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
+                try:
+                    _watchdog_strike(uuid)
+                except Exception:
+                    pass
                 for p in pids:
                     try:
                         os.kill(int(p), signal.SIGKILL)
                     except Exception:
                         pass
                 killed.add(uuid)
-                _failed_until[uuid] = time.time() + FAIL_COOLDOWN_S
-                try:
-                    _record_detect_failure(uuid)
-                except Exception:
-                    pass
             freed.append(uuid)
         if not freed:
             return

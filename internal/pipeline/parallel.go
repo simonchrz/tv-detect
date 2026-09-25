@@ -241,13 +241,20 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 				logoCNN = nil
 			}
 		}
-		if logoCNN == nil {
-			logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, opts.LogoEdgeThresh, opts.LogoYOffset)
-			if err != nil {
-				out.err = err
-				return out
-			}
-		} else {
+		// ⚠️ The template detector runs ALWAYS, also next to the CNN: the NN
+		// head's logo column must carry the TEMPLATE value, because that is
+		// what train-head.py extracts (extract_logo_per_second: --logo only,
+		// never --logo-cnn). Feeding the CNN value there was a silent
+		// train/serve break for the 11 CNN channels — MAD 0.08–0.46 against
+		// the training column, the CNN saturating (>0.9 in 57–71 % of
+		// seconds vs 0–36 %), on the head's most important extra column
+		// (permutation importance 0.30). Sweep 2026-09-25, E1.
+		logo, err = signals.NewLogoDetector(opts.LogoTemplate, d.Width, d.Height, opts.LogoEdgeThresh, opts.LogoYOffset)
+		if err != nil {
+			out.err = err
+			return out
+		}
+		if logoCNN != nil {
 			defer logoCNN.Close()
 		}
 	}
@@ -369,15 +376,20 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 		// Compute logo conf first; the NN may consume it (with-logo
 		// head format passes the same per-frame logoConf as the 1281st
 		// input feature). For a legacy head it's silently ignored.
+		// logoConf: the logo SIGNAL (blocks, dumps) — CNN where configured.
+		// nnLogoConf: the head's input column — always the template value,
+		// as in training (see the detector setup above).
 		var logoConf float64 = 0.5
-		if logoCNN != nil {
+		nnLogoConf := 0.5
+		if logo != nil || logoCNN != nil {
 			tLogo := time.Now()
-			logoConf = logoCNN.Confidence(f.Pixels)
-			out.logoNs += time.Since(tLogo).Nanoseconds()
-			out.logoConfs = append(out.logoConfs, logoConf)
-		} else if logo != nil {
-			tLogo := time.Now()
-			logoConf = logo.Confidence(f.Pixels)
+			if logo != nil {
+				nnLogoConf = logo.Confidence(f.Pixels)
+				logoConf = nnLogoConf
+			}
+			if logoCNN != nil {
+				logoConf = logoCNN.Confidence(f.Pixels)
+			}
 			out.logoNs += time.Since(tLogo).Nanoseconds()
 			out.logoConfs = append(out.logoConfs, logoConf)
 		}
@@ -385,7 +397,7 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 			pxCopy := make([]byte, len(f.Pixels))
 			copy(pxCopy, f.Pixels)
 			nnPxBuf = append(nnPxBuf, pxCopy)
-			nnLogoAll = append(nnLogoAll, logoConf)
+			nnLogoAll = append(nnLogoAll, nnLogoConf)
 			// Per-frame audio RMS = the per-second value at the
 			// frame's wall-clock second. audioRMS is indexed by
 			// absolute seconds across the recording; chunk's startS

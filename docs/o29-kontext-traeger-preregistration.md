@@ -1,3 +1,25 @@
+> **ABGESCHLOSSEN 2026-09-26 — R3 ERFÜLLT, R1 und R2 VERFEHLT.**
+>
+> | Teilregel | Median-Δ | positiv | Urteil |
+> |---|---|---|---|
+> | R1 M − K (SigLIP-Mittel je Aufnahme) | +0.0038 | 4/5 | verfehlt (Größe) |
+> | R2 T − K (Sendungs-Kennung) | +0.0017 | 3/5 | verfehlt |
+> | R3 S − M (sekundengenau gegen den besseren billigen Arm) | +0.0372 | 5/5 | **erfüllt** |
+>
+> K 0.9236 → S 0.9644 (sd 0.0025). Konsequenz laut Regel: SigLIP sekundengenau als
+> Produktionsweg VORSCHLAGEN (zweiter Encoder, L5-Header-Bump mit ausdrücklichem OK).
+> Ergebnis `~/.cache/tvd-train-archive/o29-ergebnis.json`, Log `~/Library/Logs/o29-lauf.log`.
+>
+> ⚠️ DEUTUNG per Gegenprobe auf K (`o28-gegenprobe.py --mit-ocr`, nach dem Urteil):
+> nur Indikator −0.0011 (2/5), zeitlich gemischt **+0.0207** (5/5), sekundengenau +0.0404.
+> Mit den OCR-Spalten trägt der Bezug zur Sekunde also rund die Hälfte (+0.020 ≈ 3 sd).
+> Die andere Hälfte bleibt beim Mischen erhalten, lässt sich aber NICHT durch das Mittel je
+> Aufnahme (R1) oder die Sendung (R2) ersetzen. Die O28-Deutung „zwei Drittel Kontext,
+> billig zu haben“ ist damit widerlegt: was das Mischen überlebt, braucht trotzdem
+> Einzelbilder. Vermutung, ungeprüft: Regularisierung durch bildnahes Rauschen oder eine
+> Verteilungs-Information, die ein lineares PCA-Mittel über 200 Aufnahmen verliert. Für den
+> Produktionsweg ändert das nichts: beide Hälften brauchen SigLIP je Sekunde.
+
 # O29 — Trägt ein billiger Kontext-Träger den O28-Gewinn? (Vorab-Registrierung)
 
 **Geschrieben 2026-09-26, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

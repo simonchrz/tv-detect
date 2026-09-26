@@ -123,6 +123,13 @@ von 22 auf bis zu 51 heben.*
 
 ### O29 — Trägt ein billiger Kontext-Träger den O28-Gewinn?
 
+**ABGESCHLOSSEN 2026-09-26 — R3 ERFÜLLT (+0.0372, 5/5), R1 (+0.0038) und R2
+(+0.0017) VERFEHLT.** Mit OCR-Spalten in der Kontrolle bringt SigLIP
+sekundengenau +0.040 (0.9236 → 0.9644); ein billiger Träger ersetzt es nicht.
+Gegenprobe: zeitlich gemischt +0.021, Indikator 0. Die O28-Deutung „Kontext,
+billig zu haben“ ist widerlegt. Konsequenz: SigLIP je Sekunde als Produktionsweg
+vorschlagen, L5-OK nötig.
+
 *Registriert 2026-09-26, vor dem ersten Behandlungs-Datenpunkt. Kontrolle K =
 Produktionszustand INKL. der 3 OCR-Spalten (O28 hatte sie nicht; K liegt damit
 schon bei 0.9236, sd 0.0059). Arme: M (SigLIP-Mittel je Aufnahme), T

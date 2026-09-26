@@ -44,6 +44,8 @@ def main():
     ap.add_argument("--epochen", type=int, default=12)
     ap.add_argument("--hidden", type=int, default=96)
     ap.add_argument("--schritt", type=int, default=4)
+    ap.add_argument("--mit-ocr", action="store_true",
+                    help="Kontrolle = K aus O29 (Produktionszustand inkl. 3 OCR-Spalten)")
     ap.add_argument("--json")
     a = ap.parse_args()
 
@@ -63,6 +65,10 @@ def main():
     Xtr, ytr, rec_tr, u_tr = o.lade("train", None, a.schritt, mit_uuids=True)
     Xte, yte, rec_te, u_te = o.lade("test", None, 1, mit_uuids=True)
     Xte_p, te_halb = o27.halbe_spalte(Xte, rec_te, u_te, 1, vm.HALB_CACHE)
+    if a.mit_ocr:
+        o26 = _lade("o26_gp", HIER / "o26-ocr-spalte.py")
+        Xtr = np.concatenate([Xtr, o26.spalten_fuer(rec_tr, u_tr, a.schritt)], 1)
+        Xte_p = np.concatenate([Xte_p, o26.spalten_fuer(rec_te, u_te, 1)], 1)
     S_tr, da_tr, _ = o28.siglip_zeilen(rec_tr, u_tr, a.schritt, o28.SIGLIP_CACHE)
     S_te, da_te, te_mit = o28.siglip_zeilen(rec_te, u_te, 1, o28.SIGLIP_CACHE)
     prim = np.array([i in (te_halb & te_mit) and mensch(u) for i, u in enumerate(u_te)])[rec_te]

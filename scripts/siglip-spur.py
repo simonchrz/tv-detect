@@ -7,15 +7,17 @@ und Detect: Train/Serve-Paritaet durch Bauart (Lehre O27).
 Laeuft in der eigenen Umgebung ~/ml/siglip-exp/.venv (torch, transformers),
 nicht in der Trainings-venv.
 
-Zeitachse wie tv-ocr-spur: gekachelt in 2*halb Sekunden (Vorgabe 180 s), jede
-Kachel mit eigenem -ss. Zeile i ist das Bild bei Sekunde i ab Dateianfang.
-Am Stueck gerechnet driftet `fps=1` bei .ts (Memory
-frames_tragen_erwartete_zeit); je Kachel neu verankert bleibt der Fehler so
-klein wie in der OCR-Spur.
+⚠️ ZEILEN = ZEILEN DES KOPFS, NICHT ABSOLUTE SEKUNDEN. Ein `fps=1`-Durchlauf
+ueber die ganze Datei, genau wie die Backbone-Merkmale des Kopfs entstehen.
+Gemessen 2026-09-26 (scripts/siglip-spur-zeilenbezug.py, 20 Aufnahmen,
+Szenenschnitt-Korrelation gegen die Kopf-Zeilen): am Stueck Lag 0 in 20/20
+(r 0.59–0.86, vorne wie hinten); gekachelt mit eigenem -ss je 180-s-Kachel
+(wie tv-ocr-spur) Lag +1 in 15/20 und bei einem PTS-Sprung (14056 Kopf-
+Zeilen fuer 12570 s) voellig daneben (r ~ 0). Nicht wieder kacheln.
 
 Ausgabe: <aus>.npy (float16, n x 768) + <aus>.json (Frische-Beilage:
-quelle_bytes/mtime, Modell, Kachelung, Laufzeit). Beide werden atomar
-geschrieben, die JSON ZULETZT: ohne JSON gilt eine Spur als nicht vorhanden.
+quelle_bytes/mtime, Modell, Laufzeit). Beide werden atomar geschrieben, die
+JSON ZULETZT: ohne JSON gilt eine Spur als nicht vorhanden.
 """
 import argparse
 import json
@@ -59,12 +61,13 @@ def _hoehe(quelle, von):
 
 def bilder_kachel(quelle, von, bis, hoehe):
     """Bilder bei von, von+1, … (< bis). Genau ceil(bis-von) Stueck oder weniger."""
+    fenster = [] if bis == float("inf") else ["-ss", f"{von:.3f}", "-t", f"{bis - von:.3f}"]
     p = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-                          "-ss", f"{von:.3f}", "-t", f"{bis - von:.3f}", "-i", str(quelle),
+                          *fenster, "-i", str(quelle),
                           "-map", "0:v:0", "-vf", VF, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     n = BREITE * hoehe * 3
-    soll = math.ceil(bis - von - 1e-6)
+    soll = math.inf if bis == float("inf") else math.ceil(bis - von - 1e-6)
     k = 0
     while k < soll:
         b = p.stdout.read(n)
@@ -98,32 +101,21 @@ class Encoder:
         return e.float().cpu().numpy()
 
 
-def spur(quelle, enc, halb=90.0):
-    """(n, 768) float32, Zeile i = Sekunde i. Fehlende Bilder am Kachelende
-    werden mit dem letzten Bild der Kachel aufgefuellt; ganz leere Kacheln
-    bleiben 0 und stehen in `leer`."""
+def spur(quelle, enc, halb=None):
+    """(n, 768) float32 — ein fps=1-Durchlauf ueber die ganze Datei, Zeile i =
+    i-tes Ausgabebild (= Zeile i des Kopfs). `halb` bleibt nur fuer die alte
+    Aufrufform; die Kachelung ist gemessen falsch (s. Modul-Doku)."""
     dauer = dauer_von(quelle)
-    n = math.ceil(dauer - 1e-6)
-    E = np.zeros((n, 768), np.float32)
-    leer = []
     hoehe = _hoehe(quelle, 0.0)
-    for von, bis in kacheln(dauer, halb):
-        i0 = int(round(von))
-        zeilen, stapel = [], []
-        for bild in bilder_kachel(quelle, von, bis, hoehe):
-            stapel.append(bild)
-            if len(stapel) == STAPEL:
-                zeilen.append(enc(stapel)); stapel = []
-        if stapel:
-            zeilen.append(enc(stapel))
-        if not zeilen:
-            leer.append([von, bis]); continue
-        Z = np.concatenate(zeilen)
-        soll = min(math.ceil(bis - von - 1e-6), n - i0)
-        if len(Z) < soll:
-            Z = np.concatenate([Z, np.repeat(Z[-1:], soll - len(Z), 0)])
-        E[i0:i0 + soll] = Z[:soll]
-    return E, dauer, leer
+    zeilen, stapel = [], []
+    for bild in bilder_kachel(quelle, 0.0, float("inf"), hoehe):
+        stapel.append(bild)
+        if len(stapel) == STAPEL:
+            zeilen.append(enc(stapel)); stapel = []
+    if stapel:
+        zeilen.append(enc(stapel))
+    E = np.concatenate(zeilen) if zeilen else np.zeros((0, 768), np.float32)
+    return E, dauer, ([] if len(E) else [[0.0, dauer]])
 
 
 def _atomar(pfad, schreiben):
@@ -146,7 +138,7 @@ def schreibe_spur(quelle, aus, enc, halb=90.0):
     _atomar(aus.with_suffix(".npy"), npy)
     meta = {"quelle": str(quelle), "quelle_bytes": st.st_size, "quelle_mtime": int(st.st_mtime),
             "dauer_s": dauer, "zeilen": len(E), "modell": MODELL, "max_patches": MAX_PATCHES,
-            "breite": BREITE, "halb_s": halb, "leer": leer, "gekachelt": True,
+            "breite": BREITE, "leer": leer, "gekachelt": False,
             "erstellt": time.strftime("%Y-%m-%dT%H:%M:%S"), "laufzeit_s": round(time.time() - t0, 1)}
     _atomar(aus.with_suffix(".json"), lambda p: Path(p).write_text(json.dumps(meta)))
     print(f"  {aus.name}: {len(E)} Zeilen in {meta['laufzeit_s']:.0f}s"

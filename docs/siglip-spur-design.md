@@ -122,3 +122,24 @@ Definition), `write_mlp_head_v7`, Go `siglipspalten.go` + MLP7-Lader + `--siglip
 Paritätstest `mlp7_siglip_parity_test.go` (Python-Fixture, float16 bitgenau), Daemon
 `_siglip_spur_fuer`. Schritt 5 (Training) ist NICHT verdrahtet: `write_mlp_head_v7`
 existiert, der Nightly ruft es nicht auf.
+
+### Nachtrag 2026-09-26: Kachelung war FALSCH — am Stück ist richtig
+
+Die geplante Kachelung (Schritt 1, wie `tv-ocr-spur`) ist gemessen falsch.
+`scripts/siglip-spur-zeilenbezug.py` korreliert die Szenenschnitt-Sprünge der SigLIP-Zeilen
+mit denen der Backbone-Zeilen des Kopfs (20 Aufnahmen):
+
+| | am Stück (O28-Merkmale) | gekachelt (-ss je 180 s) |
+|---|---|---|
+| beste Verschiebung | **0 in 20/20**, vorne wie hinten | +1 in 15/20 |
+| Korrelation bei 0 | **0.59–0.86** | 0.09–0.53 |
+| PTS-Sprung (14056 Kopf-Zeilen / 12570 s) | Lag 0, r 0.59 | r ≈ 0 |
+
+Die Zeilen des Kopfs sind der Bild-Index eines `fps=1`-Durchlaufs über die ganze Datei, nicht
+die absolute Sekunde. `siglip-spur.py` rechnet deshalb am Stück und reproduziert die O28-
+Merkmale exakt (Kosinus 1.0 auf allen 1489 Zeilen einer Probe). Die O28/O29-Ergebnisse
+stehen damit auf richtig ausgerichteten Merkmalen.
+
+⚠️ **Offene Frage für die OCR-Spur:** `tv-ocr-spur` kachelt genau so. Ihre Spalten sind ±10 s
+breit (`FENSTER`), eine Sekunde Versatz wiegt dort wenig. Bei PTS-Sprüngen liegen sie aber
+womöglich weit neben den Kopf-Zeilen. Das ist eine eigene Prüfung, noch nicht gemacht.

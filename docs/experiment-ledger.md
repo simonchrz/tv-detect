@@ -121,6 +121,20 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### (nicht registriert) Aufnahmeränder aus dem Training ausblenden?
+
+*Geprüft 2026-09-26, NICHT registriert — Vormessung zeigt, dass die Frage
+zu klein ist.* Der Review markiert absichtlich nicht, was vor Sendungsbeginn
+und nach Sendungsende liegt (Memory `review_beantwortet_eine_andere_frage`);
+dort liest das Training echte Werbung als Sendung. Gemessen (Detektor-Block
+am Aufnahmerand, ≤5 s von Anfang/Ende, ohne Label-Werbung, menschlich
+gelabelt): **train 931 s von 95 h = 0.27 %** (11 Blöcke, davon ≥185 s laut
+Bildsichtung doch Sendung), **test 74 s von 20 h = 0.11 %**. Kein denkbarer
+Effekt wäre gegen Kontrollarm-sd ~0.012 messbar. Wiedervorlage erst, wenn
+der Anteil wächst (z. B. längere Vor-/Nachlauf-Polster). Nebenbefund:
+`show_start_s` ist in keinem menschlichen Label gesetzt, `confirmed_show`
+(86/143) sind Einzelpunkte — eine Sendungsspanne gibt es in den Labels nicht.
+
 ### O28 — Hebt ein text-fähiger Bild-Encoder (SigLIP 2) als Zusatzblock die Leistung?
 
 *Registriert 2026-09-26, vor dem ersten Behandlungs-Datenpunkt. Offline-A/B

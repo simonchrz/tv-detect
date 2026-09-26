@@ -1,3 +1,26 @@
+> **ABGESCHLOSSEN 2026-09-26 — REGEL ERFÜLLT: Median-ΔF1 +0.0613, 5 von 5 Seeds**
+> (Kontrolle 0.8970, Versuch 0.9626, sd 0.012 → 0.003; Schwelle +0.012 und 4/5).
+> Primär = Nebenwert (alle 23 test-Aufnahmen mit beidem sind menschlich).
+> Ergebnis `~/.cache/tvd-train-archive/o28-ergebnis.json`, Log `~/Library/Logs/o28-lauf.log`.
+>
+> ⚠️ DEUTUNG per Gegenprobe (`scripts/o28-gegenprobe.py`, nach dem Urteil, ändert es
+> nicht; gleiche Seeds, Median-Δ gegen Kontrolle):
+>
+> | Arm | F1 | Δ | positiv |
+> |---|---|---|---|
+> | nur `siglip_da` (welche Aufnahme eine Quelle hat) | 0.9113 | +0.0068 | 5/5 |
+> | SigLIP zeitlich gemischt (Zeilen je Aufnahme permutiert) | 0.9382 | +0.0407 | 5/5 |
+> | SigLIP sekundengenau (= Versuch) | 0.9626 | +0.0613 | 5/5 |
+>
+> **Etwa zwei Drittel des Gewinns überleben das Mischen.** Sie kommen also aus
+> Kontext auf Aufnahme-Ebene (welche Sendung, welcher Look), nicht aus dem Bild der
+> jeweiligen Sekunde. Sekundengenau trägt SigLIP zusätzlich rund +0.021 (≈ 2 sd).
+> Vermutlicher Mechanismus: der Kopf lernt pro Sendung, wie weit er Logo und Co.
+> trauen darf (Let's Dance versteckt das Logo usw.). Konsequenz laut Regel: einen
+> Produktionsweg VORSCHLAGEN, nicht bauen. Vorher klären, ob ein billigerer Träger
+> desselben Kontexts reicht (SigLIP-Mittel je Aufnahme, Sendungs-Kennung) und wie es
+> mit den OCR-Spalten (MLP6) zusammenspielt.
+
 # O28 — Hebt ein text-fähiger Bild-Encoder (SigLIP 2) als Zusatzblock die Leistung? (Vorab-Registrierung)
 
 **Geschrieben 2026-09-26, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

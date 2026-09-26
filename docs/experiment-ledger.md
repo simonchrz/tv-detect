@@ -137,6 +137,13 @@ der Anteil wächst (z. B. längere Vor-/Nachlauf-Polster). Nebenbefund:
 
 ### O28 — Hebt ein text-fähiger Bild-Encoder (SigLIP 2) als Zusatzblock die Leistung?
 
+**ABGESCHLOSSEN 2026-09-26 — REGEL ERFÜLLT (+0.0613, 5/5).** Gegenprobe: zeitlich
+gemischtes SigLIP erreicht noch +0.0407, der Indikator allein +0.0068. Rund zwei
+Drittel sind also Kontext auf Aufnahme-Ebene, rund +0.021 sind sekundengenauer
+Bildinhalt. Nächste Frage vor jedem Bau: trägt ein billigerer Kontext-Träger
+(SigLIP-Mittel je Aufnahme / Sendungs-Kennung) denselben Anteil, und wie
+verträgt sich das mit den OCR-Spalten?
+
 *Registriert 2026-09-26, vor dem ersten Behandlungs-Datenpunkt. Offline-A/B
 (Bauart O26), Kontrolle = PRODUKTIONSZUSTAND (Lehre O27: Archiv-Merkmale,
 test-Logo-Spalte halb). Versuch = + 64 SigLIP-2-Hauptkomponenten (PCA nur

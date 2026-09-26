@@ -3540,7 +3540,7 @@ def main():
             print(f"  snapshot fire err: {e}", flush=True)
 
     cycle = 0
-    _hls_gate = [False]  # edge-trigger for the "detect paused/resumed" log
+    _hls_gate_log = [False]  # edge-trigger for the "detect paused/resumed" log
     while True:
         cycle += 1
         _maybe_gc_orphans()
@@ -3645,14 +3645,14 @@ def main():
         with hls_lock:
             n_hls_inflight = len(hls_in_flight)
         hls_live, hls_active = _hls_gate(hls, cooled, n_hls_inflight)
-        if hls_active and (detect or detect_low) and not _hls_gate[0]:
+        if hls_active and (detect or detect_low) and not _hls_gate_log[0]:
             print(f"  [cycle {cycle}] detect paused — "
                   f"{len(hls_live)} hls pending / {n_hls_inflight} in flight "
                   f"have CPU/GPU priority", flush=True)
-            _hls_gate[0] = True
-        elif not hls_active and _hls_gate[0]:
+            _hls_gate_log[0] = True
+        elif not hls_active and _hls_gate_log[0]:
             print(f"  [cycle {cycle}] detect resumed (hls drained)", flush=True)
-            _hls_gate[0] = False
+            _hls_gate_log[0] = False
         # Submit detect jobs to the pool until either the pool is full or
         # the queue is exhausted. Each pool worker runs process_detect in
         # parallel; tv-detect inside scales itself to TVD_WORKERS cores.

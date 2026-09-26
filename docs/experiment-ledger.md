@@ -121,6 +121,21 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O27 — Hilft es, die Logo-Spalte bei der Produktions-Auflösung zu trainieren?
+
+*Offen seit 2026-09-26. Offline-A/B (Bauart O26): Kontrolle = Logo-Spalte
+voll (Archiv), Versuch = halbe Auflösung wie der Daemon, wo die Quelle noch
+liegt. Primär F1 auf den 23 menschlich gelabelten test-Aufnahmen mit
+Quelle; Regel: Median-ΔF1 ≥ +0.02 UND ≥ 4/5 Seeds (Kontrollarm sd 0.021).
+Registrierung: `docs/o27-logo-halbe-aufloesung-preregistration.md`, Skript
+`scripts/o27-logo-halb.py`.*
+
+*Anlass: Vormessung ohne Behandlung — derselbe Fit ist mit der halben
+Spalte BESSER (+0.079 auf Menschenlabels, 5/5); Template-Stand als Ursache
+per Dreiweg-Gegenprobe ausgeschlossen. Erfüllt → Trainingsweg vorschlagen
+(mit Beilage wie O22). Verfehlt → nichts ändern, die Produktion profitiert
+schon heute.*
+
 ### O26 — Hebt OCR (Bildschirm-Text) als Zusatzspalte die binäre Leistung?
 
 *Status: **ABGESCHLOSSEN 2026-09-25 — REGEL ERFÜLLT**: Median ΔF1 +0.0313 (test

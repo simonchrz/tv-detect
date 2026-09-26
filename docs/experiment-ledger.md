@@ -121,6 +121,22 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O28 — Hebt ein text-fähiger Bild-Encoder (SigLIP 2) als Zusatzblock die Leistung?
+
+*Registriert 2026-09-26, vor dem ersten Behandlungs-Datenpunkt. Offline-A/B
+(Bauart O26), Kontrolle = PRODUKTIONSZUSTAND (Lehre O27: Archiv-Merkmale,
+test-Logo-Spalte halb). Versuch = + 64 SigLIP-2-Hauptkomponenten (PCA nur
+auf train) + Indikator `siglip_da`. Primär F1 auf menschlich gelabelten
+test-Aufnahmen mit halber Logo-Spalte UND SigLIP-Merkmalen; Regel:
+Median-ΔF1 ≥ +0.012 UND ≥ 4/5 Seeds (Kontrollarm sd 0.012). Registrierung:
+`docs/o28-siglip2-preregistration.md`, Merkmale
+`scripts/o28-siglip-merkmale.py`, Skript `scripts/o28-siglip.py`.*
+
+*Anlass: der Backbone liest keinen Text (224×224); O26 belegte, dass Text
+trägt. SigLIP 2 NaFlex arbeitet im nativen Seitenverhältnis und ist im
+OCR-Bereich stark. Erfüllt → Produktionsweg vorschlagen (zweiter Encoder,
+L5-Header-Bump), nicht bauen. Verfehlt → Text-Pfad bleibt die OCR-Spur.*
+
 ### O27 — Hilft es, die Logo-Spalte bei der Produktions-Auflösung zu trainieren?
 
 **ABGESCHLOSSEN 2026-09-26 — formal ERFÜLLT (+0.0767, 5/5), Konsequenz:

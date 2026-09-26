@@ -1,3 +1,17 @@
+> **ABGESCHLOSSEN 2026-09-26 — REGEL FORMAL ERFÜLLT, KONSEQUENZ: NICHTS BAUEN.**
+> Median-ΔF1 **+0.0767**, **5 von 5** Seeds (Kontrolle 0.8179, Versuch
+> 0.8946; Schwelle +0.02 und 4/5). ⚠️ DEUTUNG: die registrierte Kontrolle
+> (train voll / test voll) ist NICHT der Produktionszustand. Die Produktion
+> ist train voll / test HALB — und genau das misst die Vormessung: 0.8970
+> (Median). Der Versuch (train halb / test halb) liegt mit 0.8946 gleichauf.
+> Der ganze Gewinn entsteht also an der TEST-Spalte, die die Produktion
+> schon heute hat; das Training auf die halbe Auflösung umzustellen bringt
+> nichts messbar. Konstruktionsfehler der Registrierung (meiner): die
+> Kontrolle hätte der Produktionszustand sein müssen. Nebenwert = Primärwert,
+> weil die halbe Spalte nur für die 23 menschlich gelabelten test-Aufnahmen
+> im Cache lag. Ergebnis: `~/.cache/tvd-train-archive/o27-ergebnis.json`,
+> Log `~/Library/Logs/o27-lauf.log`.
+
 # O27 — Hilft es, die Logo-Spalte bei der Produktions-Aufloesung zu trainieren? (Vorab-Registrierung)
 
 **Geschrieben 2026-09-26, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

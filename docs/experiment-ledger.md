@@ -123,7 +123,15 @@ von 22 auf bis zu 51 heben.*
 
 ### O27 — Hilft es, die Logo-Spalte bei der Produktions-Auflösung zu trainieren?
 
-*Offen seit 2026-09-26. Offline-A/B (Bauart O26): Kontrolle = Logo-Spalte
+**ABGESCHLOSSEN 2026-09-26 — formal ERFÜLLT (+0.0767, 5/5), Konsequenz:
+nichts bauen.** Der Gewinn entsteht an der Test-Spalte, die die Produktion
+schon hat (Vormessung train voll / test halb: 0.8970 ≈ Versuch 0.8946).
+Die registrierte Kontrolle (voll/voll) war nicht der Produktionszustand —
+Konstruktionsfehler, in der Registrierung vermerkt. Lehre: die Kontrolle
+eines Offline-A/B ist der HEUTIGE Produktionszustand, nicht der
+Trainingszustand.
+
+*Registriert 2026-09-26. Offline-A/B (Bauart O26): Kontrolle = Logo-Spalte
 voll (Archiv), Versuch = halbe Auflösung wie der Daemon, wo die Quelle noch
 liegt. Primär F1 auf den 23 menschlich gelabelten test-Aufnahmen mit
 Quelle; Regel: Median-ΔF1 ≥ +0.02 UND ≥ 4/5 Seeds (Kontrollarm sd 0.021).

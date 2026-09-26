@@ -121,6 +121,15 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O29 — Trägt ein billiger Kontext-Träger den O28-Gewinn?
+
+*Registriert 2026-09-26, vor dem ersten Behandlungs-Datenpunkt. Kontrolle K =
+Produktionszustand INKL. der 3 OCR-Spalten (O28 hatte sie nicht; K liegt damit
+schon bei 0.9236, sd 0.0059). Arme: M (SigLIP-Mittel je Aufnahme), T
+(Sendungs-Kennung one-hot), S (SigLIP sekundengenau). Teilregeln R1 M−K,
+R2 T−K, R3 S−besserer(M,T), je ≥ +0.012 und ≥ 4/5. Registrierung
+`docs/o29-kontext-traeger-preregistration.md`, Skript `scripts/o29-kontext.py`.*
+
 ### (nicht registriert) Aufnahmeränder aus dem Training ausblenden?
 
 *Geprüft 2026-09-26, NICHT registriert — Vormessung zeigt, dass die Frage

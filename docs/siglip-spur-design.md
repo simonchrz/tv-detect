@@ -1,6 +1,6 @@
 # SigLIP-Spur — Produktionsweg für SigLIP 2 je Sekunde (Entwurf, NICHT gebaut)
 
-**Stand 2026-09-26. Wartet auf Simons Freigabe.** Der Header-Wechsel (Schritt 5) ist
+**Stand 2026-09-26. Schritte 1–2 freigegeben und gebaut (s. „Umsetzung“ unten).** Der Header-Wechsel (Schritt 5) ist
 eine L5-Änderung und braucht ein ausdrückliches OK. Nichts hiervon ist gebaut.
 
 ## Warum
@@ -96,3 +96,29 @@ kann so nicht entstehen: der Erzeuger dekodiert selbst, unabhängig von
 - **Ungeklärt:** die Hälfte des Gewinns überlebt das zeitliche Mischen (O29-Gegenprobe).
   Für den Bau ändert das nichts, beide Hälften brauchen Einzelbilder. Es bleibt aber
   eine offene Frage für später.
+
+## Umsetzung (2026-09-26, Schritte 1–2)
+
+Abweichungen vom Entwurf, beim Bauen gefunden:
+
+- **Abdeckung per Kampagne, nicht im Daemon.** Wie bei der OCR-Spur erzeugt der Daemon
+  die Spur NUR, wenn der geladene Kopf sie braucht (v7). Die Abdeckung fürs Training hält
+  `scripts/siglip-spur-nachrechnen.py` / `com.user.siglip-spur` aktuell (fortsetzbar, wartet
+  auf Detects und Ausbildung, lädt das Modell einmal). Der Detect wird so bis zum v7-Kopf
+  nicht langsamer. Eine frische Spur gibt der Daemon immer mit; tv-detect lädt sie nur für
+  einen v7-Kopf.
+- **Der Produktionskopf standardisiert nicht.** Die O-Experimente standardisierten jede
+  Spalte, `train-head.py` nicht. Deshalb ist die Projektion in `siglip_spalten.py`
+  **weißend** (Komponente / √Eigenwert), und diese Skalierung steckt in `V`. Der Gewinn aus
+  O28/O29 muss sich damit nicht 1:1 übertragen; der Herausforderer im Nightly ist die
+  eigentliche Probe.
+- **Latenter Fehler behoben:** `_kopf_braucht_ocr` prüfte nur `b"MLP6"`. Ein v7-Kopf hätte
+  keine OCR-Spur bekommen und still mit OCR-Spalten 0 gerechnet. Jetzt über
+  `_kopf_feld` für v6 und v7 (Test `test_daemon_siglip_spur.py`).
+- **Re-Filter räumt die Spur** (`_invalidate_derived`), wie OCR-Spur und Sprecher-Artefakte.
+
+Gebaut: `scripts/siglip-spur.py` (gekachelt), `scripts/siglip_spalten.py` (eine
+Definition), `write_mlp_head_v7`, Go `siglipspalten.go` + MLP7-Lader + `--siglip-spur`,
+Paritätstest `mlp7_siglip_parity_test.go` (Python-Fixture, float16 bitgenau), Daemon
+`_siglip_spur_fuer`. Schritt 5 (Training) ist NICHT verdrahtet: `write_mlp_head_v7`
+existiert, der Nightly ruft es nicht auf.

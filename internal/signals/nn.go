@@ -63,8 +63,17 @@ type NNDetector struct {
 	// 0 or 3 — OCR-Spalten (v6+, O26): hinweis_nah, werbung_nah, spur_da.
 	// Ganz HINTEN (Praefix-Vertrag). Werte je Sekunde aus mlpOCR, gesetzt
 	// per SetOCRSpalten (--ocr-spur); ohne Spur alle drei 0, wie im Training.
-	mlpNOCR    int
-	mlpOCR     *OCRSpalten
+	mlpNOCR int
+	mlpOCR  *OCRSpalten
+	// 0 or 65 — SigLIP-Spalten (v7+, O28/O29, docs/siglip-spur-design.md):
+	// 64 Hauptkomponenten + siglip_da, HINTER den OCR-Spalten. Mittelwert und
+	// Projektion stehen im Koerper von head.bin (keine Beilage: die Audio-
+	// Beilage riss im Transport dreimal). Werte je Sekunde aus mlpSigLIP,
+	// gesetzt per SetSigLIPSpur (--siglip-spur); ohne Spur alles 0.
+	mlpNSigLIP int
+	mlpSigMu   []float32 // SigLIPDim
+	mlpSigV    []float32 // SigLIPDim*SigLIPKomponenten, zeilenweise
+	mlpSigLIP  *SigLIPSpur
 	mlpW1      []float32      // (mlpInDim, mlpHidden) row-major: W1[i*mlpHidden+j]
 	mlpB1      []float32      // mlpHidden
 	mlpW2      []float32      // (mlpHidden, mlpOutDim) row-major
@@ -292,6 +301,7 @@ func (d *NNDetector) reloadHead() error {
 	//   "MLP4" (v4) — v3 + minute-of-hour-prior input slot
 	//   "MLP5" (v5) — v4 + whisper-PRESENCE slot
 	//   "MLP6" (v6) — v5 + drei OCR-Spalten (O26), gleicher Lader wie v5
+	//   "MLP7" (v7) — v6 + SigLIP-Spalten (O29), Projektion im Koerper
 	// Each gets its own loader because the header layout differs
 	// (v5 is 52 B, v4 48 B, v3 44 B, v2 40 B, v1 36 B). Falls through to the
 	// legacy LogReg size-detection path when no magic matches.
@@ -309,6 +319,8 @@ func (d *NNDetector) reloadHead() error {
 			return d.loadMLPHeadV5(raw, mtime, 5)
 		case '6':
 			return d.loadMLPHeadV5(raw, mtime, 6)
+		case '7':
+			return d.loadMLPHeadV5(raw, mtime, 7)
 		}
 		// Unknown MLPx version → fall through to LogReg size
 		// detection, which will fail with a clean error rather
@@ -373,6 +385,7 @@ func (d *NNDetector) reloadHead() error {
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
 	d.mlpNOCR = 0
+	d.mlpNSigLIP = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -486,6 +499,7 @@ func (d *NNDetector) loadMLPHead(raw []byte, mtime int64) error {
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
 	d.mlpNOCR = 0
+	d.mlpNSigLIP = 0
 	d.mlpMinutePrior = nil
 	d.mu.Unlock()
 	return nil
@@ -581,6 +595,7 @@ func (d *NNDetector) loadMLPHeadV2(raw []byte, mtime int64) error {
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
 	d.mlpNOCR = 0
+	d.mlpNSigLIP = 0
 	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
@@ -690,6 +705,7 @@ func (d *NNDetector) loadMLPHeadV3(raw []byte, mtime int64) error {
 	d.mlpNMinutePrior = 0
 	d.mlpNWhisperMask = 0
 	d.mlpNOCR = 0
+	d.mlpNSigLIP = 0
 	d.mlpMinutePrior = nil
 	d.mlpW1 = W1
 	d.mlpB1 = b1
@@ -809,6 +825,7 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 	d.mlpNMinutePrior = nMinutePrior
 	d.mlpNWhisperMask = 0
 	d.mlpNOCR = 0
+	d.mlpNSigLIP = 0
 	d.mlpMinutePrior = mpPrior
 	d.mlpMPNeutral = mpNeutral
 	d.mlpW1 = W1
@@ -857,9 +874,13 @@ func (d *NNDetector) loadMLPHeadV4(raw []byte, mtime int64) error {
 func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) error {
 	headerLen := 52
 	magic := uint32(0x35504C4D) // "MLP5"
-	if version == 6 {
+	switch version {
+	case 6:
 		headerLen = 56
 		magic = 0x36504C4D // "MLP6"
+	case 7:
+		headerLen = 60
+		magic = 0x37504C4D // "MLP7"
 	}
 	if len(raw) < headerLen {
 		return fmt.Errorf("MLP%d head truncated: %d B < %d B header",
@@ -889,10 +910,18 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 	nMinutePrior := int(u32(44))
 	nWhisperMask := int(u32(48))
 	nOCR := 0
-	if version == 6 {
+	if version >= 6 {
 		nOCR = int(u32(52))
 		if nOCR != 0 && nOCR != 3 {
-			return fmt.Errorf("MLP6 head n_ocr %d (erlaubt: 0 oder 3)", nOCR)
+			return fmt.Errorf("MLP%d head n_ocr %d (erlaubt: 0 oder 3)", version, nOCR)
+		}
+	}
+	nSigLIP := 0
+	if version == 7 {
+		nSigLIP = int(u32(56))
+		if nSigLIP != 0 && nSigLIP != SigLIPKomponenten+1 {
+			return fmt.Errorf("MLP7 head n_siglip %d (erlaubt: 0 oder %d)",
+				nSigLIP, SigLIPKomponenten+1)
 		}
 	}
 	if err := pruefeMLPKopfFelder(fmt.Sprintf("MLP%d", version), hidden, outDim,
@@ -905,14 +934,19 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 			backbone, nnFeatDim)
 	}
 	if backbone+nLogo+nAudio+nChan+nWhisper+nTemporal+nMinutePrior+
-		nWhisperMask+nOCR != inDim {
+		nWhisperMask+nOCR+nSigLIP != inDim {
 		return fmt.Errorf("MLP%d head input_dim %d inconsistent with "+
 			"backbone %d + logo %d + audio %d + chan %d + whisper %d + "+
-			"temporal %d + minuteprior %d + whispermask %d + ocr %d",
+			"temporal %d + minuteprior %d + whispermask %d + ocr %d + siglip %d",
 			version, inDim, backbone, nLogo, nAudio, nChan, nWhisper, nTemporal,
-			nMinutePrior, nWhisperMask, nOCR)
+			nMinutePrior, nWhisperMask, nOCR, nSigLIP)
 	}
-	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim)*4
+	// v7 mit SigLIP: hinter W1/b1/W2/b2 folgen mu (768) und V (768×64).
+	projFloats := 0
+	if nSigLIP > 0 {
+		projFloats = SigLIPDim + SigLIPDim*SigLIPKomponenten
+	}
+	expected := headerLen + (inDim*hidden+hidden+hidden*outDim+outDim+projFloats)*4
 	if len(raw) != expected {
 		return fmt.Errorf("MLP5 head size %d != expected %d (in=%d hid=%d out=%d)",
 			len(raw), expected, inDim, hidden, outDim)
@@ -930,6 +964,11 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 	b1 := readFloats(hidden)
 	W2 := readFloats(hidden * outDim)
 	b2 := readFloats(outDim)
+	var sigMu, sigV []float32
+	if nSigLIP > 0 {
+		sigMu = readFloats(SigLIPDim)
+		sigV = readFloats(SigLIPDim * SigLIPKomponenten)
+	}
 	chanMap, mlpChanIdx, err := d.loadChannelMap(nChan)
 	if err != nil {
 		return fmt.Errorf("MLP5 head: %w", err)
@@ -958,6 +997,9 @@ func (d *NNDetector) loadMLPHeadV5(raw []byte, mtime int64, version uint32) erro
 	d.mlpNMinutePrior = nMinutePrior
 	d.mlpNWhisperMask = nWhisperMask
 	d.mlpNOCR = nOCR
+	d.mlpNSigLIP = nSigLIP
+	d.mlpSigMu = sigMu
+	d.mlpSigV = sigV
 	d.mlpMinutePrior = mpPrior
 	d.mlpMPNeutral = mpNeutral
 	d.mlpW1 = W1
@@ -1390,6 +1432,7 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 	minutePriorOff := temporalOff + d.mlpNTemporal
 	whisperMaskOff := minutePriorOff + d.mlpNMinutePrior
 	ocrOff := whisperMaskOff + d.mlpNWhisperMask
+	sigOff := ocrOff + d.mlpNOCR
 	whisperPerSec := d.mlpWhisperProbs
 	// v5: 1.0 wenn fuer diese Aufnahme ueberhaupt Whisper-Daten
 	// vorliegen. Konstant ueber die ganze Aufnahme — der Daemon
@@ -1498,6 +1541,12 @@ func (d *NNDetector) confidenceMLPChunk(embeds []float32, logoConfs, rmsConfs []
 			h, w, da := d.mlpOCR.wert(int(chunkStartS + float64(i)/fps))
 			x[ocrOff], x[ocrOff+1], x[ocrOff+2] = h, w, da
 		}
+		// SigLIP-Spalten (v7): absolute Sekunde wie OCR. Ohne Spur alles 0,
+		// siglip_da 0 — genau wie siglip_spalten.py im Training.
+		if d.mlpNSigLIP > 0 {
+			d.mlpSigLIP.spalten(int(chunkStartS+float64(i)/fps), d.mlpSigMu, d.mlpSigV,
+				x[sigOff:sigOff+d.mlpNSigLIP])
+		}
 		copy(hidden, d.mlpB1)
 		for k := 0; k < d.mlpInDim; k++ {
 			xk := x[k]
@@ -1547,6 +1596,22 @@ func (d *NNDetector) SetOCRSpalten(o *OCRSpalten) {
 	d.mu.Lock()
 	d.mlpOCR = o
 	d.mu.Unlock()
+}
+
+// SetSigLIPSpur liefert die SigLIP-Spur der laufenden Aufnahme (aus
+// --siglip-spur). Nur ein v7-Kopf mit n_siglip>0 liest sie; alle anderen
+// Formate ignorieren den Aufruf. nil = keine Spur → Spalten 0.
+func (d *NNDetector) SetSigLIPSpur(s *SigLIPSpur) {
+	d.mu.Lock()
+	d.mlpSigLIP = s
+	d.mu.Unlock()
+}
+
+// BrauchtSigLIP: liest der geladene Kopf SigLIP-Spalten?
+func (d *NNDetector) BrauchtSigLIP() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.mlpNSigLIP > 0
 }
 
 func (d *NNDetector) SetWhisperProbs(probs []float64) {

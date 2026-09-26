@@ -509,6 +509,52 @@ def write_mlp_head_v6(path, mlp, *, input_dim, hidden_dim,
     return p.stat().st_size
 
 
+def write_mlp_head_v7(path, mlp, *, input_dim, hidden_dim,
+                      backbone_dim=1280, n_logo=0, n_audio=0,
+                      n_channel=0, n_whisper=0, n_temporal=0,
+                      n_minuteprior=0, n_whispermask=0, n_ocr=0,
+                      n_siglip=0, siglip_mu=None, siglip_V=None):
+    """v7 = v6 + n_siglip (docs/siglip-spur-design.md): 64 SigLIP-
+    Hauptkomponenten + siglip_da HINTER den OCR-Spalten. Mittelwert (768)
+    und Projektion (768x64) stehen im KOERPER hinter den Gewichten, keine
+    Beilage-Datei. Spalten aus scripts/siglip_spalten.py."""
+    import struct
+    if n_siglip not in (0, 65):
+        raise ValueError(f"n_siglip {n_siglip} (erlaubt: 0 oder 65)")
+    if n_ocr not in (0, 3):
+        raise ValueError(f"n_ocr {n_ocr} (erlaubt: 0 oder 3)")
+    W1 = np.ascontiguousarray(mlp.coefs_[0], dtype=np.float32)
+    b1 = np.ascontiguousarray(mlp.intercepts_[0], dtype=np.float32)
+    W2 = np.ascontiguousarray(mlp.coefs_[1], dtype=np.float32)
+    b2 = np.ascontiguousarray(mlp.intercepts_[1], dtype=np.float32)
+    if len(mlp.coefs_) != 2 or W1.shape != (input_dim, hidden_dim) \
+            or b1.shape != (hidden_dim,) or W2.shape[0] != hidden_dim:
+        raise ValueError(f"MLP-Form passt nicht: W1 {W1.shape}, b1 {b1.shape}, W2 {W2.shape}")
+    if (backbone_dim + n_logo + n_audio + n_channel + n_whisper + n_temporal
+            + n_minuteprior + n_whispermask + n_ocr + n_siglip != input_dim):
+        raise ValueError(f"input_dim {input_dim} != Summe der Bloecke (siglip {n_siglip})")
+    proj = b""
+    if n_siglip:
+        mu = np.ascontiguousarray(siglip_mu, dtype=np.float32)
+        V = np.ascontiguousarray(siglip_V, dtype=np.float32)
+        if mu.shape != (768,) or V.shape != (768, 64):
+            raise ValueError(f"SigLIP-Projektion {mu.shape}/{V.shape}, will (768,)/(768, 64)")
+        proj = mu.tobytes() + V.tobytes()
+    header = struct.pack("<15I",
+                         0x37504C4D,  # "MLP7" little-endian
+                         7, input_dim, hidden_dim, b2.shape[0],
+                         backbone_dim, n_logo, n_audio, n_channel,
+                         n_whisper, n_temporal, n_minuteprior,
+                         n_whispermask, n_ocr, n_siglip)
+    body = W1.tobytes() + b1.tobytes() + W2.tobytes() + b2.tobytes() + proj
+    from pathlib import Path as _P
+    p = _P(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(header + body)
+    tmp.replace(p)
+    return p.stat().st_size
+
+
 class _DeployedMLP:
     """Reconstructs a v2 ('MLP2') head.bin as a predict_proba-compatible object
     so the deploy gate can re-score the CURRENTLY-DEPLOYED head on the new test

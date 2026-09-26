@@ -47,6 +47,7 @@ type Opts struct {
 	NNBackbonePath       string                 // "" = skip NN
 	NNHeadPath           string                 // ignored if backbone is empty
 	NNChannelSlug        string                 // for +CHAN heads — set the per-recording one-hot input
+	NNSigLIPSpur         string                 // optional path to ~/.cache/tvd-siglip2/<uuid>.npy (docs/siglip-spur-design.md). Only a v7 head with n_siglip>0 reads it (and only then is it loaded). Missing/unreadable → SigLIP columns 0, like training without a spur.
 	NNOCRSpur            string                 // optional path to ~/.cache/tvd-ocr-spur/<uuid>.json (O26). Loaded via SetOCRSpalten; only a v6 head with n_ocr=3 reads it. Missing/unreadable → no spur → OCR columns 0, exactly like training for recordings without a spur.
 	NNWhisperJSON        string                 // optional path to ~/.cache/tv-whisper/<uuid>.whisper.json. Loaded into the NNDetector via SetWhisperProbs when the head is MLP2 v2 (= n_whisper>0). Other formats ignore the data; missing file → neutral 0.5 fallback at inference.
 	NNStartTS            int64                  // recording wall-clock start (unix s, = DVR start_real). Feeds the MLP4 minute-of-hour prior; 0 → neutral fallback.
@@ -304,6 +305,14 @@ func runChunk(ctx context.Context, opts Opts, p chunkPlan, info decode.Info, aud
 			} else {
 				fmt.Fprintf(os.Stderr,
 					"nn: ocr-spur nicht lesbar (%v) — Kopf sieht OCR-Spalten 0\n", err)
+			}
+		}
+		if opts.NNSigLIPSpur != "" && nn.BrauchtSigLIP() {
+			if sp, err := signals.LadeSigLIPSpur(opts.NNSigLIPSpur); err == nil {
+				nn.SetSigLIPSpur(sp)
+			} else {
+				fmt.Fprintf(os.Stderr,
+					"nn: siglip-spur nicht lesbar (%v) — Kopf sieht SigLIP-Spalten 0\n", err)
 			}
 		}
 		if opts.NNWhisperJSON != "" {

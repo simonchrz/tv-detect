@@ -203,17 +203,32 @@ OCR_SPUR_DIR = Path.home() / ".cache" / "tvd-ocr-spur"
 OCR_SPUR_BIN = os.path.expanduser("~/.local/bin/tv-ocr-spur")
 
 
-def _kopf_braucht_ocr(head_path):
-    """True, wenn head.bin ein MLP6-Kopf mit n_ocr > 0 ist."""
+def _kopf_feld(head_path, index):
+    """Header-Feld <index> (uint32) eines MLP6/MLP7-Kopfs, sonst None.
+    v7 = v6 + n_siglip; n_ocr steht in beiden an Index 13."""
+    import struct
     try:
         with open(head_path, "rb") as f:
-            kopf = f.read(56)
+            kopf = f.read(60)
     except OSError:
-        return False
-    if len(kopf) < 56 or kopf[:4] != b"MLP6":
-        return False
-    import struct
-    return struct.unpack("<14I", kopf)[13] > 0
+        return None
+    laenge = {b"MLP6": 56, b"MLP7": 60}.get(kopf[:4])
+    if laenge is None or len(kopf) < laenge or index * 4 + 4 > laenge:
+        return None
+    return struct.unpack(f"<{laenge // 4}I", kopf[:laenge])[index]
+
+
+def _kopf_braucht_ocr(head_path):
+    """True, wenn head.bin ein MLP6- oder MLP7-Kopf mit n_ocr > 0 ist.
+
+    ⚠️ Bis 2026-09-26 pruefte das nur b"MLP6" — ein v7-Kopf haette keine
+    OCR-Spur bekommen und still mit OCR-Spalten 0 gerechnet."""
+    return (_kopf_feld(head_path, 13) or 0) > 0
+
+
+def _kopf_braucht_siglip(head_path):
+    """True, wenn head.bin ein MLP7-Kopf mit n_siglip > 0 ist."""
+    return (_kopf_feld(head_path, 14) or 0) > 0
 
 
 def _ocr_spur_frisch(pfad, quelle):
@@ -261,6 +276,61 @@ def _ocr_spur_fuer(uuid, quelle, head_path):
     print(f"  detect {uuid}: OCR-Spur erzeugt in {time.time() - t0:.0f}s", flush=True)
     return pfad
 
+
+
+# ── SigLIP-Spur fuer den Kopf (docs/siglip-spur-design.md) ────────────────
+# Wie die OCR-Spur: ein MLP7-Kopf mit n_siglip>0 liest 64 SigLIP-Komponenten
+# + siglip_da (scripts/siglip_spalten.py, internal/signals/siglipspalten.go).
+# Erzeugt wird hier NUR, wenn der geladene Kopf sie braucht; die Abdeckung
+# fuers Training haelt die Kampagne (com.user.siglip-spur) aktuell, der
+# Detect wird so nicht langsamer. Eine frische Spur wird immer mitgegeben —
+# tv-detect laedt sie nur fuer einen v7-Kopf.
+SIGLIP_SPUR_DIR = Path.home() / ".cache" / "tvd-siglip2"
+SIGLIP_PY = os.path.expanduser("~/ml/siglip-exp/.venv/bin/python")
+SIGLIP_SKRIPT = Path(__file__).resolve().parent.parent / "scripts" / "siglip-spur.py"
+
+
+def _siglip_spur_frisch(uuid, quelle):
+    """npy + Beilage vorhanden, Beilage passt zur Quelle, keine leeren Kacheln."""
+    npy = SIGLIP_SPUR_DIR / f"{uuid}.npy"
+    try:
+        s = json.loads((SIGLIP_SPUR_DIR / f"{uuid}.json").read_text())
+        st = os.stat(quelle)
+    except Exception:
+        return False
+    return (npy.is_file() and s.get("quelle_bytes") == st.st_size
+            and s.get("quelle_mtime") == int(st.st_mtime) and not s.get("leer"))
+
+
+def _siglip_spur_fuer(uuid, quelle, head_path):
+    """Pfad der SigLIP-Spur (.npy) fuer diesen Detect, oder None.
+
+    ⚠️ Darf einen Detect NIE aufhalten: scheitert die Erzeugung, laeuft er
+    ohne Spur weiter (Spalten 0, wie im Training ohne Spur). Eine veraltete
+    Spur (Quelle neu geholt/getrimmt) wird NIE mitgegeben."""
+    npy = SIGLIP_SPUR_DIR / f"{uuid}.npy"
+    if quelle and _siglip_spur_frisch(uuid, quelle):
+        return npy
+    if not quelle or not _kopf_braucht_siglip(head_path):
+        return None
+    if not (os.path.exists(SIGLIP_PY) and SIGLIP_SKRIPT.is_file()):
+        print(f"  detect {uuid}: Kopf braucht SigLIP, aber {SIGLIP_PY} oder "
+              f"{SIGLIP_SKRIPT} fehlt — Spalten 0", flush=True)
+        return None
+    t0 = time.time()
+    try:
+        r = subprocess.run([SIGLIP_PY, str(SIGLIP_SKRIPT), "--quelle", str(quelle),
+                            "--aus", str(SIGLIP_SPUR_DIR / uuid)],
+                           capture_output=True, text=True, timeout=3600, env=SPAWN_ENV)
+    except Exception as e:
+        print(f"  detect {uuid}: SigLIP-Spur gescheitert ({e}) — Spalten 0", flush=True)
+        return None
+    if r.returncode != 0 or not _siglip_spur_frisch(uuid, quelle):
+        print(f"  detect {uuid}: SigLIP-Spur gescheitert (rc={r.returncode}: "
+              f"{r.stderr.strip()[-200:]}) — Spalten 0", flush=True)
+        return None
+    print(f"  detect {uuid}: SigLIP-Spur erzeugt in {time.time() - t0:.0f}s", flush=True)
+    return npy
 
 # Local cache for model files (head.bin, backbone.onnx) — refreshed
 # on size change so a nightly retrain auto-propagates without daemon
@@ -1398,7 +1468,12 @@ def _invalidate_derived(uuid):
     # extrahiert nie neu, sobald die Datei existiert — der Show-Centroid
     # lernte weiter aus dem falschen Kanal). Alle drei werden beim naechsten
     # Zyklus neu erzeugt.
+    # Die SigLIP-Spur gehoert in dieselbe Klasse (Zeitachse der alten Quelle).
+    # Die JSON ZUERST, sonst saehe eine npy ohne Beilage kurz wie eine O28-
+    # Altlast aus — beides wird ohnehin neu gerechnet.
     for p in (OCR_SPUR_DIR / f"{uuid}.json",
+              SIGLIP_SPUR_DIR / f"{uuid}.json",
+              SIGLIP_SPUR_DIR / f"{uuid}.npy",
               EMB_CACHE / f"{uuid}.npz",
               SPK_CSV_CACHE / f"{uuid}.speaker.csv"):
         try:
@@ -3216,6 +3291,9 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
     spur = _ocr_spur_fuer(uuid, local, head_path)
     if spur:
         cmd += ["--ocr-spur", str(spur)]
+    sig = _siglip_spur_fuer(uuid, local, head_path)
+    if sig:
+        cmd += ["--siglip-spur", str(sig)]
     cmd += ["--output", "cutlist", src_url]
     # Run detect below an on-demand HLS remux in CPU priority (children
     # inherit the niceness). No-op-safe if /usr/bin/nice is missing.

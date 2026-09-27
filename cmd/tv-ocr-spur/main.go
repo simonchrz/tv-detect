@@ -77,7 +77,15 @@ func mitStderr(fn func()) string {
 
 // kacheln zerlegt [0, dauer) in Fenster der Breite 2*halb. Die Mitte jeder
 // Kachel ist die "Kante", die OCRUmKanten bekommt.
-func kacheln(dauer, halb float64) []spanne {
+// kacheln teilt [0, dauer) in Fenster von 2*halb Sekunden.
+//
+// ⚠️ Ein Rest kuerzer als `mindest` (ein Abtastschritt) wird an die
+// vorige Kachel angehaengt. Bis 2026-09-27 war er eine eigene Kachel:
+// 4320.14 s ergab ein 0.14-s-Fenster ohne ein einziges Bild, das als
+// "fehlgeschlagen" zaehlte — und der Daemon verwirft eine Spur mit
+// Fehlschlaegen GANZ. Der erste MLP6-Detect im Alltag (rtl-1790502300)
+// lief deshalb ohne OCR-Spalten; betroffen waren 4 von 334 Spuren.
+func kacheln(dauer, halb, mindest float64) []spanne {
 	var out []spanne
 	for von := 0.0; von < dauer; von += 2 * halb {
 		bis := von + 2*halb
@@ -85,6 +93,10 @@ func kacheln(dauer, halb float64) []spanne {
 			bis = dauer
 		}
 		out = append(out, spanne{von, bis})
+	}
+	if n := len(out); n > 1 && out[n-1].Bis-out[n-1].Von < mindest {
+		out[n-2].Bis = out[n-1].Bis
+		out = out[:n-1]
 	}
 	return out
 }
@@ -125,7 +137,7 @@ func main() {
 		DauerS: info.DurationS, SchrittS: *schritt, Breite: 960,
 		Funde: []signals.OCRFund{}, Fehlgeschlagen: []spanne{},
 	}
-	for _, k := range kacheln(info.DurationS, *halb) {
+	for _, k := range kacheln(info.DurationS, *halb, *schritt) {
 		mitte := (k.Von + k.Bis) / 2
 		// Halbfenster = halbe Kachelbreite: genau diese Kachel, keine
 		// Ueberlappung, fasseZusammen verschmilzt daher nichts.

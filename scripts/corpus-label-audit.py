@@ -182,7 +182,9 @@ def load_head(path):
     # Korpus-Label-Abgleich seither JEDE Nacht stumm ins Leere.
     # Gefunden 2026-08-24, dieselbe Blindheit wie im Gate (load_deployed_mlp).
     # MLP6 (O26, 2026-09-25): 14. Feld `n_ocr`, drei OCR-Spalten ganz hinten.
-    nh = {"MLP6": 14, "MLP5": 13, "MLP4": 12, "MLP3": 11, "MLP2": 10, "MLP1": 9}.get(name)
+    # MLP7 (2026-09-27): 15. Feld `n_siglip`, SigLIP-Spalten hinter OCR,
+    # Projektion (mu, V) im Koerper hinter den Gewichten.
+    nh = {"MLP7": 15, "MLP6": 14, "MLP5": 13, "MLP4": 12, "MLP3": 11, "MLP2": 10, "MLP1": 9}.get(name)
     if nh is None:
         raise SystemExit(f"unbekannter head-magic {name!r}")
     hdr = struct.unpack(f"<{nh}I", raw[:nh * 4])
@@ -198,6 +200,10 @@ def load_head(path):
     b1 = take(hdim)
     W2 = take(hdim * odim).reshape(hdim, odim)
     b2 = take(odim)
+    siglip = None
+    if nh > 14 and hdr[14]:
+        siglip = (take(768).astype(np.float32),
+                  take(768 * 64).reshape(768, 64).astype(np.float32))
     # ⚠️ Die Spaltenzahlen aus dem HEADER lesen, nicht aus einer Konstante
     # ableiten. Am 2026-08-06 wuchs der Temporal-Block von 2 auf 3 Spalten
     # (Unruhe-Niveau); die hier vorher gerechnete Konstante ergab dann
@@ -214,6 +220,8 @@ def load_head(path):
     felder["minuteprior"] = hdr[11] if nh > 11 else 0
     felder["whispermask"] = hdr[12] if nh > 12 else 0
     felder["ocr"] = hdr[13] if nh > 13 else 0
+    felder["siglip"] = hdr[14] if nh > 14 else 0
+    felder["siglip_proj"] = siglip
     return idim, (W1, b1, W2, b2), felder
 
 
@@ -228,7 +236,7 @@ def head_prob(X, p):
 
 def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
             with_whispermask=False, n_temporal=2, with_whisper=True,
-            with_prior=True, with_ocr=False):
+            with_prior=True, with_ocr=False, siglip=None):
     """Die Eingabematrix, wie der Kopf sie sieht.
 
     ⚠️ Die Spalten entstehen NICHT hier, sondern in train-head.py's
@@ -261,7 +269,7 @@ def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
                          whisper=with_whisper, temporal=n_temporal >= 2,
                          churn=n_temporal >= 3,
                          mp_col=_mp if with_prior else None,
-                         maske=with_whispermask, ocr=with_ocr)
+                         maske=with_whispermask, ocr=with_ocr, siglip=siglip)
 
 
 
@@ -413,7 +421,7 @@ def main():
             feat = np.load(fp)
             X = build_X(feat, m.get("slug", ""), u, int(m.get("start_ts") or 0),
                         chan_idx, n_chan, prior, neutral, is_v5, n_temporal,
-                        has_whisper, has_prior, has_ocr)
+                        has_whisper, has_prior, has_ocr, felder["siglip_proj"])
             if X.shape[1] != idim:
                 # Older extraction with a different feature width — not a
                 # verification failure, just not comparable.

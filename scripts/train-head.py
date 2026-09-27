@@ -562,9 +562,15 @@ class _DeployedMLP:
     composition changes (no historical IoU floor). Matches sklearn's
     MLPClassifier(activation='relu') binary forward: relu hidden + sigmoid out."""
 
-    def __init__(self, W1, b1, W2, b2, input_dim, n_ocr=0):
+    def __init__(self, W1, b1, W2, b2, input_dim, n_ocr=0, n_siglip=0,
+                 siglip_mu=None, siglip_V=None):
         self.W1, self.b1, self.W2, self.b2 = W1, b1, W2, b2
         self.input_dim = input_dim
+        # MLP7: SigLIP-Spalten ganz hinten, Projektion aus dem Koerper des
+        # Kopfs (docs/siglip-spur-design.md). Ein Lehrer/Champion mit SigLIP
+        # braucht SEINE mu/V, nicht die des laufenden Durchgangs.
+        self.n_siglip = n_siglip
+        self.siglip_mu, self.siglip_V = siglip_mu, siglip_V
         # Aus dem MLP6-Header; aeltere Formate haben keine OCR-Spalten.
         # ⚠️ Nie aus der Breite ableiten: +3 OCR-Spalten auf einem nackten
         # Kopf sind genau so breit wie ein v3-Zusatzblock (whisper+dp+dn).
@@ -591,7 +597,17 @@ def load_deployed_mlp(path):
         return None
     magic = struct.unpack("<I", raw[:4])[0]
     n_ocr = 0
-    if magic == 0x36504C4D:  # "MLP6", version 6, 56-byte header (O26)
+    n_siglip = 0
+    if magic == 0x37504C4D:  # "MLP7", version 7, 60-byte header
+        if len(raw) < 60:
+            return None
+        hdr = struct.unpack("<15I", raw[:60])
+        if hdr[1] != 7 or hdr[13] not in (0, 3) or hdr[14] not in (0, 65):
+            return None
+        input_dim, hidden_dim, output_dim = hdr[2], hdr[3], hdr[4]
+        n_ocr, n_siglip = hdr[13], hdr[14]
+        off = 60
+    elif magic == 0x36504C4D:  # "MLP6", version 6, 56-byte header (O26)
         if len(raw) < 56:
             return None
         hdr = struct.unpack("<14I", raw[:56])
@@ -663,9 +679,15 @@ def load_deployed_mlp(path):
         b1 = take(hidden_dim)
         W2 = take(hidden_dim * output_dim).reshape(hidden_dim, output_dim)
         b2 = take(output_dim)
+        sig_mu = sig_V = None
+        if n_siglip:
+            sig_mu = take(768).astype(np.float32)
+            sig_V = take(768 * 64).reshape(768, 64).astype(np.float32)
+        if off != len(raw):
+            return None
     except Exception:
         return None
-    return _DeployedMLP(W1, b1, W2, b2, input_dim, n_ocr)
+    return _DeployedMLP(W1, b1, W2, b2, input_dim, n_ocr, n_siglip, sig_mu, sig_V)
 
 
 class WeightedMLP:
@@ -2239,7 +2261,7 @@ def _churn_col(X, fenster=61):
 # Goldwert-Vektoren aneinander, wie bei hsmm.
 def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
                   kanal=True, whisper=False, temporal=False, churn=False,
-                  mp_col=None, maske=False, ocr=False):
+                  mp_col=None, maske=False, ocr=False, siglip=None):
     """Der Zusatzblock fuer EINE Aufnahme, Form (T, k).
 
     `X` sind die rohen Backbone-Merkmale der Aufnahme — zusammenhaengend und
@@ -2292,12 +2314,53 @@ def zusatzspalten(X, uuid, slug, chan_idx, n_chan=None, *,
                              dtype=np.float32))
     if ocr:
         teile.append(_ocr_modul().ocr_spalten(uuid, T))
+    # SigLIP (MLP7) HINTER den OCR-Spalten: `siglip` = (mu, V) des Kopfes,
+    # um den es geht. Zeile i = Zeile i des Kopfs (Spur am Stueck gerechnet,
+    # Memory kopf_zeilen_sind_bildindex). Keine Spur → 65 Nullen.
+    if siglip is not None:
+        _sl = _siglip_modul()
+        teile.append(_sl.spalten(_sl.lade_spur(uuid, SIGLIP_SPUR_DIR), T,
+                                 siglip[0], siglip[1]))
     if not teile:
         return np.zeros((T, 0), dtype=np.float32)
     return np.hstack(teile).astype(np.float32)
 
 
 _OCR_MODUL = None
+_SIGLIP_MODUL = None
+SIGLIP_SPUR_DIR = Path.home() / ".cache" / "tvd-siglip2"
+
+
+def _siglip_modul():
+    """scripts/siglip_spalten.py, per Pfad geladen (wie _ocr_modul)."""
+    global _SIGLIP_MODUL
+    if _SIGLIP_MODUL is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "siglip_spalten", Path(__file__).resolve().parent / "siglip_spalten.py")
+        _SIGLIP_MODUL = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SIGLIP_MODUL)
+    return _SIGLIP_MODUL
+
+
+def siglip_projektion(ledger, schritt=10, spur_dir=None):
+    """(mu, V, n_aufnahmen) aus train-Aufnahmen MIT Spur (jede schritt-te
+    Zeile). NUR train: test/versiegelt duerfen die Projektion nicht formen."""
+    sl = _siglip_modul()
+    led = ledger.get("eimer", ledger) if isinstance(ledger, dict) else {}
+    zeilen, n = [], 0
+    for u, e in sorted(led.items()):
+        if e != "train":
+            continue
+        E = sl.lade_spur(u, spur_dir or SIGLIP_SPUR_DIR)
+        if E is None or len(E) == 0:
+            continue
+        zeilen.append(np.asarray(E[::schritt], np.float32))
+        n += 1
+    if n < 20:
+        raise RuntimeError(f"--siglip-spalten: nur {n} train-Aufnahmen mit Spur")
+    mu, V = sl.projektion_anpassen(np.concatenate(zeilen))
+    return mu, V, n
 
 
 def _ocr_modul():
@@ -2326,7 +2389,7 @@ def mit_zusatz(X, uuid, slug, chan_idx, n_chan=None, **kw):
 def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
                            wants_temporal=False, mp_col=None,
                            wants_churn=False, wants_mask=False,
-                           wants_ocr=False):
+                           wants_ocr=False, siglip=None):
     """Rebuild the channel-one-hot(+whisper)(+temporal) augmented feature
     matrix a v2/v3 MLP teacher was trained on, so it scores identically in
     the label-hygiene pass.
@@ -2346,7 +2409,7 @@ def _augment_teacher_feats(X, slug, chan_idx, uuid, wants_whisper,
     return mit_zusatz(X, uuid, slug, chan_idx,
                       whisper=wants_whisper, temporal=wants_temporal,
                       churn=wants_churn, mp_col=mp_col, maske=wants_mask,
-                      ocr=wants_ocr)
+                      ocr=wants_ocr, siglip=siglip)
 
 
 
@@ -2826,6 +2889,14 @@ def main():
                          "Spur sind die Spalten 0 wie im Training. "
                          "Erste Nacht: head-to-head entfaellt "
                          "(Architekturwechsel), es schuetzt der Golden-Boden.")
+    ap.add_argument("--siglip-spalten", action="store_true",
+                    help="O28/O29 (R3 ERFUELLT 2026-09-26): 64 SigLIP-2-"
+                         "Komponenten + siglip_da aus ~/.cache/tvd-siglip2 "
+                         "HINTER den OCR-Spalten anhaengen; schreibt einen "
+                         "MLP7-Kopf (Projektion im Koerper). Der Detect "
+                         "bekommt die Spur vom Daemon (--siglip-spur). NICHT "
+                         "im Nightly, bis ein Herausforderer-Lauf ueberzeugt "
+                         "und das L5-OK vorliegt (docs/siglip-spur-design.md).")
     ap.add_argument("--cluster-anker", choices=("alt", "aus"), default="aus",
                     help="O24 (entschieden 2026-09-23: aus): was die "
                          "cluster_anchored-Spannen im Training "
@@ -4706,6 +4777,7 @@ def main():
     teacher_churn = False
     teacher_mask = False
     teacher_ocr = False
+    teacher_siglip = None
     teacher_mp_col = None     # v4 teacher: minute-prior closure from ITS sidecar
     feat_dim = per_rec[0][3].shape[1] if per_rec else 0
     if args.hygiene_disagree_conf > 0 and Path(args.output).exists():
@@ -4740,7 +4812,10 @@ def main():
                 # OCR (+3) waere sonst von einem v3-Block nicht zu
                 # unterscheiden.
                 teacher_ocr = mlp.n_ocr > 0
-                _extra = mlp.input_dim - (feat_dim + n_chan) - mlp.n_ocr
+                teacher_siglip = ((mlp.siglip_mu, mlp.siglip_V)
+                                  if getattr(mlp, "n_siglip", 0) else None)
+                _extra = (mlp.input_dim - (feat_dim + n_chan) - mlp.n_ocr
+                          - getattr(mlp, "n_siglip", 0))
                 _bekannt = {
                     0: (False, False, False, False),
                     1: (True, False, False, False),   # v2
@@ -4831,7 +4906,7 @@ def main():
                                             teacher_chan_idx, r[0], teacher_whisper,
                                             teacher_temporal, teacher_mp_col,
                                             teacher_churn, teacher_mask,
-                                            teacher_ocr)
+                                            teacher_ocr, teacher_siglip)
                 proba = teacher_mlp.predict_proba(Xa)[:, 1]
             else:
                 logits = r[3] @ teacher_w + teacher_b
@@ -5324,6 +5399,16 @@ def main():
     wants_churn = wants_whispermask
     # O26: orthogonal zur Architektur — jede Arch + OCR wird ein MLP6-Kopf.
     wants_ocr = bool(getattr(args, "ocr_spalten", False))
+    # SigLIP-Spur (O28/O29, docs/siglip-spur-design.md): 64 Komponenten +
+    # siglip_da HINTER den OCR-Spalten, Kopf wird MLP7. Projektion NUR aus
+    # train-Aufnahmen; sie reist im Koerper von head.bin mit.
+    wants_siglip = bool(getattr(args, "siglip_spalten", False))
+    siglip_proj = None
+    if wants_siglip:
+        _smu, _sV, _sn = siglip_projektion(_ledger)
+        siglip_proj = (_smu, _sV)
+        print(f"  SigLIP-Spalten: Projektion aus {_sn} train-Aufnahmen mit Spur "
+              f"(PCA-64, weissend), Kopf wird MLP7")
     # Corpus-wide neutral fill for the minute-prior column (recordings
     # with no start_ts / channels with no histogram): mean of all prior
     # buckets ≈ base ad rate, so the column carries no signal instead of
@@ -5391,7 +5476,8 @@ def main():
                 whisper=wants_whisper, temporal=wants_temporal,
                 churn=wants_churn,
                 mp_col=_minuteprior_col if wants_minuteprior else None,
-                maske=wants_whispermask, ocr=wants_ocr)
+                maske=wants_whispermask, ocr=wants_ocr,
+                    siglip=siglip_proj)
 
         # Der komplette Zusatzblock, pro Aufnahme auf dem ROHEN X gebaut
         # und danach mit derselben Hygiene-Maske gesiebt wie die Basis.
@@ -5694,7 +5780,37 @@ def main():
             # O26: gleiche Breite heisst auch hier nicht gleiche Spalte —
             # nackt+OCR (1285) ist so breit wie ein v3-Block.
             _ocr_kand = 3 if wants_ocr else 0
-            if _dep is not None and _dep.n_ocr != _ocr_kand:
+            _sig_kand = 65 if wants_siglip else 0
+            _sig_dep = getattr(_dep, "n_siglip", 0) if _dep is not None else 0
+            if (_dep is not None and _sig_kand and not _sig_dep
+                    and _dep.n_ocr == _ocr_kand
+                    and _dep.input_dim == mlp_prod_in_dim - _sig_kand
+                    and (_dep_slugs or []) == _prod_slugs_wirksam
+                    and _audio_gleich):
+                # Praefix-Vertrag: die SigLIP-Spalten stehen GANZ HINTEN. Ein
+                # Champion ohne sie (MLP6) sieht auf der Kandidaten-Matrix
+                # genau seine eigenen Spalten, wenn man ihm nur den Praefix
+                # gibt — der paarweise Vergleich bleibt damit ehrlich, statt
+                # beim Architekturwechsel auszufallen.
+                class _Praefix:
+                    def __init__(self, k, d):
+                        self.k, self.d = k, d
+                        self.input_dim, self.n_ocr, self.n_siglip = d, k.n_ocr, 0
+
+                    def predict_proba(self, X):
+                        return self.k.predict_proba(np.asarray(X)[:, :self.d])
+                print(f"\n=== deployed-head re-eval (head-to-head, smooth=10s; "
+                      f"Champion ohne SigLIP auf dem Praefix {_dep.input_dim} "
+                      f"von {mlp_prod_in_dim} Spalten) ===")
+                deployed_test_metrics = eval_split(_Praefix(_dep, _dep.input_dim),
+                                                   test_recs_ch, args.fps_extract,
+                                                   smooth_s=10)
+            elif _dep is not None and _sig_dep != _sig_kand:
+                print(f"  ⚠️ head-to-head SKIPPED: SigLIP-Spalten differieren — "
+                      f"deployt n_siglip={_sig_dep}, Kandidat n_siglip={_sig_kand}, "
+                      f"und der Praefix passt nicht. Es schuetzen nur der "
+                      f"historische IoU-Boden und der Golden-Boden.")
+            elif _dep is not None and _dep.n_ocr != _ocr_kand:
                 print(f"  ⚠️ head-to-head SKIPPED: OCR-Spalten differieren — "
                       f"deployt n_ocr={_dep.n_ocr}, Kandidat n_ocr={_ocr_kand}. "
                       f"Es schuetzen nur noch der historische IoU-Boden und "
@@ -6139,7 +6255,8 @@ def main():
                     whisper=wants_whisper, temporal=wants_temporal,
                     churn=wants_churn,
                     mp_col=_minuteprior_col if wants_minuteprior else None,
-                    maske=wants_whispermask, ocr=wants_ocr)
+                    maske=wants_whispermask, ocr=wants_ocr,
+                    siglip=siglip_proj)
             for _s in range(args.seed_sweep):
                 _m, _, _dim = _fit_eval(
                     f"SEED {_s} — Produktions-Architektur", _augment_prod,
@@ -6391,7 +6508,8 @@ def main():
                     whisper=wants_whisper, temporal=wants_temporal,
                     churn=wants_churn,
                     mp_col=_minuteprior_col if wants_minuteprior else None,
-                    maske=wants_whispermask, ocr=wants_ocr)
+                    maske=wants_whispermask, ocr=wants_ocr,
+                    siglip=siglip_proj)
             # Eintrag = (Spaltenbauer, Kopfbreite). Die Breite gehoert in
             # die Registry, nicht in den Fit-Aufruf — der Arm-NAME in den
             # Serien-Zeilen muss die ganze Architektur benennen.
@@ -7778,7 +7896,23 @@ def main():
         n_logo_used = 1 if args.with_logo else 0
         n_audio_used = 1 if args.with_audio else 0
         n_chan_used = len(mlp_prod_chan_slugs) if wants_kanal else 0
-        if wants_ocr:
+        if wants_siglip:
+            # MLP7 = v6 + n_siglip, Projektion im Koerper.
+            write_mlp_head_v7(path, clf,
+                              input_dim=mlp_prod_in_dim,
+                              hidden_dim=hd, backbone_dim=1280,
+                              n_logo=n_logo_used,
+                              n_audio=n_audio_used,
+                              n_channel=n_chan_used,
+                              n_whisper=1 if wants_whisper else 0,
+                              n_temporal=(3 if wants_churn else
+                                          2 if wants_temporal else 0),
+                              n_minuteprior=1 if wants_minuteprior else 0,
+                              n_whispermask=1 if wants_whispermask else 0,
+                              n_ocr=3 if wants_ocr else 0,
+                              n_siglip=65,
+                              siglip_mu=siglip_proj[0], siglip_V=siglip_proj[1])
+        elif wants_ocr:
             # MLP6 traegt alle Zaehler, also jede Arch + OCR. Die Werte
             # folgen derselben Staffel wie v1..v5 darunter.
             write_mlp_head_v6(path, clf,

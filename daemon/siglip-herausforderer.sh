@@ -22,7 +22,8 @@ BASIS="$HOME/.cache/tvd-siglip-herausforderer/$TS"
 STICHTAG=$(( $(date +%s) / 3600 * 3600 ))
 mkdir -p "$BASIS"
 cp -R /tmp/tv-train-snapshot "$BASIS/snapshot" || { echo "Snapshot-Kopie gescheitert"; exit 1; }
-for ARM in kontrolle siglip; do
+ARME=${ARME:-kontrolle siglip}
+for ARM in $ARME; do
   D="$BASIS/$ARM"; mkdir -p "$D/out"
   cp -R "$ECHT" "$D/archive" || { echo "Archiv-Kopie $ARM gescheitert"; exit 1; }
   cp "$CHAMP/head.bin" "$CHAMP/head.gate.bin" "$D/out/" 2>/dev/null
@@ -30,7 +31,7 @@ for ARM in kontrolle siglip; do
 done
 echo "Basis $BASIS, Stichtag $STICHTAG"
 RC=0
-for ARM in kontrolle siglip; do
+for ARM in $ARME; do
   D="$BASIS/$ARM"
   ZUSATZ=(); [ "$ARM" = siglip ] && ZUSATZ=(--siglip-spalten)
   echo "$(date +%T) Arm $ARM: Log $D/lauf.log ${ZUSATZ[@]+"${ZUSATZ[@]}"}"

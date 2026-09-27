@@ -7467,8 +7467,15 @@ def main():
         # the same night. Channel-column changes now fall through to the
         # floor/regression checks below.
         CHANNEL_DIM_TOL = 32  # channel-one-hot block is <= ~20 slugs
+        # ⚠️ Nur ohne gueltigen Kopf-an-Kopf. Mit dem Praefix-Vergleich
+        # (MLP6-Champion gegen MLP7-Kandidat, --siglip-spalten) liegt trotz
+        # Breitenwechsel ein ehrlicher paarweiser Vergleich vor — der muss
+        # entscheiden. Bis 2026-09-27 nahm der Breitenwechsel den Vorrang und
+        # hob das Kopf-an-Kopf still aus (Herausforderer-Lauf 20260927T195919:
+        # "architecture switch, deploying", obwohl der Vergleich gerechnet war).
         if (prev_feat and cur_feat and prev_feat != cur_feat
-                and abs(cur_feat - prev_feat) > CHANNEL_DIM_TOL):
+                and abs(cur_feat - prev_feat) > CHANNEL_DIM_TOL
+                and deployed_test_metrics is None):
             reason = (f"feature dim changed ({prev_feat}→{cur_feat}) — "
                       f"architecture switch, deploying & resetting baseline")
         elif deployed_test_metrics is not None:
@@ -8109,7 +8116,8 @@ def main():
                 f.write(struct.pack("<f", bias))
         sz = os.path.getsize(args.output)
         if is_mlp_write:
-            fmt = ("MLP6 v6" if wants_ocr else
+            fmt = ("MLP7 v7" if wants_siglip else
+                   "MLP6 v6" if wants_ocr else
                    "MLP5 v5" if wants_whispermask else
                    "MLP4 v4" if wants_minuteprior else
                    "MLP3 v3" if wants_temporal else

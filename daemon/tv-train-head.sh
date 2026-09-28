@@ -253,9 +253,20 @@ echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
     --cluster-anker aus \
     --archiv-ausschluss "$HOME/src/tv-detect/docs/archiv-ausschluss-o25.json" \
     --ocr-spalten \
+    --siglip-spalten \
     --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-09-28: --siglip-spalten (O28/O29 R3 ERFUELLT, Herausforderer 09-27:
+# Golden 0.964 gegen Kontrolle 0.955, Kopf-an-Kopf 12 besser / 2 schlechter;
+# L5-OK Simon 2026-09-28). 64 SigLIP-2-Komponenten + siglip_da HINTER den
+# OCR-Spalten, Kopf wird MLP7 (Projektion im Koerper). Reihenfolge war
+# Pflicht: Go-Lader MLP7 + --siglip-spur (819efbf), Daemon erzeugt die Spur
+# fuer einen v7-Kopf, Kampagne fuer die Trainings-Abdeckung (314 Spuren),
+# Gate-Fix gegen den Breitenwechsel-Bypass (1019f8d), Audit liest MLP7
+# (a9bc805). Erste Nacht: Kopf-an-Kopf laeuft auf dem Spalten-Praefix
+# (MLP6-Champion gegen MLP7-Kandidat). Rueckweg: Schalter raus +
+# rollback-head.sh. Entwurf: docs/siglip-spur-design.md.
 # 2026-09-25: --ocr-spalten (O26, ERFUELLT: dF1 +0.0313). Drei OCR-Spalten
 # ganz hinten, Kopf wird MLP6. Reihenfolge war Pflicht: erst tv-detect mit
 # MLP6-Lader (0693bdc), dann der Daemon, der die Spur mitgibt (8d497b2),

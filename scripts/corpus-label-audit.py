@@ -481,7 +481,7 @@ def main():
         X = build_X(np.asarray(feat), m.get("slug", ""), u,
                     int(m.get("start_ts") or 0), chan_idx, n_chan, prior,
                     neutral, is_v5, n_temporal, has_whisper, has_prior,
-                    has_ocr)
+                    has_ocr, felder["siglip_proj"])
         if X.shape[1] != idim:
             falsche_breite.append((u, int(feat.shape[1]), int(X.shape[1])))
             continue

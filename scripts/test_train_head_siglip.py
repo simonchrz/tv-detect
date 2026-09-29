@@ -71,5 +71,19 @@ class Tests(unittest.TestCase):
             self.assertLess(np.abs(mu).max(), 1.0, "test-Aufnahme floss in die Projektion")
 
 
+    def test_audit_uebergibt_siglip_an_jedem_build_x(self):
+        """corpus-label-audit hat ZWEI build_X-Aufrufe; am 2026-09-29 bekam nur
+        einer die Projektion, und das Audit uebersprang alle 930 Aufnahmen
+        (1285 statt 1350 Spalten)."""
+        import ast
+        baum = ast.parse((HIER / "corpus-label-audit.py").read_text())
+        aufrufe = [n for n in ast.walk(baum) if isinstance(n, ast.Call)
+                   and getattr(n.func, "id", "") == "build_X"]
+        self.assertGreaterEqual(len(aufrufe), 2)
+        for c in aufrufe:
+            hat = len(c.args) >= 14 or any(k.arg == "siglip" for k in c.keywords)
+            self.assertTrue(hat, f"build_X in Zeile {c.lineno} ohne siglip")
+
+
 if __name__ == "__main__":
     unittest.main()

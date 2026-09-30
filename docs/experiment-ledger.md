@@ -121,6 +121,21 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### (Befund, kein Experiment) Einzelspots mit Countdown fehlen dem Detektor systematisch
+
+*2026-09-30. Vorprüfung der 21 reviewbaren test-Aufnahmen ohne menschliches
+Label (`~/ml/vlm-exp/vlm_vorpruefung.py`: Detektor-Blöcke und 2-min-Fenster
+der Sendungsstrecken gegen das VLM, danach Sichtung aller 27 Flags): 11
+echte Stellen in 8 Aufnahmen, 15 VLM-Fehlalarme (Einblendungen, Vor-/Nachlauf),
+1 kaputte Aufnahme (rtl-1779473700, Grünbild + PTS-Sprung). **9 der 11 echten
+Stellen sind Einzelspots**: „Nur ein Spot 15“, „05 Gleich“, „Werbung“-Kennung,
+15–30 s, meist VOX/kabel eins, mitten in der Sendung. Der Detektor führt sie in
+keiner Cutlist; bei den vier gleichartigen Fällen der Review-Vorlage sagt das
+NN 0.08. Vermutlich hat der Kopf diese Form nie als Werbung gesehen, weil
+Reviews sie bisher nicht markierten. Wenn Simon sie jetzt in den Reviews
+setzt, entsteht erstmals Trainingsmaterial dafür; ob das reicht, zeigt das
+Fehlerbudget („NN verpasst“) in den Wochen danach. Kein Bau, keine Registrierung.*
+
 ### (Befund, kein Experiment) „Anker sagt Werbung, Label Sendung“ ist zu >90 % Konvention
 
 *2026-09-30. Das Fehlerbudget führt ~1500 Label-Sekunden unter diesem Posten.

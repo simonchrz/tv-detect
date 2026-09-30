@@ -2106,6 +2106,35 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
             "per_rec_iou": per_rec_iou}
 
 
+WISCH_URTEIL = {"werbung": 1, "trailer": 1, "sendung": 0}   # trailer = Werbung (§3y)
+
+
+def wisch_punkte(rec_dir):
+    """Punkt-Labels aus `_rec_<uuid>/wisch.json` (Wisch-Review, tv-recorder):
+    [(t, y)], je Sekunde gilt die LETZTE Marke, `unklar` zaehlt nicht.
+
+    Nur fuer Aufnahmen OHNE ads_user.json gedacht: dort spiegelt der
+    tv-recorder sendung/werbung schon nach confirmed_show/confirmed_ad_skips,
+    und ein Blocklabel vom Menschen schlaegt einen einzelnen Wisch.
+    """
+    try:
+        d = json.loads((Path(rec_dir) / "wisch.json").read_text())
+    except Exception:
+        return []
+    je_t = {}
+    for m in sorted(d.get("marken") or [], key=lambda m: m.get("ts") or 0):
+        y = WISCH_URTEIL.get(m.get("urteil"))
+        try:
+            t = float(m.get("t"))
+        except (TypeError, ValueError):
+            continue
+        if y is None:
+            je_t.pop(round(t), None)   # spaeteres "unklar" hebt ein Urteil auf
+        else:
+            je_t[round(t)] = (t, y)
+    return sorted(je_t.values())
+
+
 def labels_for(seconds, ad_blocks):
     """seconds is a list of frame timestamps (1 per fps_extract step).
     Returns 0/1 per timestamp; 1 if t falls inside any (s,e)."""
@@ -3465,6 +3494,7 @@ def main():
     nachtraeglich_blind = []  # (uuid,) — dasselbe vermutet, aber nicht belegbar
     versetzte = []
     _zeit_quarantaene = zeitachsen_quarantaene(args.train_archive)
+    _wisch_stat = {"punkte": 0, "aufnahmen": 0, "gedreht": 0, "ungenutzt": 0}
     for rec_dir in sorted(Path(args.hls_root).glob("_rec_*")):
         uuid = rec_dir.name[5:]
         user = rec_dir / "ads_user.json"
@@ -3539,6 +3569,7 @@ def main():
         auto_ads = _load(auto) if auto.exists() else None
         if not isinstance(auto_ads, list):
             auto_ads = []
+        wisch = wisch_punkte(rec_dir) if user_raw is None else []
 
         if args.prefer == "user":
             ads = user_ads
@@ -3689,7 +3720,8 @@ def main():
             cache_path = cache_dir / f"{uuid}-{src_mt}{fps_tag}{suffix}.npy"
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), str(src),
                          pseudo_data, is_bootstrap,
-                         confirmed_show, confirmed_ad_skips, mensch_belegt)
+                         confirmed_show, confirmed_ad_skips, mensch_belegt,
+                         wisch)
             if cache_path.exists():
                 # Re-extract if the cached features have a high NaN-rate in the
                 # logo column. Stale .npy from the pre-2026-05-23 tv-detect
@@ -3744,7 +3776,8 @@ def main():
             src_mt = int(cache_path.stat().st_mtime)  # proxy for rec_age_days
             rec_info = (uuid, title, ads, which, slug, str(rec_dir), "",
                          pseudo_data, is_bootstrap,
-                         confirmed_show, confirmed_ad_skips, mensch_belegt)
+                         confirmed_show, confirmed_ad_skips, mensch_belegt,
+                         wisch)
             cached.append((rec_info, cache_path))
             corpus_no_ts += 1
 
@@ -4044,6 +4077,7 @@ def main():
         # timestamps would have become ad labels in every recording.
         confirmed_show = rest[5] if len(rest) > 5 else []
         confirmed_ad_skips = rest[6] if len(rest) > 6 else []
+        wisch = rest[8] if len(rest) > 8 else []
         bumpers = []
         if args.with_bumpers and rec_dir_path is not None:
             bj = rec_dir_path / "bumpers.json"
@@ -4073,6 +4107,27 @@ def main():
         else:
             labels = labels_for(seconds, ads)
             frame_mask = None
+        # Wisch-Punkte (nur Aufnahmen ohne Menschen-Label, s. wisch_punkte):
+        # das Urteil ersetzt das Auto-/Pseudo-Label an genau dieser Sekunde.
+        # Direkt in `labels`, damit Gate-Fit, Refit und test dasselbe sehen.
+        # Bootstrap-Aufnahmen fallen als Ganzes aus train/test — dort bleibt
+        # der Punkt ungenutzt und wird nur gezaehlt.
+        wisch_idx = []
+        if wisch and is_bootstrap:
+            _wisch_stat["ungenutzt"] += len(wisch)
+        elif wisch:
+            for t, y in wisch:
+                idx = int(round(t * args.fps_extract))
+                if 0 <= idx < len(labels):
+                    if int(labels[idx]) != y:
+                        _wisch_stat["gedreht"] += 1
+                    labels[idx] = y
+                    if frame_mask is not None:
+                        frame_mask[idx] = True
+                    wisch_idx.append(idx)
+            if wisch_idx:
+                _wisch_stat["punkte"] += len(wisch_idx)
+                _wisch_stat["aufnahmen"] += 1
         ad_rate = float(labels.mean()) if len(labels) else 0.0
         # Hygiene filter: drop obviously-broken recordings. The auto
         # detection on a recording with a bad logo template can mark
@@ -4138,7 +4193,7 @@ def main():
         per_rec.append((uuid, title, ads, feats, labels, has_user,
                         confirmed_show, confirmed_ad_skips, rec_age_days,
                         bumpers, frame_mask, which == "pseudo",
-                        is_bootstrap, cluster_anchored))
+                        is_bootstrap, cluster_anchored, wisch_idx))
         # Deletion-safe training archive: freeze a trustworthy-labelled
         # recording's label (+ a pointer to its cached features) so it stays
         # in the corpus even after its .ts is deleted/dedup'd. Only reviewed
@@ -4416,7 +4471,8 @@ def main():
                 angehaengt.append((r[0], r[3].shape[1]))
             per_rec[i] = (r[0], r[1], r[2], f, r[4], r[5],
                           r[6], r[7], r[8], r[9], r[10], r[11], r[12],
-                          r[13] if len(r) > 13 else [])
+                          r[13] if len(r) > 13 else [],
+                          r[14] if len(r) > 14 else [])
         if eingesetzt:
             print(f"  Merkmalsbreite: {len(eingesetzt)} Aufnahme(n) ohne "
                   f"Logo-Spalte — Sentinel 0.5 an Index 1280 EINGESETZT "
@@ -4427,6 +4483,12 @@ def main():
                   f"aufgefuellt auf {target_dim} — Spaltenlage NICHT "
                   f"verifiziert, bitte pruefen: "
                   + ", ".join(f"{u}({w})" for u, w in angehaengt[:6]))
+    if any(_wisch_stat.values()):
+        print(f"wisch: {_wisch_stat['punkte']} Punkt(e) in "
+              f"{_wisch_stat['aufnahmen']} Aufnahme(n) ohne Menschen-Label, "
+              f"{_wisch_stat['gedreht']} davon gegen das Auto-/Pseudo-Label; "
+              f"{_wisch_stat['ungenutzt']} ungenutzt (Aufnahme ohne Labels = "
+              f"bootstrap)")
     if dropped_high:
         print(f"hygiene: dropped {len(dropped_high)} recording(s) with "
               f"ad-rate > {args.max_ad_rate*100:.0f}% "
@@ -4937,6 +4999,12 @@ def main():
                 drops_kept += 1
         else:
             mask = np.ones(n, dtype=bool)
+        # Wisch-Punkte sitzen per Konstruktion dort, wo der Kopf unsicher war
+        # oder widersprach — genau dort wuerde der Lehrer sie wegfiltern.
+        wisch_idx = r[14] if len(r) > 14 else []
+        if wisch_idx:
+            mask = mask.copy()
+            mask[wisch_idx] = True
         keep_masks.append(mask)
     if (teacher_mlp is not None or teacher_w is not None) and drops_kept > 0:
         print(f"label-hygiene: dropped {drops_total} frames across "
@@ -5009,6 +5077,11 @@ def main():
         # confirmed an ad block was real by skipping it) and bump
         # weight to 1.5× — slightly stronger than confirmed_show
         # because skip is a more deliberate user action.
+        # Wisch-Punkte: Label schon in r[4] gesetzt (s. oben), hier nur das
+        # Gewicht wie bei Skip-Druck.
+        for idx in (r[14] if len(r) > 14 else []):
+            if 0 <= idx < full_n:
+                sw_full[idx] = max(sw_full[idx], base_w * 1.5)
         if skip_confirms:
             yslice = r[4]
             for t in skip_confirms:

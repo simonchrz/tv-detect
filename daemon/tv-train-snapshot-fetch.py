@@ -63,7 +63,7 @@ def main():
         shutil.rmtree(args.out)
     args.out.mkdir(parents=True)
 
-    n_user = n_auto = n_cutlist = n_pseudo = 0
+    n_user = n_auto = n_cutlist = n_pseudo = n_wisch = 0
     for r in recs:
         uuid = r["uuid"]
         d = args.out / f"_rec_{uuid}"
@@ -98,6 +98,11 @@ def main():
         if r.get("cluster_anchored"):
             (d / "cluster_anchored.json").write_text(
                 json.dumps(r["cluster_anchored"]))
+        # Wisch-Review-Marken: train-head liest sie nur, wenn ads_user.json
+        # fehlt (sonst hat der tv-recorder schon gespiegelt).
+        if r.get("wisch"):
+            (d / "wisch.json").write_text(json.dumps(r["wisch"]))
+            n_wisch += 1
         if r.get("has_index_m3u8"):
             (d / "index.m3u8").write_text("")  # marker; only .exists()
                                                 # is checked downstream
@@ -108,7 +113,7 @@ def main():
 
     print(f"wrote {len(recs)} recs to {args.out}: "
           f"{n_user} user, {n_auto} auto, {n_cutlist} cutlist, "
-          f"{n_pseudo} pseudo", flush=True)
+          f"{n_pseudo} pseudo, {n_wisch} wisch", flush=True)
 
 
 if __name__ == "__main__":

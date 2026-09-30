@@ -121,6 +121,20 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### (Befund, kein Experiment) „Anker sagt Werbung, Label Sendung“ ist zu >90 % Konvention
+
+*2026-09-30. Das Fehlerbudget führt ~1500 Label-Sekunden unter diesem Posten.
+Review-Vorlage (`scripts/review-vorlage.py`, Anker-Familie ≥ 4, Strecken
+≥ 10 s): 16 Strecken / 316 s in 15 menschlich gelabelten Aufnahmen; der Rest
+sind Zweier-Familien (Störbilder, dieselbe Folge zweimal). Von den 16 nach
+Sichtung: 5 Aufnahmerand, 2 Sender-Ident vor der Sendung, 4 Sendung selbst
+(Abspann, Film, Intro), **4 echte Lücken** — drei 30-s-Einzelspots bzw.
+Trailer-Inseln mitten in der Sendung (Galileo/Galileo Stories) und ein
+Rand-Trailer am Blockende (Two and a Half Men). Die vier wurden mit Simons
+OK über die Edit-API gesetzt (train-Aufnahmen). Auffällig: bei den beiden
+Countdown-Einzelspots („Nach diesem Spot geht's weiter“) sagt das NN 0.08 —
+diese Form fehlt dem Kopf, weil die Labels sie nicht führen.*
+
 ### O30 — Ersetzt SigLIP den alten Backbone, und tragen mehr Komponenten?
 
 **ABGESCHLOSSEN 2026-09-30 — ALLE TEILREGELN VERFEHLT.** Ohne Backbone

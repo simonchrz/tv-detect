@@ -98,6 +98,43 @@ def voddauer(uuid):
     return s
 
 
+def zeilen(uuid):
+    """Zeilenzahl der Merkmale, auf denen der Kopf trainiert (Archiv-Zeiger),
+    oder None. Eine Zeile = ein Bild eines fps=1-Durchlaufs ueber die ganze
+    Datei (Memory kopf_zeilen_sind_bildindex) — bei einem PTS-Sprung sind das
+    MEHR Zeilen als Sekunden."""
+    try:
+        import numpy as np
+        m = json.loads(str(np.load(ARCHIV / f"{uuid}.npz", allow_pickle=True)["meta"]))
+        fp = m.get("feature_npy", "")
+        return int(np.load(fp, mmap_mode="r").shape[0]) if fp and Path(fp).exists() else None
+    except Exception:
+        return None
+
+
+def zeilen_versatz(dirs, schwelle):
+    """Zweite Pruefung (2026-09-30): Merkmals-ZEILEN gegen QUELL-Dauer.
+
+    Die erste Pruefung vergleicht Quelle und VOD (Label-Achse). Sie sieht
+    nicht, wenn die Merkmale selbst auf einer anderen Achse liegen: bei
+    dvr-rtl-1779473700 (test) hat die Quelle 12570 s, die Merkmale 14056
+    Zeilen — ein PTS-Sprung, nach dem jede Zeile bis zu 25 min neben ihrem
+    Label, ihrer OCR- und SigLIP-Spalte liegt. Unter 303 Aufnahmen vier
+    Faelle, einer davon so gross."""
+    # ⚠️ ALLE Aufnahmen mit Cutlist, nicht nur die menschlich gelabelten: die
+    # automatischen Labels stammen aus der Detect-Cutlist und liegen bei einem
+    # Sprung genauso neben den Zeilen (rtl-1779473700 ist genau so eine).
+    aus = {}
+    for rec_dir in dirs:
+        u, q = rec_dir.name[5:], quelldauer(rec_dir)
+        if q is None:
+            continue
+        z = zeilen(u)
+        if z is not None and abs(z - q) > schwelle:
+            aus[u] = round(z - q, 1)
+    return aus
+
+
 def pruefe(rec_dir):
     uuid = rec_dir.name[5:]
     q = quelldauer(rec_dir)
@@ -167,6 +204,9 @@ def main():
             return 1
         alt = {}
     versetzt = versatz_liste(alle, a.schwelle, alt)
+    zv = zeilen_versatz(sorted(Path(a.hls_root).glob("_rec_*")), a.schwelle)
+    for u, d in zv.items():
+        versetzt.setdefault(u, d)
     tmp = ziel.with_suffix(".tmp")
     tmp.write_text(json.dumps({
         "geprueft": len(res), "schwelle_s": a.schwelle,
@@ -183,6 +223,10 @@ def main():
         for u, _, _, grund in fehler:
             print(f"    {u:36} {grund}"
                   + ("   (alter Eintrag behalten)" if u in alt else ""))
+    if zv:
+        print(f"  Merkmals-Zeilen gegen Quell-Dauer (> {a.schwelle:.0f}s): {len(zv)}")
+        for u, d in sorted(zv.items(), key=lambda x: -abs(x[1])):
+            print(f"  {u:36} Zeilen - Quelle {d:+8.1f}s")
     # Auch die knapp darunter zeigen — wer die Schwelle spaeter anzweifelt,
     # soll sehen, was sie gerade durchlaesst.
     knapp = [(u, q, v, d) for u, q, v, d in res

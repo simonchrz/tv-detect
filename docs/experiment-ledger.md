@@ -121,6 +121,21 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### (Befund, kein Experiment) Wisch-Review, erste 27 Antworten — 4 von 4 Abweichungen waren Labelfehler
+
+*2026-09-30, erste Stunde des Wisch-Reviews (tv-recorder `wisch.go`, App-Bereich
+„Du“): 27 Antworten in 55 min, 2 s je Karte, 3/3 Kontrollkarten richtig, 0×
+„unklar“. 20 von 24 echten Urteilen stimmen mit dem Label überein. Die 4
+Abweichungen nach Sichtung (±40-s-Raster): alle vier zu Simons Gunsten, alle
+auf menschlich gelabelten Aufnahmen — Blockstart 90 s zu früh (Geissens
+1781935800), Blockstart 31 s zu spät (Two and a Half Men 1781613717: Gewinnspiel
++ Trailer abgeschnitten), Blockende 26 s zu früh (GZSZ 1781026800: O2/Hakle
+abgeschnitten), Nachlauf nicht markiert (Robert 1783977300). Drei davon sind
+die Klasse „Rand-Trailer/Spots am Blockende“. Mit Simons OK korrigiert (Edit-API,
+menschliche Herkunft). Die unsicheren Sekunden des Kopfs zeigen also
+Labelfehler an, nicht Modellfehler — die Wisch-Marken (`confirmed_show` /
+`confirmed_ad_skips`) und die Blockkorrektur passen jetzt zusammen.*
+
 ### (Review, kein Experiment) 21 test-Aufnahmen ohne menschliches Label — Agenten-Review 2026-09-30
 
 *Auf Simons Anweisung von Claude reviewt, Labels über die Edit-API mit

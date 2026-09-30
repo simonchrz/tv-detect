@@ -121,6 +121,17 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### O30 — Ersetzt SigLIP den alten Backbone, und tragen mehr Komponenten?
+
+*Registriert 2026-09-30, vor dem ersten Behandlungs-Datenpunkt. Kontrolle K =
+Produktionszustand MLP7 (Median 0.9621, sd 0.0027). Arme: A ohne Backbone
+(SigLIP-64), B/C K mit SigLIP-128/256, D ohne Backbone mit SigLIP-256.
+R1/R3 Nicht-Unterlegenheit (≥ −0.005, ≤ 1 Seed unter −0.010), R2 Breite
+(≥ +0.005, ≥ 4/5). Registrierung `docs/o30-backbone-ersatz-preregistration.md`,
+Skript `scripts/o30-backbone-ersatz.py`. Anlass: Nachmessung 30.09. — mit
+SigLIP ist die Backbone-Voll/Halb-Lücke praktisch zu; der Backbone kostet
+45–65 % der Detect-Laufzeit.*
+
 ### O29 — Trägt ein billiger Kontext-Träger den O28-Gewinn?
 
 **ABGESCHLOSSEN 2026-09-26 — R3 ERFÜLLT (+0.0372, 5/5), R1 (+0.0038) und R2

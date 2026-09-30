@@ -140,6 +140,8 @@ def main():
     ap.add_argument("--aus", default="review-vorlage.html")
     ap.add_argument("--min-s", type=int, default=10)
     ap.add_argument("--max-strecken", type=int, default=80)
+    ap.add_argument("--min-fam", type=int, default=4,
+                    help="Anker-Familie mindestens so gross; 2 = oft Stoerbilder oder Wiederholung derselben Folge")
     a = ap.parse_args()
     TMP.mkdir(exist_ok=True)
     led = json.loads((ARCH / "split-ledger.json").read_text())
@@ -162,14 +164,26 @@ def main():
         if not anker:
             continue
         mensch = [(float(s), float(e)) for s, e in (raw.get("ads") or [])]
-        n = int(max([x["end_s"] for x in anker] + [e for _, e in mensch] + [0])) + 1
+        m = meta_von(u)
+        try:
+            dauer = int(np.load(m["feature_npy"], mmap_mode="r").shape[0])
+        except Exception:
+            dauer = 0
+        n = int(max([x["end_s"] for x in anker] + [e for _, e in mensch] + [dauer, 0])) + 1
         A = maske([(x["window_start_s"], x["end_s"]) for x in anker], n)
         T = maske(mensch, n)
         for s, e in laeufe(A & ~T, a.min_s):
             fam = max((x["family_size"] for x in anker
                        if x["window_start_s"] < e and x["end_s"] > s), default=0)
+            # ⚠️ Aufnahmerand: der Review markiert absichtlich nicht, was vor
+            # der Sendung und nach ihrem Ende laeuft (Memory
+            # review_beantwortet_eine_andere_frage). Das ist Konvention, kein
+            # Labelfehler — kennzeichnen und ans Ende sortieren.
+            if fam < a.min_fam:
+                continue
+            rand = s < 5 or (dauer and e > dauer - 5)
             strecken.append(dict(uuid=u, a=s, b=e, fam=fam, eimer=led.get(u, "?"),
-                                 titel=meta_von(u).get("title", ""), mensch=mensch))
+                                 titel=m.get("title", ""), mensch=mensch, rand=rand))
     print(f"{len(strecken)} Strecken (>= {a.min_s} s) in "
           f"{len({s['uuid'] for s in strecken})} menschlich gelabelten Aufnahmen; "
           f"{sum(s['b'] - s['a'] for s in strecken)} s gesamt", flush=True)
@@ -179,7 +193,9 @@ def main():
         u = s["uuid"]
         if u not in reviewbar:
             reviewbar[u] = bool(vod_playlist(u))
-    strecken.sort(key=lambda s: (not reviewbar[s["uuid"]], -(s["b"] - s["a"]) * min(s["fam"], 50)))
+    strecken.sort(key=lambda s: (s["rand"], not reviewbar[s["uuid"]],
+                                 -(s["b"] - s["a"]) * min(s["fam"], 50)))
+    print(f"  davon am Aufnahmerand (Konvention): {sum(s['rand'] for s in strecken)}", flush=True)
     zeilen = []
     for s in strecken[:a.max_strecken]:
         rand = 0.05 * (s["b"] - s["a"])
@@ -190,6 +206,7 @@ def main():
         zeilen.append(f"""<article class="k {'ja' if reviewbar[s['uuid']] else 'nein'}">
 <header><h2>{html.escape(s['titel'])}</h2><span class="u">{s['uuid']} · {s['eimer']}</span></header>
 <p><b>{mmss(s['a'])}–{mmss(s['b'])}</b> ({s['b'] - s['a']} s) · Anker-Familie bis {s['fam']} Aufnahmen ·
+{'<b>am Aufnahmerand, Konvention</b> · ' if s['rand'] else ''}
 {'in der App reviewbar' if reviewbar[s['uuid']] else 'nicht mehr auf dem Pi (nur Archiv)'}</p>
 {img}<p class="lab">Label-Werbung bisher: {lab}</p></article>""")
 
@@ -226,7 +243,8 @@ h1{{font-size:22px;margin:0 0 6px}}h2{{font-size:17px;margin:0}}.intro{{color:va
 <p class="intro">Nur eine Vorlage: nichts wurde geändert. Stand des Label-Schnappschusses:
 {time.strftime('%d.%m.%Y %H:%M', time.localtime(SNAP.stat().st_mtime))}.</p>
 <h2>1. Wiederholungs-Anker im Label als Sendung ({len(strecken)} Strecken, die {min(len(strecken), a.max_strecken)} gewichtigsten)</h2>
-<p class="intro">Spots, die in vielen Aufnahmen wiederkehren, stehen hier als Sendung. Grün = in der App reviewbar.</p>
+<p class="intro">Spots, die in vielen Aufnahmen wiederkehren, stehen hier als Sendung. Grün = in der App reviewbar.
+Strecken am Aufnahmerand (vor Sendungsbeginn, nach Sendungsende) stehen am Ende: dort wird laut Konvention nicht markiert.</p>
 {''.join(zeilen)}
 <h2>2. test-Aufnahmen ohne menschliches Label, in der App reviewbar ({len(offen)})</h2>
 <p class="intro">Jede reviewte hebt den belegten Kern des Maßstabs.</p><ol>{liste2}</ol>

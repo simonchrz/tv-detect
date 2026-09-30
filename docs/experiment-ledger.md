@@ -121,6 +121,23 @@ einzige Stellschraube (prosieben 8, rtl 6, kabel-eins 5, vox 5,
 disney-channel 2, one-hd/rtlzwei/sixx je 1). Sie würden den belegten Kern
 von 22 auf bis zu 51 heben.*
 
+### (Review, kein Experiment) 21 test-Aufnahmen ohne menschliches Label — Agenten-Review 2026-09-30
+
+*Auf Simons Anweisung von Claude reviewt, Labels über die Edit-API mit
+`reviewed_by: claude-code` (NICHT_MENSCH): 17 Aufnahmen geschrieben — 9 nur
+bestätigt (Blöcke des Detektors, Inhalt per VLM und Sichtung geprüft, Kanten
+nicht auf die Sekunde nachgemessen), 8 mit Korrekturen: 9 Einzelspots
+(15–30 s, Countdown/„Werbung“-Kennung) neu, 2 Blockenden verlängert
+(Ab ins Beet 1787505000 auf 69:18, Mein Lokal 1790179012 Blockstart auf 50:41),
+1 kurzer Block neu (GZSZ 30:43–31:07), 2 Nachläufe bis Aufnahmeende markiert
+(First Dates 1790265600 ab 61:01, Micky Maus 1781583000 ab 21:01). Nicht
+angefasst: one-hd 1781285100 (werbefrei, auto-bestätigt), prosieben 1780544100
+und 1781406105 (werbefrei laut 10-s-Raster, Detektor 0 Blöcke — richtig; ein
+leeres Label lässt sich über die API nicht mit Herkunft schreiben), rtl-1779473700
+(kaputt). Diese Labels zählen im Training unter --herkunft-belegt NICHT als
+menschlich und heben den belegten Golden-/Test-Kern nicht; ein späteres Speichern
+in der App (ohne reviewed_by) würde sie zu menschlichen machen.*
+
 ### (Befund, kein Experiment) Einzelspots mit Countdown fehlen dem Detektor systematisch
 
 *2026-09-30. Vorprüfung der 21 reviewbaren test-Aufnahmen ohne menschliches

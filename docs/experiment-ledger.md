@@ -123,6 +123,13 @@ von 22 auf bis zu 51 heben.*
 
 ### O30 — Ersetzt SigLIP den alten Backbone, und tragen mehr Komponenten?
 
+**ABGESCHLOSSEN 2026-09-30 — ALLE TEILREGELN VERFEHLT.** Ohne Backbone
+(70 Spalten) −0.0055 (knapp unter der Nicht-Unterlegenheitsgrenze, 2 Seeds
+unter −0.010); SigLIP-128 −0.052, SigLIP-256 −0.027 (instabil, sd 0.034),
+ohne Backbone mit 256 −0.039. Backbone bleibt, 64 Komponenten bleiben.
+Nebenbefund: mehr Komponenten schaden nach Standardisierung (Rauschen der
+kleinen Eigenwerte auf Einheitsgröße). Nächste Frage: Fenster-Kopf (O31).
+
 *Registriert 2026-09-30, vor dem ersten Behandlungs-Datenpunkt. Kontrolle K =
 Produktionszustand MLP7 (Median 0.9621, sd 0.0027). Arme: A ohne Backbone
 (SigLIP-64), B/C K mit SigLIP-128/256, D ohne Backbone mit SigLIP-256.

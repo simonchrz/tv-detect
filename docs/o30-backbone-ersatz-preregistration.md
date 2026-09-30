@@ -1,3 +1,24 @@
+> **ABGESCHLOSSEN 2026-09-30 — ALLE TEILREGELN VERFEHLT.**
+>
+> | Arm | Spalten | Median | Δ zu K | Δ je Seed |
+> |---|---|---|---|---|
+> | K Produktion (MLP7) | 1350 | 0.9621 | — | — |
+> | A ohne Backbone, SigLIP-64 | 70 | 0.9574 | −0.0055 | +0.0005 / −0.0004 / −0.0111 / −0.0112 / −0.0055 |
+> | B K + SigLIP-128 | 1414 | 0.9108 | −0.0518 | 5/5 unter −0.005 |
+> | C K + SigLIP-256 | 1542 | 0.9307 | −0.0271 | sd 0.034 |
+> | D ohne Backbone, SigLIP-256 | 262 | 0.9255 | −0.0386 | 5/5 unter −0.005 |
+>
+> R1 knapp verfehlt (Median −0.0055 gegen −0.005, zwei Seeds unter −0.010), R2 und R3
+> deutlich. Konsequenz laut Regel: Backbone bleibt, 64 Komponenten bleiben.
+> Ergebnis `~/.cache/tvd-train-archive/o30-ergebnis.json`, Log `~/Library/Logs/o30-lauf.log`.
+>
+> Deutung: 70 Spalten (SigLIP-64 + Logo/Audio/OCR) tragen den 1280-spaltigen Backbone
+> fast allein — der Rest ist klein, aber real. Mehr Komponenten SCHADEN: die
+> Komponenten ab 65 haben winzige Varianz, die Standardisierung hebt ihr Rauschen auf
+> Einheitsgröße, und der 96er-Kopf lernt es mit (B sd 0.009, C sd 0.034: instabil).
+> Wer breiter will, müsste die Komponenten nach Varianz gewichtet lassen, nicht
+> standardisieren — das wäre eine eigene Frage, nicht diese.
+
 # O30 — Ersetzt SigLIP den alten Backbone, und tragen mehr Komponenten? (Vorab-Registrierung)
 
 **Geschrieben 2026-09-30, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

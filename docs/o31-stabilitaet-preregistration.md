@@ -1,3 +1,23 @@
+> **ABGESCHLOSSEN 2026-10-01 — VERFEHLT (R1 in beiden Armen).**
+>
+> | Arm | kipp Median | kipp_S/kipp_K (Median) | weniger als K | F1 Median | ΔF1 Median (min) |
+> |---|---|---|---|---|---|
+> | K | 0.0085 | — | — | 0.9637 | — |
+> | S30 | 0.0085 | 0.875 | 4/5 | 0.9625 | +0.0020 (−0.0031) |
+> | S50 | 0.0065 | 0.858 | 4/5 | 0.9660 | +0.0009 (−0.0065) |
+>
+> R2 (Qualitaet) haelt in beiden Armen, R1 nicht: das weiche Ziel senkt das
+> Kippen um ~13 %, registriert waren ≥ 30 %. Konsequenz laut Regel: keine
+> Trainingsaenderung; die Gewinnpflicht im Gate (285879e) bleibt der Schutz.
+> Log `~/Library/Logs/o31-lauf.log`, Ergebnis `~/.cache/tvd-train-archive/o31-ergebnis.json`.
+>
+> Deutung: Auf Frame-Ebene kippt ein Einzelkopf nur 0.85 % der Testframes —
+> wenig, und das weiche Ziel holt davon nur einen kleinen Teil. Das sichtbare
+> Hin und Her (|ΔIoU| > 0.1 auf 4 von 144 Aufnahmen) entsteht offenbar erst im
+> Decoder, wo wenige gekippte Frames nahe 0.5 einen ganzen Block an- oder
+> abschalten. Wer dort ansetzen will, muss am Decoder/an der Blockbildung
+> messen, nicht am Training — eigene Frage.
+
 # O31 — Bindet ein Stabilitaets-Ziel den neuen Kopf an den alten, ohne Qualitaet zu kosten? (Vorab-Registrierung)
 
 **Geschrieben 2026-10-01, vor dem ersten Behandlungs-Datenpunkt.** Bauart wie

@@ -6384,4 +6384,4 @@ zu messen.
 
 Registrierung `docs/o31-stabilitaet-preregistration.md`, Skript
 `scripts/o31-stabilitaet.py`. Vormessung K: kipp Median 0.0085 (sd 0.0024),
-F1 0.9637 (sd 0.0057). Ergebnis: offen.
+F1 0.9637 (sd 0.0057). **Ergebnis: VERFEHLT** — R1 in beiden Armen (kipp nur −13 % statt ≥ −30 %), R2 haelt. Keine Trainingsaenderung.

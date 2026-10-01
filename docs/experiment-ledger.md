@@ -6379,3 +6379,9 @@ seit jeher richtig behandelt, mit Begründung im Kommentar. Ich habe
 dreimal ein eigenes Skript geschrieben. Das Skript nimmt jetzt
 Zusatz-Schalter je Arm entgegen; es gibt keinen Grund mehr, an ihm vorbei
 zu messen.
+
+## O31 — Stabilitaets-Ziel gegen das naechtliche Hin und Her (registriert 2026-10-01)
+
+Registrierung `docs/o31-stabilitaet-preregistration.md`, Skript
+`scripts/o31-stabilitaet.py`. Vormessung K: kipp Median 0.0085 (sd 0.0024),
+F1 0.9637 (sd 0.0057). Ergebnis: offen.

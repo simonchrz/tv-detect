@@ -3277,6 +3277,16 @@ def main():
                          "mehr als so viel unter dem BESTEN je deployten "
                          "Golden-Median liegt UND den Champion nicht schlaegt. "
                          "0 = aus.")
+    ap.add_argument("--nur-bei-gewinn", type=int, default=0, metavar="NETTO",
+                    help="Ausliefern nur bei echtem Gewinn: (besser − schlechter) "
+                         ">= NETTO auf den stabilen Test-Aufnahmen (|Δ|>0.02, ohne "
+                         "BISTABILE) UND mittleres Δ >= 0. 0 = aus (altes Verhalten: "
+                         "ausliefern, sofern keine Regression). Simon-OK 2026-10-01.")
+    ap.add_argument("--auffrischen-nach-tagen", type=float, default=7.0,
+                    help="mit --nur-bei-gewinn: ist der ausgelieferte Kopf aelter, "
+                         "wird ohne Gewinn trotzdem ausgeliefert (sofern keine "
+                         "Regression), damit Label-Korrekturen spaetestens dann "
+                         "ankommen.")
     ap.add_argument("--stability-window", type=int, default=10,
                     help="how many recent per-rec-iou.jsonl runs the veto's "
                          "bistability check looks back over. A rec whose own IoU "
@@ -7660,6 +7670,34 @@ def main():
                           if -d >= args.reviewed_regression_severe]
                 veto_fires = (args.reviewed_regression_veto < 1.0
                               and (len(rev_regr) >= 2 or bool(severe)))
+                # ⚠️ Kippzahl + Gewinnpflicht (2026-10-01). Bis hierher lieferte
+                # das Gate aus, sobald der Kandidat NICHT schlechter war — bei
+                # Median-Δ 0 tauschte jede Nacht einen Satz Fehler gegen einen
+                # anderen (26 Naechte in Folge "deploy", Saldo um 0) und loeste
+                # jedes Mal die Neuerkennung aller Aufnahmen aus. Gezaehlt wird
+                # ohne BISTABILE Aufnahmen: deren Sprung sagt nichts ueber das
+                # Modell.
+                _stabil = [u for u in shared if u not in unstable]
+                _ds = np.array([cand_pr[u] - dep_pr[u] for u in _stabil]) if _stabil else np.zeros(0)
+                _nb, _nw = int((_ds > 0.02).sum()), int((_ds < -0.02).sum())
+                _kipp = int((np.abs(deltas) > 0.1).sum())
+                _mittel = float(_ds.mean()) if len(_ds) else 0.0
+                print(f"  Kippzahl: {_kipp} von {len(shared)} Aufnahmen aendern IoU um >0.1 "
+                      f"(stabil: {_nb} besser / {_nw} schlechter, mittleres Δ {_mittel:+.4f}, "
+                      f"{len(shared) - len(_stabil)} bistabil ausgenommen)")
+                _alter_tage = None
+                try:
+                    _alter_tage = (time.time() - Path(args.output).stat().st_mtime) / 86400
+                except OSError:
+                    pass
+                _gewinn_ok = (_nb - _nw >= args.nur_bei_gewinn and _mittel >= 0)
+                _gewinn_txt = (f"netto {_nb - _nw:+d} (Pflicht ≥{args.nur_bei_gewinn}), "
+                               f"mittleres Δ {_mittel:+.4f}")
+                if (not _gewinn_ok and _alter_tage is not None
+                        and _alter_tage >= args.auffrischen_nach_tagen):
+                    _gewinn_ok = True
+                    _gewinn_txt += (f"; Auffrischung: Kopf {_alter_tage:.1f} Tage alt "
+                                    f"≥ {args.auffrischen_nach_tagen:g}")
                 if hi < -PAIRED_SLACK:  # 95%-confident the candidate is worse
                     deploy = False
                     reason = base + " — confident regression, keeping current head"
@@ -7689,8 +7727,14 @@ def main():
                         lbl = f"{t} / {c}" if t else u
                         print(f"    {d:+.3f}  cand={cand_pr[u]:.3f} "
                               f"champ={dep_pr[u]:.3f}  {lbl}  ({u})")
+                elif args.nur_bei_gewinn > 0 and not _gewinn_ok:
+                    deploy = False
+                    reason = base + (f" — kein echter Gewinn ({_gewinn_txt}), "
+                                     f"keeping current head")
                 else:
                     reason = base + " — not a confident regression, deploy"
+                    if args.nur_bei_gewinn > 0:
+                        reason += f" [{_gewinn_txt}]"
                     if rev_regr:
                         # Moderate lone regression: logged, not blocking.
                         print("  note: 1 moderate reviewed regression (not a "

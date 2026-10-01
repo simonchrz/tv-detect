@@ -256,7 +256,15 @@ echo "stichtag (volle Stunde): $STICHTAG — $(date -r "$STICHTAG" '+%F %H:%M')"
     --siglip-spalten \
     --stichtag "$STICHTAG" \
     --sealed-frac 0.20 \
+    --nur-bei-gewinn 3 \
     ${TVH_TRAIN_EXTRA_ARGS:-}
+# 2026-10-01: --nur-bei-gewinn 3 (Simon-OK). Ausgeliefert wird nur noch bei
+# echtem Gewinn — netto >= 3 stabile Aufnahmen besser als schlechter und
+# mittleres Δ >= 0 — oder wenn der Kopf >= 7 Tage alt ist (Label-Korrekturen
+# kommen spaetestens dann an). Davor: 26 Naechte in Folge ausgeliefert bei
+# Median-Δ 0, jede mit Neuerkennung aller Aufnahmen; auf der Historie haette
+# die Regel 6 von 26 ausgeliefert. Log-Zeile "Kippzahl:" zaehlt das
+# Hin und Her jede Nacht.
 # 2026-09-28: --siglip-spalten (O28/O29 R3 ERFUELLT, Herausforderer 09-27:
 # Golden 0.964 gegen Kontrolle 0.955, Kopf-an-Kopf 12 besser / 2 schlechter;
 # L5-OK Simon 2026-09-28). 64 SigLIP-2-Komponenten + siglip_da HINTER den

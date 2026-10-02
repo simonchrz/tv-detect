@@ -72,7 +72,9 @@ Ein Arm ist ERFUELLT, wenn R1 und R2 halten. Erfuellen beide, gilt S30
 (kleineres λ bremst das Lernen weniger).
 
 ```regel
-{"name": "O31 Stabilitaets-Ziel", "art": "offline", "skript": "scripts/o31-stabilitaet.py",
+{"id": "O31", "frage": "Bindet ein Stabilitaets-Ziel den neuen Kopf an den alten, ohne Qualitaet zu kosten?",
+ "nicht_in_serienabschluss": true,
+ "name": "O31 Stabilitaets-Ziel", "art": "offline", "skript": "scripts/o31-stabilitaet.py",
  "r1": "median(kipp_S/kipp_K) <= 0.70 und kipp_S < kipp_K in >= 4/5 Seeds",
  "r2": "median(F1_S - F1_K) >= -0.003 und min >= -0.010",
  "seeds": 5, "arme": {"K": 0.0, "S30": 0.3, "S50": 0.5}}

@@ -29,6 +29,8 @@ package signals
 // selbst. Um die Blockgrenzen herum sind es ~23 s = +17 %.
 
 import (
+	"github.com/simonchrz/tv-detect/internal/decode"
+
 	"encoding/json"
 	"fmt"
 	"os"
@@ -154,11 +156,17 @@ func OCRUmKanten(quelle string, kanten []float64, dauerS float64, o OCROpts) ([]
 	}
 	defer os.RemoveAll(tmp)
 
+	// Versatz Container→Video (decode.Info.SeekOffsetS): ohne ihn liegen
+	// die Fenster bei Dateien mit fremdem Programm am falschen Ort.
+	versatz := 0.0
+	if info, err := decode.Probe(quelle); err == nil {
+		versatz = info.SeekOffsetS
+	}
 	var funde []OCRFund
 	for i, f := range fenster {
 		muster := filepath.Join(tmp, fmt.Sprintf("w%02d_%%04d.jpg", i))
 		cmd := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
-			"-ss", strconv.FormatFloat(f.von, 'f', 2, 64),
+			"-ss", strconv.FormatFloat(f.von+versatz, 'f', 2, 64),
 			"-t", strconv.FormatFloat(f.bis-f.von, 'f', 2, 64),
 			"-i", quelle,
 			// Zuerst zuschneiden, dann skalieren: was ohnehin verworfen

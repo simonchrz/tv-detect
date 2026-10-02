@@ -17,7 +17,24 @@ type Info struct {
 	FPS        float64
 	DurationS  float64
 	FrameCount int // 0 if ffprobe couldn't determine it (live, some MPEG-TS)
+	// SeekOffsetS: so viel spaeter als der Container beginnt der Videostrom.
+	// ffmpeg misst ein Eingangs-`-ss` ab dem CONTAINER-Beginn (kleinster
+	// start_time aller Stroeme). Steckt ein fremdes Programm mit frueherem
+	// PTS in der Datei (PID-Union-Zeit, Mai 2026), landet jedes `-ss X` um
+	// diesen Versatz zu frueh — bei dvr-kabel-eins-1779893460 um 2516 s:
+	// alle Teilstuecke ausser dem ersten dekodierten den Anfang erneut, die
+	// Erkennung zaehlte 175677 statt 112775 Bilder. Nur gesetzt ab
+	// seekOffsetMinS, damit normale Dateien (Audio beginnt Bruchteile frueher)
+	// bitgleich weiterlaufen.
+	SeekOffsetS float64
 }
+
+// seekOffsetMinS: kleinere Versaetze sind normal (Audio/Untertitel starten
+// Bruchteile einer Sekunde vor dem Video) und bleiben unangetastet.
+const seekOffsetMinS = 2.0
+
+// SeekArg: der `-ss`-Wert fuer Sekunde t auf der Video-Zeitachse.
+func (i Info) SeekArg(t float64) float64 { return t + i.SeekOffsetS }
 
 type probeOut struct {
 	Streams []struct {
@@ -28,10 +45,12 @@ type probeOut struct {
 		AvgFrameRate string `json:"avg_frame_rate"`
 		NbFrames     string `json:"nb_frames"`
 		Duration     string `json:"duration"`
+		StartTime    string `json:"start_time"`
 	} `json:"streams"`
 	Format struct {
-		Duration string `json:"duration"`
-		Size     string `json:"size"`
+		Duration  string `json:"duration"`
+		Size      string `json:"size"`
+		StartTime string `json:"start_time"`
 	} `json:"format"`
 }
 
@@ -95,13 +114,17 @@ func Probe(input string) (Info, error) {
 				}
 			}
 		}
-		return Info{
+		info := Info{
 			Width:      s.Width,
 			Height:     s.Height,
 			FPS:        fps,
 			DurationS:  dur,
 			FrameCount: nbFrames,
-		}, nil
+		}
+		if vs, fs := parseFloat(s.StartTime), parseFloat(p.Format.StartTime); vs-fs >= seekOffsetMinS {
+			info.SeekOffsetS = vs - fs
+		}
+		return info, nil
 	}
 	return Info{}, fmt.Errorf("no video stream in %s", input)
 }

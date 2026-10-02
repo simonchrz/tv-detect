@@ -80,7 +80,7 @@ func NewDecoder(ctx context.Context, opts DecodeOpts) (*Decoder, error) {
 		args = append(args, "-hwaccel", "videotoolbox")
 	}
 	if opts.StartS > 0 {
-		args = append(args, "-ss", fmt.Sprintf("%.3f", opts.StartS))
+		args = append(args, "-ss", fmt.Sprintf("%.3f", info.SeekArg(opts.StartS)))
 	}
 	// Error-tolerance + similar input-side flags must come BEFORE -i.
 	if len(opts.ExtraInputArgs) > 0 {

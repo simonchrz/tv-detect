@@ -152,14 +152,15 @@ func formBlocks(decoder string, opts blocks.Opts,
 			// flags, because those are the ones a caller legitimately
 			// varies per channel. The segment-model parameters stay at
 			// the built-in defaults unless --hsmm-* flags override them.
-			AdMuS:     hsmmPrior.AdMuS,
-			AdSD:      hsmmPrior.AdSD,
-			ShowMuS:   hsmmPrior.ShowMuS,
-			ShowSD:    hsmmPrior.ShowSD,
-			DurW:      hsmmPrior.DurW,
-			AdBiasLP:  hsmmPrior.AdBiasLP,
-			MinBlockS: opts.MinBlockS,
-			MaxBlockS: opts.MaxBlockS,
+			AdMuS:         hsmmPrior.AdMuS,
+			AdSD:          hsmmPrior.AdSD,
+			ShowMuS:       hsmmPrior.ShowMuS,
+			ShowSD:        hsmmPrior.ShowSD,
+			DurW:          hsmmPrior.DurW,
+			AdBiasLP:      hsmmPrior.AdBiasLP,
+			InnerShowMinS: hsmmPrior.InnerShowMinS,
+			MinBlockS:     opts.MinBlockS,
+			MaxBlockS:     opts.MaxBlockS,
 		}
 		if hsmmBumperW > 0 && len(bumperConf) > 0 {
 			guard := blocks.PerSecondMean(smoothForGuard(nnConf, opts), opts.FPS)

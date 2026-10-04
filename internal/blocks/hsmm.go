@@ -105,6 +105,15 @@ type HSMMOpts struct {
 	// remnant. 0 = off, keeps the decoder byte-identical to the parity
 	// reference.
 	AdBiasLP float64
+
+	// InnerShowMinS: shortest show segment allowed BETWEEN two ad blocks
+	// (O32, 2026-10-04). Show at the recording's start or end keeps
+	// hsmmShowMinS. Motivation: a 40 s show-looking spot inside an ad break
+	// (Hot oder Schrott, VOX) let the decoder split the break in two on some
+	// nights and not on others; across 738 human-labelled gaps between ad
+	// blocks only 4 are shorter than 90 s. 0 = off, byte-identical to the
+	// parity reference.
+	InnerShowMinS float64
 }
 
 func hsmmDefaults(o *HSMMOpts) {
@@ -253,6 +262,11 @@ func FormHSMM(p []float64, o HSMMOpts) []Block {
 			for st := t - c.dmin; st >= lo; st-- {
 				if st < 0 {
 					break
+				}
+				// Show between two ad blocks: preceded by ad (st > 0) and,
+				// since states alternate, followed by ad (t < T).
+				if k == 0 && st > 0 && t < T && float64(t-st) < o.InnerShowMinS {
+					continue
 				}
 				for _, prev := range prevs {
 					base := dp[st][prev]

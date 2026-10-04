@@ -109,6 +109,7 @@ func main() {
 		hsmmShowSd      = flag.Float64("hsmm-show-sd", 0, "hsmm* only: log-space sd of show-segment length (0 = built-in 0.9)")
 		hsmmAdBias      = flag.Float64("hsmm-ad-bias", 0, "hsmm* only: per-second log-prior on the AD emission. Negative = ad-averse: boundary seconds near p=0.5 flip to show, edges move inward, ad remnants instead of cut programme. 0 = off (parity with every published hsmm number).")
 		hsmmDurW        = flag.Float64("hsmm-dur-w", 0, "hsmm* only: weight of the duration prior vs the per-second emission (0 = built-in 60; measured optimum 5-15). Only the ratio to the emission matters; the emission weight is fixed at 1.")
+		hsmmInnerShow   = flag.Float64("hsmm-inner-show-min", 0, "hsmm* only: shortest show segment between two ad blocks in seconds (0 = off, i.e. the built-in 30 s that also applies at the recording edges). O32 experiment.")
 		hsmmBumpW       = flag.Float64("hsmm-bumper-w", 0, "hsmm* only: weight of soft bumper boundary evidence in the Viterbi (0 = off). End-idents are NN-guarded (trailer convention), start idents are not. Uses --bumper-threshold as the hit cutoff.")
 	)
 	flag.Parse()
@@ -118,7 +119,7 @@ func main() {
 	// every published agreement number used.
 	hsmmPrior = blocks.HSMMOpts{AdMuS: *hsmmAdMu, AdSD: *hsmmAdSd,
 		ShowMuS: *hsmmShowMu, ShowSD: *hsmmShowSd, DurW: *hsmmDurW,
-		AdBiasLP: *hsmmAdBias}
+		AdBiasLP: *hsmmAdBias, InnerShowMinS: *hsmmInnerShow}
 	hsmmBumperW = *hsmmBumpW
 
 	// buildOpts assembles blocks.Opts from the CLI flags — shared by the

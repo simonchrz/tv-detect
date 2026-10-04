@@ -1796,6 +1796,40 @@ def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60)
                 pass
 
 
+def _replay_ohne_spur(proba, fps_extract, uuid):
+    """Produktions-Dekoder auch fuer Aufnahmen OHNE Decode-Spur (Quelle weg).
+
+    Der hsmm-Dekoder (EVAL_DECODER) liest BEWUSST nur die rohe Werbe-
+    Wahrscheinlichkeit je Sekunde — kein Logo, keine Snaps. Eine Spur, die
+    nur nn_confs traegt, liefert ihm also genau dieselbe Eingabe wie eine
+    volle. Bis 2026-10-04 fielen diese Aufnahmen auf to_blocks() zurueck
+    (Schwelle 0.5 + Laufgruppen): 34 von 145 Testaufnahmen, 29 der 49
+    Kipper zwischen 29.09. und 04.10. (Hot oder Schrott bei 0.51/0.59
+    an der Schwelle). Ein Dekoder, den die Produktion nicht faehrt, misst
+    Hin und Her, das es dort nicht gibt.
+
+    Nur fuer hsmm gueltig: mit "form" braeuchte der Dekoder Logo/Snaps."""
+    if "hsmm" not in EVAL_DECODER:
+        return None
+    n = len(proba)
+    if n == 0:
+        return None
+    pfad = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            pfad = f.name
+            json.dump({"fps": float(fps_extract), "frame_count": int(n),
+                       "nn_confs": [], "logo_confs": []}, f)
+        return _replay_blocks(pfad, proba, fps_extract, uuid)
+    finally:
+        if pfad:
+            _signals_header_cache.pop(str(pfad), None)
+            try:
+                os.unlink(pfad)
+            except OSError:
+                pass
+
+
 def to_blocks(preds, fps=1.0, min_block_s=30):
     """Convert per-frame ad/show predictions to a list of contiguous
     [start_s, end_s] blocks. Mimics the deployed state machine's
@@ -1984,7 +2018,7 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     per_rec_iou = {}  # uuid -> IoU, for the paired head-to-head gate
     overall_frames = overall_correct = 0
     half_w = int(smooth_s * fps_extract / 2) if smooth_s > 0 else 0
-    n_realistic = n_fallback = 0
+    n_realistic = n_fallback = n_ohne_spur = 0
     per_rec_stats = []  # (uuid, title, n_frames, n_errors) for the GT-outlier guard
     for uuid, title, ads, X, y, *_rest in recs:
         has_user = bool(_rest[0]) if _rest else False
@@ -2008,6 +2042,11 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
         if cache_path is not None:
             pred_blocks = _replay_blocks(cache_path, clf.predict_proba(X)[:, 1],
                                           fps_extract, uuid)
+        if pred_blocks is None and cache_path is None:
+            pred_blocks = _replay_ohne_spur(clf.predict_proba(X)[:, 1],
+                                            fps_extract, uuid)
+            if pred_blocks is not None:
+                n_ohne_spur += 1
         if pred_blocks is not None:
             n_realistic += 1
         else:
@@ -2061,8 +2100,8 @@ def eval_split(clf, recs, fps_extract, smooth_s=0):
     if n_realistic or n_fallback:
         print(f"  realistic eval: {n_realistic}/{n_realistic + n_fallback} "
               f"test recs via full production pipeline (blocks.Form()), "
-              f"{n_fallback} via naive threshold fallback (no cached "
-              f"decode signals for that recording)")
+              f"davon {n_ohne_spur} ohne Decode-Spur (nur NN, hsmm), "
+              f"{n_fallback} via naive threshold fallback")
     # Per-show table.
     print(f"{'show':40s} {'recs':>4} {'frames':>7} {'acc':>6} "
           f"{'F1':>5} {'IoU':>5}")

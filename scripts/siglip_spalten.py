@@ -26,6 +26,12 @@ def projektion_anpassen(zeilen, k=K):
     w, U = np.linalg.eigh(np.cov((Z - mu).T))
     ordnung = np.argsort(w)[::-1][:k]
     V = U[:, ordnung] / np.sqrt(np.maximum(w[ordnung], 1e-12))
+    # Vorzeichen festlegen: eigh liefert jede Komponente mit beliebigem
+    # Vorzeichen. Zwischen 02.10. und 03.10.2026 drehten 28 von 64, und das
+    # Gate scorte den Champion auf halb gespiegelten Spalten. Konvention: der
+    # betragsgroesste Eintrag jeder Spalte ist positiv.
+    groesste = np.abs(V).argmax(0)
+    V = V * np.where(V[groesste, np.arange(V.shape[1])] < 0, -1.0, 1.0)
     return mu.astype(np.float32), V.astype(np.float32)
 
 

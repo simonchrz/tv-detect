@@ -35,6 +35,39 @@ class Tests(unittest.TestCase):
         p = m.predict_proba(X)[:, 1]
         np.testing.assert_allclose(p, fx["erwartet"], atol=1e-5)
 
+    def test_projektion_vorzeichen_stabil(self):
+        rng = np.random.default_rng(0)
+        Z = rng.normal(size=(2000, 768)).astype(np.float32) * np.linspace(3, 0.1, 768)
+        sl = th._siglip_modul()
+        _, V1 = sl.projektion_anpassen(Z)
+        _, V2 = sl.projektion_anpassen(-Z[::-1] + 0)  # gleiche Kovarianz, andere Daten-Lage
+        g = np.abs(V1).argmax(0)
+        self.assertTrue((V1[g, np.arange(V1.shape[1])] > 0).all())
+        np.testing.assert_allclose(V1, V2, atol=1e-3)
+
+    def test_champion_bekommt_eigene_projektion(self):
+        sl = th._siglip_modul()
+        E = np.load(TD / "mlp7-siglip-spur.npy")
+        n = 5
+        rng = np.random.default_rng(1)
+        V_eigen = rng.normal(size=(768, 64)).astype(np.float32)
+        mu = np.zeros(768, np.float32)
+        kopf = th._DeployedMLP(None, None, None, None, 10 + 65, 0, 65, mu, V_eigen)
+        X = np.zeros((n, 10 + 65), np.float32)
+        X[:, -65:] = sl.spalten(E, n, mu, -V_eigen)  # Kandidat: gespiegelt
+        with tempfile.TemporaryDirectory() as d:
+            np.save(Path(d) / "u1.npy", E)
+            (Path(d) / "u1.json").write_text("{}")
+            alt, th.SIGLIP_SPUR_DIR = th.SIGLIP_SPUR_DIR, Path(d)
+            try:
+                (r,) = list(th._MitEigenerSiglip([("u1", "t", [], X, None)], kopf))
+            finally:
+                th.SIGLIP_SPUR_DIR = alt
+        np.testing.assert_allclose(r[3][:, -65:], sl.spalten(E, n, mu, V_eigen), atol=1e-5)
+        np.testing.assert_array_equal(r[3][:, :10], X[:, :10])
+        self.assertTrue((X[:, -65:-1] == sl.spalten(E, n, mu, -V_eigen)[:, :-1]).all(),
+                        "Original darf nicht veraendert werden")
+
     def test_mlp6_hat_kein_siglip(self):
         m = th.load_deployed_mlp(TD / "mlp6-ocr.bin")
         self.assertEqual(m.n_siglip, 0)

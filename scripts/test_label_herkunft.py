@@ -159,7 +159,9 @@ class TransportDurchDieSchleifen(unittest.TestCase):
     def test_beide_baustellen_von_rec_info_tragen_es(self):
         quelle = (_HIER / "train-head.py").read_text(encoding="utf-8")
         bau = quelle.count("rec_info = (uuid, title, ads, which")
-        mit = quelle.count("confirmed_ad_skips, mensch_belegt)")
+        # Seit 852b8c3 (Wisch) folgt noch ein Feld — mensch_belegt muss nur drinstehen.
+        mit = (quelle.count("confirmed_ad_skips, mensch_belegt)")
+               + quelle.count("confirmed_ad_skips, mensch_belegt,"))
         self.assertGreaterEqual(bau, 1, "keine rec_info-Baustelle gefunden")
         self.assertEqual(mit, bau,
                          f"{bau} rec_info-Baustellen, aber nur {mit} tragen "

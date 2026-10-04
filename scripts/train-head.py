@@ -583,6 +583,39 @@ class _DeployedMLP:
         return np.column_stack([1.0 - p, p])
 
 
+class _MitEigenerSiglip:
+    """Testaufnahmen fuer einen FREMDEN Kopf (Champion): die SigLIP-Spalten
+    ganz hinten neu aus SEINER Projektion (mu, V) gebaut, Zeile fuer Zeile
+    beim Iterieren — eine zweite Kopie aller Test-Matrizen waere mehrere GB.
+
+    Warum (2026-10-04): test_recs_ch traegt die Projektion des KANDIDATEN.
+    Die PCA wird jede Nacht neu angepasst, und zwischen 02.10. und 03.10.
+    drehten 28 von 64 Komponenten das Vorzeichen. Der Champion wurde damit
+    auf halb gespiegelten Spalten gescort (disney-1779163800: 0.990 →
+    0.465) und die Auslieferung vom 03.10. ("netto +10") war grossteils
+    dieses Artefakt. Gleiche Breite heisst nicht gleiche Spalte (O22)."""
+
+    def __init__(self, recs, kopf):
+        self.recs, self.kopf = recs, kopf
+        k = getattr(kopf, "n_siglip", 0)
+        self.aktiv = bool(k) and getattr(kopf, "siglip_mu", None) is not None
+
+    def __len__(self):
+        return len(self.recs)
+
+    def __iter__(self):
+        if not self.aktiv:
+            yield from self.recs
+            return
+        sl = _siglip_modul()
+        k = self.kopf.n_siglip
+        for r in self.recs:
+            X = np.array(r[3], dtype=np.float32, copy=True)
+            X[:, -k:] = sl.spalten(sl.lade_spur(r[0], SIGLIP_SPUR_DIR), len(X),
+                                   self.kopf.siglip_mu, self.kopf.siglip_V)
+            yield (r[0], r[1], r[2], X, *r[4:])
+
+
 def load_deployed_mlp(path):
     """Parse a v1..v6 ('MLP1'..'MLP6') head.bin into a _DeployedMLP, or
     None if it isn't one (legacy logreg head / missing / corrupt). Used for
@@ -5903,7 +5936,8 @@ def main():
                     and (_dep_slugs or []) == _prod_slugs_wirksam
                     and _audio_gleich):
                 print("\n=== deployed-head re-eval (head-to-head, smooth=10s) ===")
-                deployed_test_metrics = eval_split(_dep, test_recs_ch,
+                # Champion mit SEINER SigLIP-Projektion (s. _MitEigenerSiglip).
+                deployed_test_metrics = eval_split(_dep, _MitEigenerSiglip(test_recs_ch, _dep),
                                                    args.fps_extract, smooth_s=10)
             elif (_dep is not None and _dep.input_dim == mlp_prod_in_dim
                     and not _audio_gleich):
@@ -5975,8 +6009,8 @@ def main():
                       "on these) ===")
                 print(f"{'uuid':18}{'split':6}{'champ':>6}{'cand':>6}  show")
                 rows = []
-                for r in ho_aug:
-                    cj, kj = _iou_of(_depH, r), _iou_of(mlp_prod_clf, r)
+                for r, rc in zip(ho_aug, _MitEigenerSiglip(ho_aug, _depH)):
+                    cj, kj = _iou_of(_depH, rc), _iou_of(mlp_prod_clf, r)
                     insplit = "test" if r[0] in test_uuids else "train"
                     rows.append((insplit, cj, kj))
                     print(f"{r[0][:18]:18}{insplit:6}{cj:6.2f}{kj:6.2f}  "

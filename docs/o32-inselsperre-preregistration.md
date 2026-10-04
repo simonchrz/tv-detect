@@ -1,3 +1,22 @@
+> **ABGESCHLOSSEN 2026-10-04 — VERFEHLT (R1 in beiden Armen).**
+>
+> | Arm | kipp je Seed | Σkipp | ≤ K | IoU Median | ΔIoU Median (min) | Verluste > 0.10 |
+> |---|---|---|---|---|---|---|
+> | K | 1 3 2 3 2 | 11 | — | 0.9158 | — | — |
+> | I60 | 1 3 1 4 2 | 11 | 4/5 | 0.9173 | +0.0017 (−0.0001) | 0 |
+> | I90 | 1 4 3 2 1 | 11 | 3/5 | 0.9194 | +0.0038 (+0.0016) | 0 |
+>
+> R2 und R3 halten in beiden Armen, R1 nicht: Die Kippzahl sinkt gar nicht.
+> Konsequenz laut Regel: keine Produktionsänderung, die Option bleibt aus.
+> Log `~/Library/Logs/o32-lauf.log`, Ergebnis `~/.cache/tvd-train-archive/o32-ergebnis.json`.
+>
+> Deutung: Mit beiden Gate-Fixes (994331a, ee713ae) kippen nur noch 1–4 von
+> 147 Aufnahmen je simulierter Nacht; Sendungsinseln sind daran nicht
+> beteiligt. Nebenbefund, NICHT die registrierte Frage: I90 hebt die IoU in
+> allen 5 Seeds (+0.0016 bis +0.0059) ohne einen einzigen Einzelverlust. Wer
+> das nutzen will, braucht eine eigene, vorab registrierte Qualitätsfrage auf
+> Daten, die hier nicht ausgewertet wurden.
+
 # O32 — Verhindert eine Mindestlänge für Sendung zwischen zwei Werbeblöcken das Teilen von Blöcken, ohne Qualität zu kosten? (Vorab-Registrierung)
 
 **Geschrieben 2026-10-04, vor dem ersten Behandlungs-Datenpunkt.** Rein

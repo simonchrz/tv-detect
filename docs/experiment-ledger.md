@@ -6387,3 +6387,15 @@ zu messen.
 Registrierung `docs/o31-stabilitaet-preregistration.md`, Skript
 `scripts/o31-stabilitaet.py`. Vormessung K: kipp Median 0.0085 (sd 0.0024),
 F1 0.9637 (sd 0.0057). **Ergebnis: VERFEHLT** — R1 in beiden Armen (kipp nur −13 % statt ≥ −30 %), R2 haelt. Keine Trainingsaenderung.
+
+## O32 — Inselsperre im HSMM (registriert 2026-10-04)
+
+Registrierung `docs/o32-inselsperre-preregistration.md` (21866b3), Skript
+`scripts/o32-inselsperre.py`. Vormessung K: Σkipp 11 über 5 Seeds (1–3 je
+Nacht, 147 test-Aufnahmen), IoU 0.9158 (sd 0.0012). **Ergebnis: VERFEHLT** —
+R1 in beiden Armen (Σkipp 11 = K), R2/R3 halten. Keine Dekoder-Änderung.
+Nebenbefund: I90 +0.0038 IoU (alle 5 Seeds positiv, 0 Einzelverluste) —
+eigene Frage, nicht registriert. Hauptertrag der Untersuchung sind die zwei
+Gate-Fixes davor: Champion mit eigener SigLIP-Projektion (994331a) und
+HSMM statt Schwelle für Aufnahmen ohne Decode-Spur (ee713ae); die Gate-
+Kippzahl lag vorher bei 4–18 je Nacht.

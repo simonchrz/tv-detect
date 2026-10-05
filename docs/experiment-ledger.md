@@ -6399,3 +6399,12 @@ eigene Frage, nicht registriert. Hauptertrag der Untersuchung sind die zwei
 Gate-Fixes davor: Champion mit eigener SigLIP-Projektion (994331a) und
 HSMM statt Schwelle für Aufnahmen ohne Decode-Spur (ee713ae); die Gate-
 Kippzahl lag vorher bei 4–18 je Nacht.
+
+## O33 — Inselsperre 90 s auf dem versiegelten Satz (registriert 2026-10-05)
+
+Registrierung `docs/o33-inselsperre-versiegelt-preregistration.md` (d4376e4).
+**Versiegelter Satz für diese Frage geöffnet (Simon, 05.10.)** — er ist damit
+für eine Entscheidung verbraucht. 63 Aufnahmen, 0 nachweislich menschlich,
+primär 39 nicht-maschinelle. **Ergebnis: ERFÜLLT** — Median +0.0024 (4/5
+Seeds), 0 Verluste; getragen von einer einzigen Aufnahme (dvr-rtl-1788097500,
+56-s-Insel im Werbeblock, 0.899 → 0.993). Produktionswechsel nur mit Simons OK.

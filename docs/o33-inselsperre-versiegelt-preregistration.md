@@ -1,3 +1,17 @@
+> **ABGESCHLOSSEN 2026-10-05 — ERFÜLLT (R1 und R2), aber getragen von EINER Aufnahme.**
+>
+> | | Seed 0 | 1 | 2 | 3 | 4 | Median |
+> |---|---|---|---|---|---|---|
+> | Δ IoU primär (39) | +0.0000 | +0.0024 | +0.0024 | +0.0024 | +0.0024 | **+0.0024** |
+> | Δ IoU alle (63) | +0.0000 | +0.0015 | +0.0015 | +0.0015 | +0.0015 | +0.0015 |
+>
+> Verluste > 0.10: 0. Auf allen anderen 62 Aufnahmen ändert I90 in keinem Seed
+> irgendetwas. Der ganze Effekt ist dvr-rtl-1788097500 (Die Beet-Brüder):
+> K teilt den ersten Werbeblock durch eine 56-s-Sendungsinsel (23:51–24:47),
+> IoU 0.899 → 0.993 — genau das Muster aus O32 (Hot oder Schrott). Ehrliche
+> Lesart: die Sperre schadet nirgends und behebt diesen Fehlertyp, wo er
+> auftritt; er ist selten (1 von 63). Log `~/Library/Logs/o33-lauf.log`.
+
 # O33 — Hebt die Inselsperre (90 s) die Blockgüte auf dem versiegelten Satz? (Vorab-Registrierung)
 
 **Geschrieben 2026-10-05, vor dem ersten Datenpunkt auf dem versiegelten Satz.**

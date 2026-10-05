@@ -111,6 +111,18 @@ def main():
     print(f"train {len(u_tr)} Aufnahmen, {A.shape[1]} Spalten; test {len(test)} "
           f"Aufnahmen ({n_spur} mit Decode-Spur)", flush=True)
 
+    def bewerten(p_te, w):
+        th.EVAL_DECODER = ["--decoder", "hsmm", "--hsmm-dur-w", "15"] + (
+            ["--hsmm-inner-show-min", str(w)] if w else [])
+        out = {}
+        for u, zeilen, cp, gt in test:
+            p = p_te[zeilen]
+            b = (th._replay_blocks(cp, p, 1.0, u) if cp is not None
+                 else th._replay_ohne_spur(p, 1.0, u))
+            if b is not None:
+                out[u] = th.block_iou(b, gt)
+        return out
+
     ma = _lade("massstab_o33", HIER / "massstab-audit.py")
     meta = ma.archiv_meta()
     herk = {t[0]: ma.herkunft(t[0], meta)[0] for t in test}

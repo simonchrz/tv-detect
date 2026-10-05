@@ -27,6 +27,9 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemon"))
+from ss_versatz import versatz  # noqa: E402  (-ss ab Video-, nicht Container-Beginn)
+
 # Post-tvh/post-hls-gateway endpoints (updated 2026-07-14; the old
 # :8080 Flask gateway and :9981 tvh are both retired): channel list +
 # DVR grid come from tv-receiver (:9983), per-recording ads from
@@ -89,7 +92,7 @@ def extract_frames(src, timestamps, crop, out_paths):
         # -ss before -i = fast keyframe seek (slightly imprecise but fine
         # since we want diverse samples not exact-frame).
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-               "-ss", f"{t:.2f}", "-i", str(src),
+               "-ss", f"{t + versatz(src):.2f}", "-i", str(src),
                "-frames:v", "1",
                "-vf", f"crop={w}:{h}:{x}:{y}",
                str(out)]

@@ -20,6 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemon"))
+from ss_versatz import versatz  # noqa: E402  (-ss ab Video-, nicht Container-Beginn)
+
 QUELLEN = Path.home() / ".cache/tv-detect-daemon/source"
 OCR = Path.home() / ".local/bin/tv-ocr"
 
@@ -147,7 +150,7 @@ def hauptteil(argv=None):
     for i in range(n):
         sek = start + i * args.schritt
         subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-ss", "%.3f" % sek, "-i", str(quelle),
+            ["ffmpeg", "-loglevel", "error", "-ss", "%.3f" % (sek + versatz(quelle)), "-i", str(quelle),
              "-vf", f"scale={args.breite}:-2", "-frames:v", "1",
              "-y", str(roh / ("f%02d.png" % i))],
             capture_output=True)

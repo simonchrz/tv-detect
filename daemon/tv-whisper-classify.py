@@ -46,6 +46,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parent))
+from ss_versatz import versatz  # noqa: E402
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -153,7 +157,7 @@ def probe_duration_s(src: Path) -> float:
 def extract_wav(src: Path, start_s: int, dur_s: int, dest: Path) -> bool:
     """16 kHz mono PCM — whisper.cpp expects this. Returns True on success."""
     r = subprocess.run(
-        [FFMPEG, "-ss", str(start_s), "-t", str(dur_s),
+        [FFMPEG, "-ss", f"{start_s + versatz(src, FFPROBE):.3f}", "-t", str(dur_s),
          "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
          "-c:a", "pcm_s16le", "-y", str(dest)],
         capture_output=True, timeout=60)

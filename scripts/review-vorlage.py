@@ -42,6 +42,8 @@ TMP = Path("/tmp/review-vorlage")
 VF = "scale=iw*sar:ih,scale=640:-2"
 sys.path.insert(0, str(HIER))
 import label_herkunft as lh  # noqa: E402
+sys.path.insert(0, str(HIER.parent / "daemon"))
+from ss_versatz import versatz  # noqa: E402
 
 
 def maske(bl, n):
@@ -93,7 +95,7 @@ def bild(u, t, ca):
         return p
     q = SRC / f"{u}.ts"
     if q.is_file():
-        subprocess.run(["ffmpeg", "-v", "quiet", "-y", "-ss", f"{t:.1f}", "-i", str(q),
+        subprocess.run(["ffmpeg", "-v", "quiet", "-y", "-ss", f"{t + versatz(q):.1f}", "-i", str(q),
                         "-frames:v", "1", "-vf", VF, str(p)])
     else:
         for a, b, s in vod_playlist(u):

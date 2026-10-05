@@ -28,6 +28,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemon"))
+from ss_versatz import versatz  # noqa: E402  (-ss ab Video-, nicht Container-Beginn)
+
 import numpy as np
 
 MODELL = "google/siglip2-base-patch16-naflex"
@@ -53,7 +56,7 @@ def dauer_von(quelle):
 
 
 def _hoehe(quelle, von):
-    b = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{von:.3f}", "-i", str(quelle),
+    b = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{von + versatz(quelle):.3f}", "-i", str(quelle),
                         "-map", "0:v:0", "-vf", VF, "-frames:v", "1", "-f", "rawvideo",
                         "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
     return len(b) // (BREITE * 3)
@@ -61,7 +64,7 @@ def _hoehe(quelle, von):
 
 def bilder_kachel(quelle, von, bis, hoehe):
     """Bilder bei von, von+1, … (< bis). Genau ceil(bis-von) Stueck oder weniger."""
-    fenster = [] if bis == float("inf") else ["-ss", f"{von:.3f}", "-t", f"{bis - von:.3f}"]
+    fenster = [] if bis == float("inf") else ["-ss", f"{von + versatz(quelle):.3f}", "-t", f"{bis - von:.3f}"]
     p = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
                           *fenster, "-i", str(quelle),
                           "-map", "0:v:0", "-vf", VF, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],

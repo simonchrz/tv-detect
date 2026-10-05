@@ -28,6 +28,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ss_versatz import versatz  # noqa: E402
+
 GATEWAY = os.environ.get("GATEWAY", "https://raspberrypi5lan:8443")
 SOURCE_CACHE = Path.home() / ".cache" / "tv-detect-daemon" / "source"
 CTX = ssl.create_default_context()
@@ -129,7 +132,7 @@ def silence_intervals(ts_path, block_start_s, block_end_s):
     dur = max(0.5, block_end_s - block_start_s)
     try:
         r = subprocess.run(
-            ["ffmpeg", "-ss", f"{block_start_s:.3f}",
+            ["ffmpeg", "-ss", f"{block_start_s + versatz(ts_path):.3f}",
              "-i", str(ts_path),
              "-t", f"{dur:.2f}",
              "-vn",
@@ -194,7 +197,7 @@ def extract_chromaprint(ts_path, abs_start_s, dur_s):
         # Stage 1: ffmpeg → mono 22050 Hz raw PCM s16le on stdout
         ff = subprocess.Popen(
             ["ffmpeg", "-loglevel", "error",
-             "-ss", f"{inner_start:.3f}",
+             "-ss", f"{inner_start + versatz(ts_path):.3f}",
              "-i", str(ts_path),
              "-t", f"{inner_dur:.2f}",
              "-vn", "-ac", "1", "-ar", "22050",
@@ -265,7 +268,7 @@ def extract_dhashes(ts_path, abs_start_s, dur_s,
     try:
         r = subprocess.run(
             ["ffmpeg", "-loglevel", "error",
-             "-ss", f"{inner_start:.3f}",
+             "-ss", f"{inner_start + versatz(ts_path):.3f}",
              "-i", str(ts_path),
              "-t", f"{inner_dur:.2f}",
              "-vf", f"fps={fps:.4f},scale=9:8,format=gray",

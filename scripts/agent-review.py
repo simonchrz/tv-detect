@@ -70,6 +70,9 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "daemon"))
+from ss_versatz import versatz  # noqa: E402  (-ss ab Video-, nicht Container-Beginn)
+
 ARBEIT = Path.home() / ".cache/tvd-agent-review"
 SNAPSHOT = Path("/tmp/tv-train-snapshot")
 QUELLE = Path.home() / ".cache/tv-detect-daemon/source"
@@ -313,7 +316,7 @@ def frames_ziehen(uuid, zeiten, ziel):
     for i, t in enumerate(zeiten):
         p = ziel / f"t{int(t):06d}.jpg"
         r = subprocess.run(
-            ["ffmpeg", "-nostdin", "-loglevel", "error", "-ss", f"{max(0,t):.2f}",
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-ss", f"{max(0, t) + versatz(src):.2f}",
              "-i", str(src), "-frames:v", "1", "-vf", "scale=960:-1",
              "-q:v", "4", "-y", str(p)],
             capture_output=True, timeout=120)

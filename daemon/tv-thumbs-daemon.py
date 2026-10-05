@@ -2996,7 +2996,11 @@ def process_detect(uuid, nur_dump=False, dump_ziel=None):
            # (default 60 over-weighted the duration prior 4x). tv-detect
            # falls back to Form by itself if a job has no NN confidences,
            # and reports Form as the second opinion in decoder-agreement.
-           "--decoder", "hsmm", "--hsmm-dur-w", "15",]
+           "--decoder", "hsmm", "--hsmm-dur-w", "15",
+           # Inselsperre seit 2026-10-05 (O33 ERFUELLT auf dem versiegelten
+           # Satz, O32 Nebenbefund): Sendung zwischen zwei Werbebloecken erst
+           # ab 90 s. Muss GLEICH sein wie EVAL_DECODER in train-head.py.
+           "--hsmm-inner-show-min", "90",]
     nn_gate = cfg.get("nn_gate", -1)
     if nn_gate is not None and nn_gate >= 0:
         cmd += ["--nn-gate", str(nn_gate)]

@@ -12,7 +12,9 @@ _H = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("tb", _H / "tagesbericht.py")
 tb = importlib.util.module_from_spec(spec); spec.loader.exec_module(tb)
 
-DEC = "--decoder hsmm --hsmm-dur-w 15"
+# Der Dekoder, den das Gate gerade misst — nicht hart verdrahtet, sonst bricht
+# der Test bei jedem Dekoder-Wechsel (zuletzt Inselsperre 2026-10-05).
+DEC = tb._golden_bestwert()[1]
 
 
 def z(ts, med, **k):

@@ -154,7 +154,8 @@ def _bl(x):
 
 def replay(dump_pfad):
     r = subprocess.run([str(BIN), "--replay-signals", str(dump_pfad),
-                        "--decoder", "hsmm", "--hsmm-dur-w", "15"],
+                        "--decoder", "hsmm", "--hsmm-dur-w", "15",
+                        "--hsmm-inner-show-min", "90"],  # wie Produktion seit 05.10. (O33)
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None

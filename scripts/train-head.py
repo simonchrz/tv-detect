@@ -1691,7 +1691,10 @@ def _fetch_detect_config(uuid):
 # incomparable to every number after — they measure different block formers.
 # `decoder` is therefore persisted into golden-trend.jsonl; compare only
 # within one decoder.
-EVAL_DECODER = ["--decoder", "hsmm", "--hsmm-dur-w", "15"]
+# Inselsperre (--hsmm-inner-show-min 90) seit 2026-10-05, O33. Gleich wie
+# process_detect in tv-thumbs-daemon.py; golden-trend.jsonl traegt den
+# Dekoder im Feld "decoder", Zahlen davor und danach nicht vergleichen.
+EVAL_DECODER = ["--decoder", "hsmm", "--hsmm-dur-w", "15", "--hsmm-inner-show-min", "90"]
 
 
 def _replay_blocks(cache_path, proba, fps_extract, uuid, default_min_block_s=60):

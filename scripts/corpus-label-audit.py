@@ -264,6 +264,13 @@ def build_X(feat, slug, uuid, start_ts, chan_idx, n_chan, prior, neutral,
     # und das Audit haette 0 Vergleiche gemeldet — ohne Fehler. Ein
     # reiner Magic-Fix haette also nur die Fehlermeldung beseitigt,
     # nicht die Stummheit.
+    #
+    # Alte Extraktionen ohne Logo-Spalte (1281 statt 1282, 9 Archiv-
+    # Aufnahmen): das Training setzt den Sentinel 0.5 an Index 1280 EIN
+    # (train-head.py, "Merkmalsbreite"). Ohne das hier fielen genau diese
+    # Aufnahmen als "unpassende Breite" aus dem Audit, obwohl der Kopf sie sieht.
+    if feat.shape[1] == 1281:
+        feat = np.insert(np.asarray(feat), 1280, 0.5, axis=1)
     return TH.mit_zusatz(feat, uuid, slug, chan_idx, n_chan,
                          kanal=n_chan > 0,
                          whisper=with_whisper, temporal=n_temporal >= 2,

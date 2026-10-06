@@ -504,6 +504,19 @@ if [ -f "$TRAIN_OUT/head.history.json" ]; then
         "$GATEWAY/api/internal/training-attempt" >/dev/null 2>&1 || true
 fi
 
+# Wischqueue-Quellen — JEDE Nacht, auch bei Ablehnung. head.uncertain.txt
+# stammt aus dem laufenden Kopf, kam aber nur mit dem head-bundle auf den Pi
+# und stand so vom 03.10. bis 06.10. still. wisch-quellen.txt: Pruefkarten
+# (Anker-Widersprueche, maschinelle Labels im Massstab), scripts/wisch-quellen.py.
+"$VENV_PY" "$HOME/src/tv-detect/scripts/wisch-quellen.py" \
+    --labels "$SNAPSHOT_DIR" --aus "$TRAIN_OUT/wisch-quellen.txt" 2>&1 | sed 's/^/wischqueue: /'
+for f in head.uncertain.txt wisch-quellen.txt; do
+  if [ -s "$TRAIN_OUT/$f" ]; then
+    $CURL -X POST --data-binary "@$TRAIN_OUT/$f" "$GATEWAY/api/internal/model-datei/$f" >/dev/null 2>&1 \
+      && echo "wischqueue: $f hochgeladen" || echo "wischqueue: $f Upload FEHLGESCHLAGEN"
+  fi
+done
+
 # Cache hygiene: every source invalidation (re-filter, recovery, chase-play)
 # bumps the source mtime and leaves the previous feature stand
 # <uuid>-<old_mtime>-….npy behind — nobody reads it, it just sits there

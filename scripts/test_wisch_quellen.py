@@ -13,7 +13,15 @@ _spec.loader.exec_module(wq)
 class WischQuellen(unittest.TestCase):
     def test_massstab_mitte_und_kanten(self):
         k = [t for _, t in wq.massstab_karten("u", [(600.0, 900.0)])]
-        self.assertEqual(sorted(k), [580, 620, 750, 880, 920])
+        # Kanten + Mitte, dazu zwei Stichproben in der Sendung davor (60..540)
+        self.assertEqual(sorted(k), [180, 420, 580, 620, 750, 880, 920])
+
+    def test_massstab_sendungsstichproben(self):
+        k = sorted(t for _, t in wq.massstab_karten("u", [(600.0, 900.0)], laenge=3000.0))
+        # nach dem Block: 960..2940 (1980 s) → 7 Stichproben alle ~283 s
+        nach = [t for t in k if t > 920]
+        self.assertEqual(len(nach), 7)
+        self.assertTrue(all(960 <= t <= 2940 for t in nach))
 
     def test_massstab_kurzer_block_und_nachbar(self):
         # kurzer Block: nur Mitte + aussen; aussen-Punkt im Nachbarblock entfaellt

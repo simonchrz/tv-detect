@@ -20,7 +20,10 @@ ZWEI QUELLEN (Spalte source)
             Laengste zuerst.
   massstab  Maschinelle Labels (auto-confirm, Agent) im golden-Satz und im
             test-Eimer, deren Aufnahme noch lebt: je Block die Mitte und, wenn
-            der Block lang genug ist, 20 s innen/aussen an jeder Kante.
+            der Block lang genug ist, 20 s innen/aussen an jeder Kante, dazu
+            alle 5 min eine Stichprobe in der Sendung. Sind alle beantwortet
+            und keine widerspricht, hebt der tv-recorder das Label (Heben per
+            Wisch, wisch_anheben.go). Vorrang vor den Anker-Karten.
 
 ⚠️ Ein Wisch macht ein maschinelles Label NICHT menschlich (Punkt-Marke, keine
 Review der Aufnahme; agent_review_schutzkette). Er korrigiert die Sekunde, und
@@ -44,6 +47,7 @@ SNAPSHOT = Path("/tmp/tv-train-snapshot")
 BILD = Path.home() / ".cache/tvd-wiederholung/korpus"
 _HIER = Path(__file__).resolve().parent
 KANTE_S = 20
+SENDUNG_S = 300
 
 
 def _lade(name, datei):
@@ -96,7 +100,21 @@ def anker_karten(uuid, bl, min_s):
     return aus
 
 
-def massstab_karten(uuid, bl):
+def dauer(rec_dir):
+    """Laenge aus index.m3u8 (Summe EXTINF), 0 wenn unbekannt."""
+    try:
+        return sum(float(z.split(":", 1)[1].split(",")[0])
+                   for z in (rec_dir / "index.m3u8").read_text().splitlines()
+                   if z.startswith("#EXTINF:"))
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def massstab_karten(uuid, bl, laenge=0.0):
+    """Blockmitte, ±KANTE_S an jeder Kante und Stichproben in der Sendung
+    (alle SENDUNG_S): ohne diese wuerde ein Block, der im Label ganz fehlt,
+    nie gefragt — und "Heben per Wisch" (tv-recorder wisch_anheben.go) haette
+    nur die vorhandenen Bloecke geprueft."""
     aus = []
 
     def in_block(t):
@@ -109,6 +127,15 @@ def massstab_karten(uuid, bl):
         for t in (s - KANTE_S, e + KANTE_S):
             if t > 0 and not in_block(t):
                 aus.append((uuid, round(t)))
+    # Sendungsabschnitte: Luecken zwischen den Bloecken (und bis zum Ende,
+    # wenn die Laenge bekannt ist), mit 60 s Abstand zu jeder Kante.
+    grenzen = [0.0] + [x for b in bl for x in b] + ([laenge] if laenge > 0 else [])
+    for a, b in zip(grenzen[::2], grenzen[1::2]):
+        lo, hi = a + 60, b - 60
+        if hi - lo < 0:
+            continue
+        n = max(1, round((hi - lo) / SENDUNG_S))
+        aus += [(uuid, round(lo + (hi - lo) * (i + 0.5) / n)) for i in range(n)]
     return aus
 
 
@@ -139,18 +166,21 @@ def main():
         anker += anker_karten(uuid, bl, a.min_s)
         if uuid in massstab and lh.mensch_aus_markern(roh) is not True and bl:
             n_masch += 1
-            mass += massstab_karten(uuid, bl)
+            mass += massstab_karten(uuid, bl, dauer(d))
 
     anker.sort(key=lambda z: -z[0])
-    # abwechselnd, damit beide Quellen in jeder Runde vorkommen
-    zeilen = []
-    for i in range(max(len(anker), len(mass))):
-        if i < len(anker):
-            _, u, t, q = anker[i]
-            zeilen.append(f"{u}\t{t}.0\t0\t\t{q}")
-        if i < len(mass):
-            u, t = mass[i]
-            zeilen.append(f"{u}\t{t}.0\t0\t\tmassstab")
+    # Massstab zuerst, aelteste Aufnahme zuerst: diese Labels verschwinden mit
+    # der Aufnahme (14-Tage-Fenster), und nur vollstaendig beantwortete
+    # koennen gehoben werden. Der tv-recorder nimmt je Runde hoechstens eine
+    # Karte je Aufnahme, die Reihenfolge innerhalb einer Aufnahme bleibt.
+    def alter(u):
+        try:
+            return int(u.rsplit("-", 1)[1])
+        except (IndexError, ValueError):
+            return 0
+    mass.sort(key=lambda z: alter(z[0]))
+    zeilen = [f"{u}\t{t}.0\t0\t\tmassstab" for u, t in mass]
+    zeilen += [f"{u}\t{t}.0\t0\t\t{q}" for _, u, t, q in anker]
 
     Path(a.aus).write_text("# uuid\ttime_s\tprobability\ttitle\tsource\n" + "\n".join(zeilen) + "\n")
     n_anker_rec = len({z[1] for z in anker})

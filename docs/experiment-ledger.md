@@ -6450,3 +6450,21 @@ Werkzeug: Scratch-Skript auf `corpus-label-audit.py`-Rekonstruktion +
 `_replay_ohne_spur`; `fehlermoden.py` sieht tote Aufnahmen nicht (kein
 Snapshot). ⚠️ `loop-status.py` mit System-`python3` lässt Decke/Echo im
 Schwanz still weg (kein numpy) — venv-Python nehmen.
+
+### Nachtrag 2026-10-11 — Massstab-Mitglieder von der Retention ausgenommen, versiegelter Satz in den Prüfkarten
+
+Simon: „ja" zum Review der nicht-menschlichen Maßstab-Labels. Vorab gezählt:
+die „29 reviewbaren" vom 23.09. waren noch **14** — 16 nicht-menschliche
+Golden-Mitglieder alle tot, test 14 von 112 lebend, versiegelt 20. Die
+Serien-Retention löscht Maßstab-Mitglieder nach 14 Tagen wie alles andere;
+Review war ein Laufband.
+
+Gebaut (tv-receiver 1d9e9d1, tv-detect b2253d8): `scripts/massstab-uuids.py`
+schreibt golden + test/versiegelt (ohne Ausschluss/Quarantäne, 230 UUIDs);
+`tv-train-head.sh` lädt sie nächtlich als `massstab-uuids.txt` hoch,
+`dvr_retention.go` überspringt sie (fail-open ohne Datei). Kosten: diese
+Aufnahmen bleiben liegen, bis sie aus dem Maßstab fallen. `wisch-quellen.py`
+nimmt den versiegelten Satz auf: 258 Karten/12 Aufnahmen → **605/28**.
+Golden selbst bleibt unprüfbar (alle Maschinenlabels dort sind tot) — der
+belegte Kern wächst nur über test/versiegelt, Golden v3 muss aus deren
+menschlich gewordenen Mitgliedern gebaut werden.

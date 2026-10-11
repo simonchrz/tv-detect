@@ -98,6 +98,20 @@ TEST_SET_EXCLUDE = {
     "dvr-rtl-1780683300",          # Let's Dance — 2026-09-07 quarantaeniert
     "a307345d5a95af506072a426d1bf80ea",  # Let's Dance — 2026-09-07 quarantaeniert
     "e08d22bae601f4ef6e79da3691fafffb",  # Let's Dance — 2026-09-07 quarantaeniert
+    # 2026-10-11, Simons OK: Galileo-Maschinenlabels aus dem Fenster
+    # 12.–26. Juli enden 60–207 s VOR dem Show-Start — der Juli-Kopf brach
+    # an der „WERBUNG ENDE"-Karte ab, auto-confirm fror das ein; Menschen
+    # und heutiges Modell enden nach Trailern + Countdown am Studio
+    # (Bilder 09.10.). Alle tot, Labels nie mehr herleitbar. Ledger §3av.
+    # Die drei Massstab-Mitglieder desselben Fensters (1784135122,
+    # 1784567122, 1785003290) bleiben wegen L2 im Golden-Satz.
+    "dvr-prosieben-1783962322",    # Galileo — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1784048722",    # Galileo — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1784221522",    # Galileo — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1784307915",    # Galileo — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1784480627",    # Galileo X-Plorer — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1784653522",    # Galileo — 2026-10-11 quarantaeniert
+    "dvr-prosieben-1785085457",    # Galileo X-Plorer — 2026-10-11 quarantaeniert
     # 2026-07-24 label audit (prosieben-1779878100 was 0.00/0.00 on BOTH
     # heads in the both-heads-cold report): a whole BATCH of archive npz
     # written 06-02 07:41 — i.e. BEFORE the 06-04 source-cache truncation

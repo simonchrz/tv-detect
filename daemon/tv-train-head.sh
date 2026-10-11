@@ -510,7 +510,12 @@ fi
 # (Anker-Widersprueche, maschinelle Labels im Massstab), scripts/wisch-quellen.py.
 "$VENV_PY" "$HOME/src/tv-detect/scripts/wisch-quellen.py" \
     --labels "$SNAPSHOT_DIR" --aus "$TRAIN_OUT/wisch-quellen.txt" 2>&1 | sed 's/^/wischqueue: /'
-for f in head.uncertain.txt wisch-quellen.txt; do
+# massstab-uuids.txt: golden/test/versiegelt-Mitglieder; tv-receivers
+# Serien-Retention verschont sie (dvr_retention.go), damit Massstab-Labels
+# pruefbar bleiben statt nach 14 Tagen zu sterben. scripts/massstab-uuids.py.
+"$VENV_PY" "$HOME/src/tv-detect/scripts/massstab-uuids.py" \
+    --aus "$TRAIN_OUT/massstab-uuids.txt" 2>&1 | sed 's/^/wischqueue: /'
+for f in head.uncertain.txt wisch-quellen.txt massstab-uuids.txt; do
   if [ -s "$TRAIN_OUT/$f" ]; then
     $CURL -X POST --data-binary "@$TRAIN_OUT/$f" "$GATEWAY/api/internal/model-datei/$f" >/dev/null 2>&1 \
       && echo "wischqueue: $f hochgeladen" || echo "wischqueue: $f Upload FEHLGESCHLAGEN"

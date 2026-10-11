@@ -18,8 +18,9 @@ ZWEI QUELLEN (Spalte source)
             Praezision, scripts/wiederholung.py) Werbung sagen und das Label
             Sendung. Karte in der Mitte, lange Abschnitte bis zu drei.
             Laengste zuerst.
-  massstab  Maschinelle Labels (auto-confirm, Agent) im golden-Satz und im
-            test-Eimer, deren Aufnahme noch lebt: je Block die Mitte und, wenn
+  massstab  Maschinelle Labels (auto-confirm, Agent) im golden-Satz, im
+            test-Eimer und (seit 11.10.) im versiegelten Satz, deren Aufnahme
+            noch lebt: je Block die Mitte und, wenn
             der Block lang genug ist, 20 s innen/aussen an jeder Kante, dazu
             alle 5 min eine Stichprobe in der Sendung. Sind alle beantwortet
             und keine widerspricht, hebt der tv-recorder das Label (Heben per
@@ -154,7 +155,12 @@ def main():
     ledger = json.loads((ARCHIV / "split-ledger.json").read_text())
     golden = set(json.loads((ARCHIV / "golden-eval-set.json").read_text()).get("uuids") or [])
     raus = aus_mod.ausgeschlossen(ARCHIV)
-    massstab = {u for u in golden} | {u for u, b in ledger.items() if b == "test" and u not in raus}
+    # versiegelt seit 2026-10-11 dabei: der Satz ist fuer Entscheidungen
+    # verbraucht (O33), seine Maschinenlabels sind aber genauso Massstab wie
+    # die im test-Eimer — und 20 davon lebten noch, ohne je eine Karte zu
+    # bekommen.
+    massstab = {u for u in golden} | {u for u, b in ledger.items()
+                                      if b in ("test", "versiegelt") and u not in raus}
 
     anker, mass = [], []
     n_masch = 0

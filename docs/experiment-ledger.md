@@ -6408,3 +6408,45 @@ für eine Entscheidung verbraucht. 63 Aufnahmen, 0 nachweislich menschlich,
 primär 39 nicht-maschinelle. **Ergebnis: ERFÜLLT** — Median +0.0024 (4/5
 Seeds), 0 Verluste; getragen von einer einzigen Aufnahme (dvr-rtl-1788097500,
 56-s-Insel im Werbeblock, 0.899 → 0.993). Produktionswechsel nur mit Simons OK.
+
+## §3av. Golden-Schwanz: Juli-Echo auf ProSieben, sieben train-Einträge quarantäniert (2026-10-11)
+
+Anlass: die fünf beharrlichen Schwanz-Mitglieder (14/14 Nächte). Befund je
+Aufnahme (Produktionskopf auf Archiv-Merkmalen, HSMM-Replay, reproduziert die
+Nightly-Werte auf ±0.001): **kein verpasster, kein erfundener Block** — der
+ganze Verlust sitzt in Kanten, einem 32-s-Randblock unter `min_block_s` (Mein
+Lokal, Decke 0.67) und einem Split-Artefakt (Galileo 360°). Vier der fünf
+Labels sind maschinell (3× `auto_confirmed_via_anchors` hinter `which=merged`,
+1× `auto`), alle fünf sind tot (kein Pi, kein Mac-Cache, kein VOD).
+
+**Das Galileo-Muster ist ein Juli-Fenster.** Blockende Modell−Label, Maximum
+je Aufnahme, über alle 104 Galileo-Einträge im Archiv:
+
+| Label | Mai | Juni | Juli | Aug | Sep | Okt |
+|---|---|---|---|---|---|---|
+| Mensch | 0 (5) | +1 (7) | +2 (1) | 0 (4) | — | — |
+| auto-confirm | — | −41 (1) | **+83 (11, 6×>60 s)** | 0 (20) | +1 (22) | 0 (4) |
+| auto | — | +4 (12) | **+107 (5, 3×>60 s)** | 0 (2) | +6 (4) | 0 (1) |
+
+Menschen und heutiges Modell stimmen am Blockende in allen Monaten überein.
+Nur Maschinenlabels vom **12.–26. Juli** enden 60–207 s früher. Bilder vom
+09.10. (dvr-prosieben-1791565523, 3700–3940 s) zeigen, was in der Lücke
+liegt: „WERBUNG ENDE"-Karte → ~95 s Programm-Trailer (Joyn, Tenet) →
+Countdown „Jetzt geht's weiter: Galileo" (Split-Screen) → Studio bei ~3875 s;
+Modell endet bei 3855 s. Der Juli-Kopf brach an der WERBUNG-ENDE-Karte ab,
+auto-confirm fror das ein. Die Note dieser Mitglieder misst den Abstand zum
+falschen Juli-Kopf: je besser das Modell, desto schlechter die Zahl.
+
+Betroffen: Maßstab `dvr-prosieben-1784135122`, `-1784567122` (Golden),
+`-1785003290` (Golden, +143 s an einem Block) — **nicht angefasst (L2)**, gehen
+als Beleg in die v3-Entscheidung. train: `-1783962322`, `-1784048722`,
+`-1784221522`, `-1784307915`, `-1784480627`, `-1784653522`, `-1785085457` —
+Simon: „ja", nach `tvd-train-archive-quarantine/` verschoben (Regel 27.07.:
+tot + Maschinenlabel + widerspricht dem Signal). Wirkung aufs Training klein
+(~10 min falsch gelabelte Sekunden). Nebenbefund: `dvr-prosieben-1780506300`
+(03.06., Mensch, train) IoU 0.33 mit +462 s an einem Blockende, tot, offen.
+
+Werkzeug: Scratch-Skript auf `corpus-label-audit.py`-Rekonstruktion +
+`_replay_ohne_spur`; `fehlermoden.py` sieht tote Aufnahmen nicht (kein
+Snapshot). ⚠️ `loop-status.py` mit System-`python3` lässt Decke/Echo im
+Schwanz still weg (kein numpy) — venv-Python nehmen.

@@ -6480,6 +6480,7 @@ menschlich gewordenen Mitgliedern gebaut werden.
 großen Treffern (nick −28 s, rtl −36 s, rtlzwei −41 s, prosieben −14 s), der
 Rest bewegt sich um wenige Sekunden. Kanäle: nick 5, rtlzwei 5, prosieben 3,
 rtl 1, vox 1. Produktionswechsel nur mit Simons OK und Paritäts-Fixture (L5).
+**Entscheidung Simon 2026-10-13: wird NICHT gebaut.** Die Regel bleibt ein Skript; nicht erneut vorschlagen ohne neuen Anlass.
 Fundort: neun Galileo-Folgen (29.09.–12.10.), 15 von 18 Blockenden 14–31 s zu
 früh, weil das NN den Countdown-Einzelspot („Jetzt geht's weiter GALILEO“) als
 Sendung liest; Logo und Trenner-Spur liegen richtig. Gemessen wird auf dem

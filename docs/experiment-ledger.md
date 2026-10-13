@@ -6468,3 +6468,17 @@ nimmt den versiegelten Satz auf: 258 Karten/12 Aufnahmen → **605/28**.
 Golden selbst bleibt unprüfbar (alle Maschinenlabels dort sind tot) — der
 belegte Kern wächst nur über test/versiegelt, Golden v3 muss aus deren
 menschlich gewordenen Mitgliedern gebaut werden.
+
+## O34 — Trenner-Ende mit Logo-Wächter (registriert 2026-10-13)
+
+OFFEN — registriert, noch nicht gemessen. Registrierung
+`docs/o34-trenner-ende-preregistration.md`, Skript `scripts/o34-trenner-ende.py`.
+Fundort: neun Galileo-Folgen (29.09.–12.10.), 15 von 18 Blockenden 14–31 s zu
+früh, weil das NN den Countdown-Einzelspot („Jetzt geht's weiter GALILEO“) als
+Sendung liest; Logo und Trenner-Spur liegen richtig. Gemessen wird auf dem
+Messsatz vom 07.09. (kein Fundort darin), nur die Dekoder-Regel, Kopf eingefroren.
+
+**Konvention dazu (Simon, 2026-10-13):** der Sender-Trenner am Blockrand
+(Galileo-Logo-Animation, „We love to entertain you“) gehört zur **Werbung** —
+Blockanfang auf dem ersten Trenner-Bild, Blockende auf dem ersten Bild der
+Sendung danach.

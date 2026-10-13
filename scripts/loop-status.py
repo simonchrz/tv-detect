@@ -172,6 +172,46 @@ def _laeuft_noch():
         return False
 
 
+ABGESCHLOSSEN = ("ENTSCHIEDEN", "ABGESCHLOSSEN", "ERLEDIGT", "BEENDET",
+                 "ERGEBNIS:", "BEANTWORTET")
+
+
+def offene_fragen():
+    """(Titel, Status) je noch offener Frage im Ledger.
+
+    Gezählt werden `### O..` unter „## 3. Offene Fragen“ und die später
+    angehängten `## O..`-Einträge; O-Überschriften in Warteschlange und
+    Anhängen sind Verlauf. Status = erster Absatz unter der Überschrift.
+    Abgeschlossen ist eine Frage, wenn dieser Absatz eines der Wörter in
+    ABGESCHLOSSEN trägt, gleich ob als *Status: **ENTSCHIEDEN…*** oder als
+    **Ergebnis: …** im Fließtext.
+    ⚠️ Bis 2026-10-13 schnitt ein Regex den Status am ersten `*` ab (O23
+    stand als offen mit Status „*“ da), und die Überschrift lief per DOTALL
+    über Zeilen (O30/O29 erschienen samt Fließtext als offen).
+    """
+    if not LEDGER.exists():
+        return []
+    aus = []
+    in_drei = False
+    for teil in re.split(r"^(?=##+ )", LEDGER.read_text(), flags=re.M):
+        kopf, _, rumpf = teil.partition("\n")
+        ebene = len(kopf) - len(kopf.lstrip("#"))
+        titel = kopf.lstrip("#").strip()
+        if ebene == 2:
+            in_drei = titel.startswith("3. ")
+        if not re.match(r"O\d+ — ", titel):
+            continue
+        if not (ebene == 2 or (ebene == 3 and in_drei)):
+            continue
+        absatz = rumpf.strip().split("\n\n", 1)[0]
+        status = " ".join(absatz.replace("*", "").split())
+        status = re.sub(r"^Status:\s*", "", status)
+        if any(w in status.upper() for w in ABGESCHLOSSEN):
+            continue
+        aus.append((titel, status[:300]))
+    return aus
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--naechte", type=int, default=7)
@@ -382,8 +422,10 @@ def main():
                   f"{g.get('unbekannt', 0)} unbek.")
         elif alle_zeilen:
             eintraege = alle_zeilen[-5:]
-            print("\nMassstab (Golden-Median, belegt gegen alle; O23 entscheidbar "
-                  "— Urteil: massstab-audit.py --auswerten):")
+            o23_offen = any(t.startswith("O23") for t, _ in offene_fragen())
+            print("\nMassstab (Golden-Median, belegt gegen alle; "
+                  + ("O23 entscheidbar — Urteil: massstab-audit.py --auswerten):"
+                     if o23_offen else "O23 entschieden, Abstand nur berichtet):"))
             print(f"  {'Lauf':<17} {'alle':>7} {'belegt':>8} {'Abstand':>9}  Eimer golden")
             for e in eintraege:
                 g = (e.get("eimer") or {}).get("golden") or {}
@@ -411,16 +453,14 @@ def main():
             print(f"\nVersiegelter Satz: Ledger nicht lesbar ({e})")
 
     # ── Offene Fragen aus dem Ledger ─────────────────────────────────
-    if LEDGER.exists():
-        # Der Status darf umbrechen — ohne DOTALL fiel genau die Frage
-        # durchs Raster, die gerade läuft.
-        offen = re.findall(r"^### (O\d+ — .+?)$\s*\*Status: (.+?)\*",
-                           LEDGER.read_text(), flags=re.M | re.S)
-        if offen:
-            print("\nOffene Fragen (docs/experiment-ledger.md):")
-            for titel, status in offen:
-                status = " ".join(status.split())
-                print(f"  {titel}\n      Status: {status}")
+    offen = offene_fragen()
+    if offen:
+        print("\nOffene Fragen (docs/experiment-ledger.md):")
+        for titel, status in offen:
+            print(f"  {titel}\n      Status: {status}")
+    else:
+        print("\nOffene Fragen: keine — alle O-Fragen in §3 tragen ein "
+              "Ergebnis. Nächste Frage erst registrieren, dann messen.")
     print("\nVor jedem Vorschlag: Friedhof in docs/experiment-ledger.md §4.")
 
 

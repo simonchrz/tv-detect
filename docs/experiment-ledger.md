@@ -6471,8 +6471,15 @@ menschlich gewordenen Mitgliedern gebaut werden.
 
 ## O34 — Trenner-Ende mit Logo-Wächter (registriert 2026-10-13)
 
-OFFEN — registriert, noch nicht gemessen. Registrierung
-`docs/o34-trenner-ende-preregistration.md`, Skript `scripts/o34-trenner-ende.py`.
+**Ergebnis: ERFÜLLT (2026-10-13), knapp.** Registrierung
+`docs/o34-trenner-ende-preregistration.md` (5e2d48a), Skript `scripts/o34-trenner-ende.py`.
+94 Aufnahmen gemessen (4 ohne Trenner-/Logo-Spur). Die Regel fasst 15 Enden in
+15 Aufnahmen an — genau die Mindestzahl. R1: Median Δ +5.3 s (Schwelle +5),
+13 von 15 besser; R2: 0 um mehr als 5 s schlechter (die zwei Verluste sind
++3.7 und +4.8 s); R3: block_iou 0.9431 → 0.9465 (+0.0035). Getragen von vier
+großen Treffern (nick −28 s, rtl −36 s, rtlzwei −41 s, prosieben −14 s), der
+Rest bewegt sich um wenige Sekunden. Kanäle: nick 5, rtlzwei 5, prosieben 3,
+rtl 1, vox 1. Produktionswechsel nur mit Simons OK und Paritäts-Fixture (L5).
 Fundort: neun Galileo-Folgen (29.09.–12.10.), 15 von 18 Blockenden 14–31 s zu
 früh, weil das NN den Countdown-Einzelspot („Jetzt geht's weiter GALILEO“) als
 Sendung liest; Logo und Trenner-Spur liegen richtig. Gemessen wird auf dem

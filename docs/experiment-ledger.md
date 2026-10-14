@@ -6495,6 +6495,25 @@ ein stiller Sprung gewesen. Jetzt fällt er bei fehlender Datei auf
 Lauf 15.10.; Golden-Werte davor und danach nicht vergleichbar, der Boden baut
 sich für den neuen Hash neu auf.
 
+## §3aw. Gate kann seit 04.10. nicht ausliefern (2026-10-14)
+
+Zehn Nächte REJECTED, immer „kein echter Gewinn“. Zwei Ursachen:
+
+1. **Auffrischung griff nie.** `--auffrischen-nach-tagen 7` liest das
+   Champion-Alter aus der mtime von `head.bin`; `tv-train-head.sh` holte den
+   Kopf per curl ohne `-R` → mtime jede Nacht „jetzt“ (Pi: Last-Modified
+   03.10.). Fix 3f26089. Ab 15.10. liefert die Auffrischung den Kopf aus.
+2. **Gewinnpflicht trifft auf fast identische Köpfe.** Seit den Gate-Fixes vom
+   04.10. unterscheiden sich Kandidat und Champion nur auf 4–7 von ~150
+   Aufnahmen (vorher 15–30). Netto ≥3 ist so kaum erreichbar, und die
+   Verlierer sind jede Nacht dieselben: tote Beet-Brüder (RTL, merged), dazu
+   South Park 1784109600 und Simpsons 5adbda1a mit konstantem Δ. Mit Simons OK
+   alle sieben toten Beet-Brüder-Testaufnahmen auf TEST_SET_EXCLUDE (nicht nur
+   die vier Verlierer — sonst nach Ergebnis gewählt); die lebende 1790505900
+   bleibt. Test 152 → 145.
+
+Weg zu echten Gewinnen: belegte Testlabels (Wischkarten) statt Modellideen.
+
 ## O34 — Trenner-Ende mit Logo-Wächter (registriert 2026-10-13)
 
 **Ergebnis: ERFÜLLT (2026-10-13), knapp.** Registrierung

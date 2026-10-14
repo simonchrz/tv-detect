@@ -183,6 +183,23 @@ TEST_SET_EXCLUDE = {
     "dvr-vox-1781036100",          # Hot oder Schrott — 463s hole, dead
     "dvr-kabel-eins-1780325700",   # Abenteuer Leben täglich — 391s hole, dead
     "dvr-nick-1778954400",         # SpongeBob — 257s phantom, live ads empty
+    # 2026-10-14, Simons OK: ALLE toten Beet-Brueder-Testaufnahmen (RTL,
+    # merged, Quelle weg). Seit 04.10. unterscheiden sich Kandidat und
+    # Champion nur noch auf 4-7 Aufnahmen je Nacht, und vier davon sind
+    # jede Nacht diese Sendung (1788694800 und 1788086700 in 10 von 10
+    # Naechten). Die Labels sind nicht mehr pruefbar, die Sendung hatte
+    # schon im August die verdaechtigsten Labels des Korpus (s. die zwei
+    # Fossile oben). Bewusst ALLE sieben, nicht nur die vier, an denen der
+    # Kandidat verliert -- sonst waere der Ausschluss nach Ergebnis
+    # gewaehlt. Die lebende 1790505900 bleibt (reviewbar), train bleibt
+    # unberuehrt.
+    "dvr-rtl-1784455200",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1785678300",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1787479200",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1788086700",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1788691200",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1788694800",          # Die Beet-Brueder — tot, 2026-10-14
+    "dvr-rtl-1789297200",          # Die Beet-Brueder — tot, 2026-10-14
 }
 
 

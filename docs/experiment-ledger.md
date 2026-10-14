@@ -6469,6 +6469,32 @@ Golden selbst bleibt unprüfbar (alle Maschinenlabels dort sind tot) — der
 belegte Kern wächst nur über test/versiegelt, Golden v3 muss aus deren
 menschlich gewordenen Mitgliedern gebaut werden.
 
+### Nachtrag 2026-10-14 — drei Golden-Mitglieder korrigiert, ohne Bild
+
+Simon: „ja korrigieren", ausdrücklich auf Signal-Grundlage, weil die Bildprüfung
+(L2) nicht mehr möglich ist: `dvr-prosieben-1784567122`, `-1784135122`,
+`-1785003290` sind seit 29.07./03.08./08.08. gelöscht, nur die Archiv-Einträge
+und `tvd-eval-signals` sind übrig. Kriterium je Blockende: erste Sekunde, ab
+der das ProSieben-Logo dauerhaft zurück ist (20 s mit ≥85 % > 0.5). Bei den
+im Bild geprüften Oktober-Folgen ist genau das der erste Studio-Moment.
+
+| Aufnahme | Blockenden | Werbung-Sekunden |
+|---|---|---|
+| 1784567122 (merged) | 3725→3890 (+165) | 953→1118 |
+| 1784135122 (merged) | 2691→2745 (+54), 3796→3884 (+88) | 1024→1166 |
+| 1785003290 (auto) | 14 Enden +4…+141 s, Split 2831/2832 verschmolzen | 4906→5456 |
+
+Anfänge und der jeweils letzte Block (läuft bis Aufnahmeende) unberührt. Alte
+Einträge: `tvd-train-archive/<uuid>.npz.vor-juli-enden-20261014`; das Feld
+`meta.label_korrektur` markiert die neuen.
+
+**Messbruch:** `golden_label_hash` las nur `ads_user.json` im Schnappschuss —
+die 16 toten Mitglieder gingen als leere Liste ein, eine Archiv-Korrektur wäre
+ein stiller Sprung gewesen. Jetzt fällt er bei fehlender Datei auf
+`meta["ads"]` im Archiv zurück. Hash `8b23298b1371` → `8208921c937f` ab dem
+Lauf 15.10.; Golden-Werte davor und danach nicht vergleichbar, der Boden baut
+sich für den neuen Hash neu auf.
+
 ## O34 — Trenner-Ende mit Logo-Wächter (registriert 2026-10-13)
 
 **Ergebnis: ERFÜLLT (2026-10-13), knapp.** Registrierung

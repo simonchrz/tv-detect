@@ -2574,7 +2574,7 @@ def zeitachsen_quarantaene(train_archive):
     return {k: float(v) for k, v in (d.get("versetzt") or {}).items()}
 
 
-def golden_label_hash(uuids, hls_root):
+def golden_label_hash(uuids, hls_root, train_archive=None):
     """Fingerabdruck der LABELS der Golden-Mitglieder.
 
     ⚠️ `set_hash` sichert nur die ZUSAMMENSETZUNG des Satzes. Wer die
@@ -2588,6 +2588,11 @@ def golden_label_hash(uuids, hls_root):
     aus einem stillen Sprung einen sichtbaren Schnitt. Fehlende Labels
     gehen als leere Liste ein, damit ein verschwundenes Verzeichnis nicht
     wie eine Label-Aenderung aussieht.
+
+    Tote Mitglieder (kein ads_user.json mehr) liest der Lauf aus dem
+    Archiv — also zaehlen ab 2026-10-14 auch deren `meta["ads"]`. Vorher
+    gingen sie als leere Liste ein, und die Korrektur der drei Juli-
+    Galileo-Mitglieder (14.10., nur im Archiv) waere unsichtbar geblieben.
     """
     import hashlib
     h = hashlib.sha256()
@@ -2598,6 +2603,16 @@ def golden_label_hash(uuids, hls_root):
             d = json.loads(p.read_text())
             bl = [(round(float(a), 1), round(float(b), 1))
                   for a, b in (d.get("ads") or [])]
+        except FileNotFoundError:
+            if train_archive:
+                try:
+                    z = np.load(Path(train_archive) / f"{u}.npz",
+                                allow_pickle=False)
+                    d = json.loads(str(z["meta"]))
+                    bl = [(round(float(a), 1), round(float(b), 1))
+                          for a, b in (d.get("ads") or [])]
+                except Exception:
+                    pass
         except Exception:
             pass
         h.update(f"{u}:{bl}".encode())
@@ -2797,7 +2812,7 @@ def golden_boden(deploy, reason, *, golden_floor, train_archive,
         g_champ = (float(np.median([champ_pr[u] for u in gemeinsam]))
                    if len(gemeinsam) == len(golden) else None)
 
-        _lab = (golden_label_hash(golden, hls_root)
+        _lab = (golden_label_hash(golden, hls_root, train_archive)
                 if hls_root and golden else "*")
         best, best_ts = golden_bestwert(
             Path(train_archive) / "golden-trend.jsonl" if train_archive else None,
@@ -6484,7 +6499,8 @@ def main():
         # Label-Fingerabdruck einmal je Lauf: er gehoert in JEDE Trendzeile,
         # sonst bleibt eine Label-Korrektur am Massstab unsichtbar (s.
         # golden_label_hash).
-        _glabel = (golden_label_hash(_golden_uuids, args.hls_root)
+        _glabel = (golden_label_hash(_golden_uuids, args.hls_root,
+                                     args.train_archive)
                    if _golden_uuids else None)
 
         def _gmed(m):
@@ -8231,7 +8247,8 @@ def main():
             # unter `args.shadow_eval`, dieser Schreiber laeuft unabhaengig
             # davon. Genau diese Art geteilter Variable hat schon einmal zehn
             # Fits ohne Zeilen produziert (UnboundLocalError `_gmeta`).
-            _glabel_prod = golden_label_hash(_golden, args.hls_root)
+            _glabel_prod = golden_label_hash(_golden, args.hls_root,
+                                             args.train_archive)
             with open(Path(args.train_archive) / "golden-trend.jsonl", "a") as _gf:
                 _gf.write(json.dumps({
                     "ts": ts, "n": len(_gvals),

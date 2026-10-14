@@ -212,10 +212,15 @@ LOCAL_BACKBONE="$HOME/.cache/tv-detect-daemon/backbone.onnx"
 #   head.history.json / head.test-set.json — append to the existing trail +
 #     fire the test-composition-changed reason against the real prev set.
 # 404 just means none-yet-on-Pi → start fresh, fine.
+# ⚠️ -R (Zeitstempel vom Pi uebernehmen) ist Pflicht: die Gewinnpflicht liest
+# das Alter des Champions aus der mtime von head.bin (--auffrischen-nach-
+# tagen). Ohne -R stand die mtime jede Nacht auf "jetzt", der Kopf war nie
+# aelter als Minuten, und die Auffrischung griff vom 04.10. bis 14.10. kein
+# einziges Mal, obwohl der Champion vom 03.10. stammte.
 for f in head.bin head.gate.bin head.channel-map.json \
          head.history.json head.test-set.json head.calibration.json \
          head.minute-prior.json; do
-  $CURL -o "$TRAIN_OUT/$f" \
+  $CURL -R -o "$TRAIN_OUT/$f" \
       "$GATEWAY/api/internal/detect-models/$f" || rm -f "$TRAIN_OUT/$f"
 done
 

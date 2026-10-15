@@ -1,5 +1,9 @@
 # O34 — Zieht der Sender-Trenner das Blockende richtig, wenn das Logo statt des NN wacht? (Vorab-Registrierung)
 
+> **ABGESCHLOSSEN 2026-10-13 — ERFÜLLT (R1, R2, R3), knapp; Entscheidung Simon: wird NICHT gebaut.**
+> Zahlen und Begründung: `docs/experiment-ledger.md` § O34. Nachgetragen 2026-10-15
+> (Tagesdurchgang), weil der Kopf das Urteil nicht trug und der Status „offen“ meldete.
+
 **Geschrieben 2026-10-13, vor dem ersten Datenpunkt auf dem Messsatz.**
 Skript: `scripts/o34-trenner-ende.py`.
 

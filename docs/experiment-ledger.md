@@ -182,6 +182,16 @@ OK über die Edit-API gesetzt (train-Aufnahmen). Auffällig: bei den beiden
 Countdown-Einzelspots („Nach diesem Spot geht's weiter“) sagt das NN 0.08 —
 diese Form fehlt dem Kopf, weil die Labels sie nicht führen.*
 
+*Nachlauf 2026-10-15, gleiche Einstellungen: 12 Strecken / 216 s in 12
+Aufnahmen, alle im Bild geprüft, **keine echte Lücke**. 4 Aufnahmerand, 2
+Comedy-Central-Kennung vor South Park, 2 sixx-Abspann („Fortsetzung folgt“),
+Film (Black Adam), Serie (CSI: Vegas), Wetter-Sponsoring vor Galileo Stories,
+und VOX 1779037800 bei 3712: congstar-Spot nach dem Sendungsende (Werbeblock
+läuft bis zum Aufnahmeende 3762, nur nicht als Rand erkannt). Der Posten
+(1401 s im Messsatz, seit Wochen konstant) ist damit ausgeschöpft; der Rest
+liegt in Zweier-Familien und Strecken < 10 s. Nicht weiter als Label-Hebel
+behandeln.*
+
 ### O30 — Ersetzt SigLIP den alten Backbone, und tragen mehr Komponenten?
 
 **ABGESCHLOSSEN 2026-09-30 — ALLE TEILREGELN VERFEHLT.** Ohne Backbone

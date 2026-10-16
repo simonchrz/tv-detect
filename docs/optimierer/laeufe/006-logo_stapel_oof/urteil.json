@@ -32,5 +32,37 @@
   ],
   "sekunden": 181
  },
- "status": "bestaetigung_faellig"
+ "status": "kandidat",
+ "bestaetigung": {
+  "erfuellt": true,
+  "teile": [
+   true,
+   true
+  ],
+  "median_delta": 0.0061,
+  "deltas": [
+   0.0061,
+   0.0064,
+   0.0065,
+   0.0058,
+   0.0059
+  ],
+  "k_mittel": 0.9701,
+  "grosse_verluste": [],
+  "groesste_gewinne": [
+   [
+    "dvr-nick-1781550300",
+    0.065
+   ],
+   [
+    "dvr-toggo-plus-1780640400",
+    0.042
+   ],
+   [
+    "dvr-prosieben-1783401000",
+    0.013
+   ]
+  ],
+  "sekunden": 119
+ }
 }

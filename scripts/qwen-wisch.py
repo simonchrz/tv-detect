@@ -43,6 +43,9 @@ MODELL = "mlx-community/Qwen3.8-27B-4bit"
 API = "http://raspberrypi5lan:9984/api/review/wisch"
 EICH = Path.home() / ".cache/tvd-qwen-wisch/eichsatz"   # Bilder + eich.json
 LOG = Path.home() / ".cache/tvd-qwen-wisch/laeufe.jsonl"
+# Geholte Karten sind 6 h fuer uns reserviert (wischKartenTTL). Bricht ein Lauf
+# ab, holt der naechste sie hier wieder ab, statt sie bis zum Ablauf zu sperren.
+OFFEN = Path.home() / ".cache/tvd-qwen-wisch/offene-karten.json"
 WOERTER = ("WERBUNG", "TRAILER", "SENDUNG")
 
 
@@ -116,7 +119,7 @@ def ziehe_480(karten, tmp):
 
 def streifen_teile(karte, tmp):
     """Pass B: der Wischstreifen der App, in seine 5 Bilder zerlegt."""
-    b = Image.open(io.BytesIO(http(f"http://raspberrypi5lan:9984{karte['streifen']}"))).convert("RGB")
+    b = Image.open(io.BytesIO(http(f"http://raspberrypi5lan:9984{karte['streifen_url']}"))).convert("RGB")
     n = len(OFFS)
     w = b.width // n
     aus = []
@@ -144,6 +147,11 @@ def main():
         sys.exit(f"Eichtor nicht bestanden ({falsch[:3]}) — nichts geschickt.")
 
     karten = []
+    if OFFEN.is_file():
+        alt = json.loads(OFFEN.read_text())
+        if time.time() - alt["ts"] < 5.5 * 3600:
+            karten = alt["karten"]
+            print(f"{len(karten)} Karten aus dem abgebrochenen Lauf wieder aufgenommen")
     while len(karten) < a.max:
         neu = json.loads(http(f"{API}/naechste?n=50&anlass=massstab")).get("karten") or []
         neu = [k for k in neu if k["id"] not in {x["id"] for x in karten}]
@@ -151,6 +159,8 @@ def main():
             break
         karten += neu
     karten = karten[:a.max]
+    OFFEN.parent.mkdir(parents=True, exist_ok=True)
+    OFFEN.write_text(json.dumps({"ts": time.time(), "karten": karten}))
     print(f"{len(karten)} Karten geholt (reserviert 6 h)")
     if not karten:
         return 0
@@ -194,6 +204,8 @@ def main():
                 else:
                     bericht["abbruch"] = f"Kontrolle falsch: {k['uuid']}@{k['t']} {w}, erwartet {r.get('erwartet')}"
                     break
+    if not a.trocken:
+        OFFEN.unlink(missing_ok=True)   # beantwortet oder liegen gelassen: nichts mehr offen
     bericht["sekunden"] = round(time.time() - t0)
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a") as fh:

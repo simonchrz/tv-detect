@@ -312,8 +312,35 @@ def wahrheit(uuids):
     return {u: ub[u] for u in uuids if u in ub}
 
 
-def bewerte(p_eval, ev, truth, tmp):
-    """Block-IoU je Aufnahme ueber den Produktions-Dekoder."""
+def maske(bl, n):
+    m = np.zeros(n, bool)
+    for a, b in bl:
+        m[max(0, int(a)):min(n, int(b))] = True
+    return m
+
+
+def ursachen(pred, wahr, p_sek, rand=15):
+    """Je Fehlersekunde genau eine Ursache, Regel wie fehlerbudget.ursachen:
+    nahe einer wahren Kante (<= 15 s) = Kante; sonst je nach Richtung und
+    danach, ob das NN (hier: kalibrierter Arm) selbst schon falsch lag."""
+    n = len(p_sek)
+    P, T = maske(pred, n), maske(wahr, n)
+    kanten = np.array([x for b in wahr for x in b]) if wahr else np.zeros(0)
+    falsch = np.flatnonzero(P != T)
+    c = {"kante": 0, "nn_erfindet": 0, "dekoder_erfindet": 0, "nn_verpasst": 0, "dekoder_verpasst": 0}
+    for t in falsch:
+        if len(kanten) and np.min(np.abs(kanten - t)) <= rand:
+            c["kante"] += 1
+        elif P[t]:
+            c["nn_erfindet" if p_sek[t] > 0.5 else "dekoder_erfindet"] += 1
+        else:
+            c["dekoder_verpasst" if p_sek[t] > 0.5 else "nn_verpasst"] += 1
+    return c
+
+
+def bewerte(p_eval, ev, truth, tmp, ursachen_aus=None):
+    """Block-IoU je Aufnahme ueber den Produktions-Dekoder; mit ursachen_aus
+    (dict) zusaetzlich die Fehlersekunden je Ursache, summiert."""
     jobs = {}
     with cf.ThreadPoolExecutor(8) as ex:
         for i, u in enumerate(ev["uuids"]):
@@ -325,6 +352,10 @@ def bewerte(p_eval, ev, truth, tmp):
         bl = f.result()
         if bl is not None:
             aus[u] = block_iou(bl, truth[u])
+            if ursachen_aus is not None:
+                i = ev["uuids"].index(u)
+                for k, v in ursachen(bl, truth[u], p_eval[ev["rec"] == i]).items():
+                    ursachen_aus[k] = ursachen_aus.get(k, 0) + v
     return aus
 
 
@@ -458,9 +489,11 @@ def main():
                 pe = modul.nachbearbeiten(pe, ev["rec"], ktx("eval"))
             kal = platt(pk, teile["kalibrierung"]["y"].astype(np.float64))
             pe = kal(pe)
-            iou = bewerte(pe, ev, truth, tmp)
+            urs = {}
+            iou = bewerte(pe, ev, truth, tmp, urs)
             runs.append({"seed": seed, "iou_mittel": float(np.mean(list(iou.values()))),
-                         "iou_median": float(np.median(list(iou.values()))), "je_aufnahme": iou})
+                         "iou_median": float(np.median(list(iou.values()))), "je_aufnahme": iou,
+                         "ursachen": urs})
             print(f"  {name:<12} Seed {seed}  IoU mittel {runs[-1]['iou_mittel']:.4f}  "
                   f"median {runs[-1]['iou_median']:.4f}  ({len(iou)} Aufnahmen)", flush=True)
         ergebnis["laeufe"][name] = runs

@@ -148,3 +148,14 @@ Jeder Arm mit Zufall in der Merkmalsbildung zieht diesen Zufall aus dem
 Wiederholungs-Seed (ktx enthält ihn nicht — dann eine feste Liste von
 Seeds je Aufruf benutzen und das in der Begründung sagen), sonst misst die
 Streuung nur einen Teil.
+
+## Fehlerarten im Urteil (seit 16.10.)
+
+Jedes Ergebnis zählt je Wiederholung die Fehlersekunden nach Ursache (Regel
+wie `fehlerbudget.py`: ≤ 15 s an einer wahren Kante = Kante, sonst NN bzw.
+Dekoder erfindet/verpasst); das Urteil führt `ursachen_sekunden` mit
+Kontrolle und Δ, `opt_stand.py` zeigt sie. Kontrolle K auf Entwicklung
+(Seed 0): Kante 1590, NN erfindet 1329, NN verpasst 1100, Dekoder erfindet
+194, Dekoder verpasst 62 Sekunden — das Abbild erfindet doppelt so viel wie
+die Produktion (636 auf dem ganzen Messsatz). Ein Arm, der eine Zeile senkt
+und eine andere hebt, verschiebt Fehler, statt sie zu beheben.

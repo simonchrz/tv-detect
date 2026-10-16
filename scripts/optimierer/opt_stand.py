@@ -29,6 +29,9 @@ def main():
             s = sorted(js.items(), key=lambda kv: kv[1]["delta"])
             z += ("\n    Sender: schlechter " + ", ".join(f"{k} {w['delta']:+.3f} (n{w['n']})" for k, w in s[:2])
                   + " | besser " + ", ".join(f"{k} {w['delta']:+.3f} (n{w['n']})" for k, w in s[-2:][::-1]))
+        us = e.get("ursachen_sekunden") or {}
+        if us:
+            z += "\n    Fehlersekunden Δ: " + ", ".join(f"{k} {w['delta']:+d} (von {w['kontrolle']})" for k, w in us.items())
         bf = d / "befund.md"
         if bf.is_file():
             kern = [l.strip() for l in bf.read_text().splitlines() if l.strip() and not l.startswith("#")]

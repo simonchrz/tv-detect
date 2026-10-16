@@ -92,6 +92,14 @@ def main():
         beste = sorted(je.items(), key=lambda x: -x[1])[:3]
         # Muster nach Sender, ohne Einzelaufnahmen: der naechste Planer soll
         # sehen, WO ein Arm wirkt, ohne Arme auf Aufnahmen zuzuschneiden.
+        # Welche Fehlerart der Arm verschiebt (Sekunden, Mittel ueber Wiederholungen).
+        urs = {}
+        K_r, A_r = erg["laeufe"]["kontrolle"], erg["laeufe"][v["arm"]]
+        if all("ursachen" in r for r in K_r + A_r):
+            for k in K_r[0]["ursachen"]:
+                kk = float(np.mean([r["ursachen"][k] for r in K_r]))
+                aa = float(np.mean([r["ursachen"][k] for r in A_r]))
+                urs[k] = {"kontrolle": round(kk), "delta": round(aa - kk)}
         sender = {}
         for uu, x in je.items():
             if np.isfinite(x):
@@ -102,6 +110,7 @@ def main():
                         "deltas": [round(float(x), 4) for x in d], "k_mittel": round(k_mittel, 4),
                         "delta_aufnahme_median": round(dmed, 4),
                         "je_sender": je_sender,
+                        "ursachen_sekunden": urs,
                         "grosse_verluste": [(u, round(x, 3)) for x, u in gross],
                         "groesste_gewinne": [(u, round(x, 3)) for u, x in beste],
                         "sekunden": erg.get("sekunden")}

@@ -7,3 +7,4 @@ Eine Zeile je Urteil, neueste unten. Zaehlt mit, wie oft der Entwicklungs- und d
 - **003-backbone_spalten_dropout** (gewinn) entwicklung: NICHT ERFUELLT (Median Delta -0.0005, [0.0008, -0.0005, -0.0018, -0.0018, 0.001], Teile [False, False, True]) → Status `verworfen` [Entwicklung befragt: 3, Bestaetigung: 0]
 - **004-ocr_logo_fenster** (gewinn) entwicklung: NICHT ERFUELLT (Median Delta -0.0023, [-0.0023, -0.0031, -0.0041, 0.001, -0.002], Teile [False, False, True]) → Status `verworfen` [Entwicklung befragt: 4, Bestaetigung: 0]
 - **005-aufnahme_zentriert** (gewinn) entwicklung: NICHT ERFUELLT (Median Delta -0.0016, [0.0017, -0.0056, -0.0016, -0.0082, 0.0037], Teile [False, False, True]) → Status `verworfen` [Entwicklung befragt: 5, Bestaetigung: 0]
+- **006-logo_stapel_oof** (gewinn) entwicklung: ERFUELLT (Median Delta +0.0052, [0.007, 0.0053, 0.0052, 0.0039, 0.0051], Teile [True, True, True]) → Status `bestaetigung_faellig` [Entwicklung befragt: 6, Bestaetigung: 0]

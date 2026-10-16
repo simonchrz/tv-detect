@@ -1,0 +1,88 @@
+{
+ "entwicklung": {
+  "erfuellt": false,
+  "teile": [
+   true,
+   true,
+   true,
+   false
+  ],
+  "median_delta": 0.0036,
+  "deltas": [
+   0.0051,
+   0.0038,
+   0.0036,
+   -0.0013,
+   0.001
+  ],
+  "k_mittel": 0.9301,
+  "delta_aufnahme_median": -0.0021,
+  "je_sender": {
+   "comedy-central": {
+    "n": 4,
+    "delta": 0.031
+   },
+   "disney-channel": {
+    "n": 4,
+    "delta": -0.0017
+   },
+   "kabel-eins": {
+    "n": 9,
+    "delta": -0.0001
+   },
+   "nick": {
+    "n": 7,
+    "delta": 0.0225
+   },
+   "prosieben": {
+    "n": 15,
+    "delta": -0.0027
+   },
+   "rtl": {
+    "n": 6,
+    "delta": 0.0008
+   },
+   "rtlzwei": {
+    "n": 15,
+    "delta": 0.0015
+   },
+   "sat-1": {
+    "n": 2,
+    "delta": 0.0027
+   },
+   "sat-1-gold": {
+    "n": 1,
+    "delta": 0.0007
+   },
+   "sixx": {
+    "n": 5,
+    "delta": 0.0003
+   },
+   "super-rtl": {
+    "n": 1,
+    "delta": -0.0888
+   },
+   "vox": {
+    "n": 7,
+    "delta": 0.0009
+   }
+  },
+  "grosse_verluste": [],
+  "groesste_gewinne": [
+   [
+    "dvr-nick-1782930900",
+    0.172
+   ],
+   [
+    "dvr-comedy-central-1778764500",
+    0.088
+   ],
+   [
+    "dvr-comedy-central-1778837700",
+    0.038
+   ]
+  ],
+  "sekunden": 202
+ },
+ "status": "verworfen"
+}

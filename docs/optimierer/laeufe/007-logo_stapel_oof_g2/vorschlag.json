@@ -1,0 +1,9 @@
+{
+ "nr": 7,
+ "arm": "logo_stapel_oof_g2",
+ "hypothese": "Gegenprobe 2 zu 006: haelt der Stapel-Gewinn mit anderen Stufe-1-Seeds und anderer Falten-Zuteilung?",
+ "begruendung": "006 fittete Stufe 1 einmal mit festen Seeds; die 5 Wiederholungen streuten nur ueber Stufe 2. Simon wollte vor der Uebertragung die Gegenprobe (16.10.).",
+ "regel": "gewinn",
+ "code": "a259bbc54a47",
+ "beschreibung": "Gegenprobe 2 zu 006 (Stufe-1-Seeds 8000, andere Falten) — Stapel: Stufe 1 = K-MLP out-of-fold (4 Falten nach Aufnahme), Stufe 2 = Kopf auf Stufe-1-Logit + logo/audio/ocr/Indikatoren"
+}

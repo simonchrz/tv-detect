@@ -6545,3 +6545,35 @@ Messsatz vom 07.09. (kein Fundort darin), nur die Dekoder-Regel, Kopf eingefrore
 (Galileo-Logo-Animation, „We love to entertain you“) gehört zur **Werbung** —
 Blockanfang auf dem ersten Trenner-Bild, Blockende auf dem ersten Bild der
 Sendung danach.
+
+## §3ax. Galileo-Echo im Archiv: 36 Blockenden korrigiert (2026-10-16)
+
+*Befund, kein Experiment.* Der Kopf vom 15.10. (erste Auslieferung nach den
+Galileo-Korrekturen vom 13.10.) liest den Countdown-Einzelspot vor dem
+Galileo-Trenner weiter als Sendung: nn 0.06–0.26 zwischen Maschinenende und
+Trenner in der Folge vom 15.10., genau wie mit dem alten Kopf am 13./14.10.
+Grund: rund 100 Galileo-Folgen im Archiv, davon nur ~10 korrigiert — der
+Rest lehrt an genau dieser Stelle „Sendung“. Zusätzlich schreibt die
+Auto-Bestätigung jede neue Folge mit den frühen Enden ins `ads_user.json`
+(14. und 15.10. je zwei Kanten).
+
+**Regel** (nur Bericht, kein Dekoder): Labelende, danach 8–45 s Logo < 0.35
+(Feature-Spalte 1280), dann Logo-Rückkehr (5 s ≥ 0.5); wo ein Signal-Dump
+existiert, zusätzlich Trenner-Spitze ≥ 0.95. Neue Kante = Logo-Rückkehr,
+höchstens Trenner-Spitze + 5 s. Gegenprobe gegen 14 im Bild bestimmte Kanten
+(10 vom 13.10., 4 vom 16.10.): 13 auf ±2 s, die vierzehnte war schon richtig
+(+4 s, unter der Schwelle, nicht angefasst).
+
+**Korrigiert mit Simons OK** (L2-Ausnahme wie §3av: 32 Kanten ohne Bild, Quelle
+tot): 32 Kanten in 23 Archiv-Einträgen (21 Logo+Trenner, 11 nur Logo, Juli bis
+Anfang September), dazu `ads_user.json` auf dem Pi für 1791997540 und
+1792083920 (je zwei Kanten, im Bild geprüft) und den Label-Stub 1790355923.
+Im Median 23 s, zusammen 843 s. 8 Kanten in 5 Testsatz-Aufnahmen (Messbruch
+im Testsatz). Sicherungen `*.vor-galileo-enden-20261016`, Archivkopie
+`~/tv-labels-backup` 25367e09. Nicht angefasst: drei Kanten mit schwachem
+Trenner (0.45–0.88, zwei X-Plorer), 1791911133 und 1791479120 (leben, kein
+`ads_user.json`).
+
+**Prüfung:** nn im Countdown-Spot der nächsten Galileo-Folgen nach der
+nächsten Auslieferung (Auffrischung frühestens 22.10.); Golden-Mitglied
+1784567122 (0.796). Offen: der tägliche Nachschub über die Auto-Bestätigung.

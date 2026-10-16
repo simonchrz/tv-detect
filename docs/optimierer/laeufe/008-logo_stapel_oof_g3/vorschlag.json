@@ -5,5 +5,7 @@
  "begruendung": "006 fittete Stufe 1 einmal mit festen Seeds; die 5 Wiederholungen streuten nur ueber Stufe 2. Simon wollte vor der Uebertragung die Gegenprobe (16.10.).",
  "regel": "gewinn",
  "code": "36559b656f96",
- "beschreibung": "Gegenprobe 3 zu 006 (Stufe-1-Seeds 9000, andere Falten) — Stapel: Stufe 1 = K-MLP out-of-fold (4 Falten nach Aufnahme), Stufe 2 = Kopf auf Stufe-1-Logit + logo/audio/ocr/Indikatoren"
+ "beschreibung": "Gegenprobe 3 zu 006 (Stufe-1-Seeds 9000, andere Falten) — Stapel: Stufe 1 = K-MLP out-of-fold (4 Falten nach Aufnahme), Stufe 2 = Kopf auf Stufe-1-Logit + logo/audio/ocr/Indikatoren",
+ "klasse": "merkmale",
+ "klasse_nachgetragen": "2026-10-16"
 }

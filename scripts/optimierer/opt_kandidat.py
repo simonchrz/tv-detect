@@ -23,7 +23,9 @@ KOSTEN = {
     "HYPER": "nur Trainings-Parameter: ein Flag bzw. eine Konstante in train-head.py, "
              "kein Go, kein Header-Wechsel.",
     "gewichte": "nur Training: Gewichtung in train-head.py nachbauen, kein Go.",
-    "ziel": "nur Training: Zielbildung in train-head.py nachbauen, kein Go.",
+    "ziel": "VERAENDERTE TRAININGSLABELS: als Regel in train-head.py ODER als echte "
+            "Labelkorrektur im Archiv — beides L2, braucht deine Freigabe nach Bildpruefung "
+            "einer Stichprobe; kein Go.",
     "spalten": "NEUE EINGABESPALTEN: Training UND Go-Inferenz (nn.go), Header-Bump, "
                "Paritaets-Fixture — L5, braucht dein ausdrueckliches OK.",
     "modell": "ANDERE ARCHITEKTUR: neues head.bin-Format, Go-Lader, Paritaets-Fixture — L5.",

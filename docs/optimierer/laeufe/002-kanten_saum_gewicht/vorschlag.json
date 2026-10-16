@@ -5,5 +5,7 @@
  "begruendung": "Fehlerposten: Kante. Sie trägt laut Fehlerbudget vom 16.10. 51 % der Verlust-Sekunden. Laut Ledger §3af liegt die meiste Fehlermasse an schlechten Kanten im NN-Mittelband 0.15–0.85 (2585 s von 4454 s). Laut §3ao/§3af ist das Label an Kanten oft zu großzügig; ausnahmslos liegt es weiter außen. Read-only gemessen auf dem Trainingsteil (nur Archiv-Meta, 609 Aufnahmen, 2455 Innenkanten): ≤2 s an einer Kante liegen 0.5 % der Sekunden, 3–30 s daneben 6.0 %. Der Arm benutzt nur die Trainingslabels (meta ads, im Trainingsteil erlaubt) und nichts von Entwicklung oder Bestätigung. Formtest mit synthetischen Arrays bestanden: Länge stimmt, alle Gewichte ≥0, Mittel 1, schritt=4 wird beachtet, Aufnahmen ohne Blöcke bekommen Gewicht 1 vor der Normierung. Kein Friedhof-Eintrag: O16 waren Kontextspalten, also neue Merkmale, keine Zeilengewichte. O14 war Flankenauswahl, O31 ein weiches Champion-Ziel, O17/O18 Herkunftsgewichte. Der Boundary-Head war ein eigener Kopf. Eine Zeilengewichtung nach Abstand zur Kante wurde nicht gemessen; die Aufgabe nennt sie als Hebel (Ziel-Glättung bzw. Gewichte an Kanten). Datei: /Users/simon/src/tv-detect/scripts/optimierer/arme/kanten_saum_gewicht.py",
  "regel": "gewinn",
  "code": "59ec42164326",
- "beschreibung": "Kanten-Saum: Zeilen 4-30 s neben einer Label-Kante x2.5, Zeilen <=3 s auf der Kante x0.3, Mittel 1"
+ "beschreibung": "Kanten-Saum: Zeilen 4-30 s neben einer Label-Kante x2.5, Zeilen <=3 s auf der Kante x0.3, Mittel 1",
+ "klasse": "training",
+ "klasse_nachgetragen": "2026-10-16"
 }

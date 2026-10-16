@@ -44,6 +44,9 @@ def main():
     ap.add_argument("--begruendung", required=True,
                     help="Welcher Fehlerposten, welcher Beleg, warum nicht im Friedhof")
     ap.add_argument("--regel", required=True, choices=["gewinn", "nicht_schlechter"])
+    ap.add_argument("--klasse", required=True,
+                    choices=["merkmale", "training", "nachbearbeitung", "daten", "labels"],
+                    help="Ideenklasse fuer die Banditen-Bilanz (opt_bandit.py)")
     a = ap.parse_args()
 
     if not re.fullmatch(r"[a-z0-9_]{3,40}", a.arm):
@@ -69,6 +72,11 @@ def main():
     if not (set(vars(m)) & ERLAUBT - {"BESCHREIBUNG"}):
         sys.exit("Der Arm aendert nichts (keine der Schnittstellen definiert).")
 
+    pflicht = {"merkmale": ["spalten"], "nachbearbeitung": ["nachbearbeiten"],
+               "labels": ["ziel"], "daten": ["gewichte", "ziel"],
+               "training": ["HYPER", "gewichte", "modell", "ziel"]}[a.klasse]
+    if not any(hasattr(m, k) for k in pflicht):
+        sys.exit(f"Klasse {a.klasse} verlangt mindestens eins von {pflicht}")
     sys.path.insert(0, str(HIER))
     lauf = importlib.util.spec_from_file_location("opt_lauf_reg", HIER / "opt_lauf.py")
     ol = importlib.util.module_from_spec(lauf)
@@ -79,7 +87,7 @@ def main():
     ld = LAEUFE / f"{nr:03d}-{a.arm}"
     ld.mkdir(parents=True)
     v = {"nr": nr, "arm": a.arm, "hypothese": a.hypothese, "begruendung": a.begruendung,
-         "regel": a.regel, "code": abdruck,
+         "regel": a.regel, "klasse": a.klasse, "code": abdruck,
          "beschreibung": getattr(m, "BESCHREIBUNG", "")}
     (ld / "vorschlag.json").write_text(json.dumps(v, indent=1, ensure_ascii=False) + "\n")
     neu = [str(datei), str(ld / "vorschlag.json")]

@@ -159,3 +159,27 @@ Kontrolle und Δ, `opt_stand.py` zeigt sie. Kontrolle K auf Entwicklung
 194, Dekoder verpasst 62 Sekunden — das Abbild erfindet doppelt so viel wie
 die Produktion (636 auf dem ganzen Messsatz). Ein Arm, der eine Zeile senkt
 und eine andere hebt, verschiebt Fehler, statt sie zu beheben.
+
+## Ideenklassen und Banditen-Auswahl (seit 16.10.)
+
+Jeder Arm gehört zu einer Klasse (`opt_registrieren.py --klasse`):
+`merkmale` (spalten), `training` (HYPER/gewichte/modell), `nachbearbeitung`,
+`daten` (Aufnahmen herausnehmen oder umgewichten nach Herkunft/Zustand),
+`labels` (Trainingslabels in der Kopie umschreiben, z. B. eine Regel für
+Countdown-Spots, Nachlauf, Trenner). **Vor jeder Runde zieht
+`opt_bandit.py` die Klasse** (Thompson-Sampling über die Urteile: Belohnung
+0 bei Δ ≤ −0.003, 0.5 bei 0, 1 ab der Schwelle, halbiert bei sinkendem
+Aufnahme-Median, 1 für Kandidat, 0 für nicht bestätigt). Der Planer bleibt in
+der gezogenen Klasse. 001–011 sind nachträglich eingeordnet (001–003
+training, 004–011 merkmale).
+
+**Daten- und Label-Arme sind die Simulation für Labelentscheidungen:**
+`ziel()`/`gewichte()` ändern nur die Trainingskopie, gemessen wird gegen
+die echten Menschenlabels. Damit lässt sich beziffern, was eine
+Labelkorrektur bringen WÜRDE, bevor jemand das Archiv anfasst. Ein
+bestätigter Label-Arm ist eine Empfehlung an Simon (L2: Stichprobe im
+Bild, dann Freigabe), keine Korrektur. `ktx["sek"]` gibt die absolute
+Sekunde je Zeile; im Trainingsteil liegt in `meta[uuid]` u. a. `ads`,
+`which`, `title`, `slug`, `start_ts`, `label_korrektur`.
+Achtung Entwicklungssatz: dessen Aufnahmen stehen nicht im Trainingsteil —
+ein Label-Arm wirkt nur über das, was der Kopf aus den ANDEREN Aufnahmen lernt.

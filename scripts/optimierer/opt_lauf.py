@@ -29,7 +29,11 @@ WAS EIN ARM DARF (scripts/optimierer/arme/<name>.py, alles optional)
   def modell(n_in, hyper) -> torch.nn.Module (Ausgabe 2 Logits)
   def nachbearbeiten(p, rec, ktx) -> p'  (je Sekunde, vor der Kalibrierung)
 ktx: {"teil", "uuids", "rec", "meta" (uuid -> Archiv-Meta), "schritt",
-      "y" (NUR bei training), "spalten_namen"}.
+      "y" (NUR bei training), "spalten_namen", "sek" (absolute Sekunde je Zeile)}.
+DATEN-/LABEL-Arme: ziel() und gewichte() veraendern NUR die Trainingskopie
+im Speicher (Labels umschreiben, Aufnahmen herausnehmen). Gemessen wird
+weiter gegen die echten Menschenlabels — so laesst sich eine Labelkorrektur
+beziffern, bevor jemand das echte Archiv anfasst (L2/L4 bleiben gewahrt).
 
 Schutz: laeuft nicht zwischen 02:15 und 05:45 (Nachttraining), nicht neben
 train-head.py, nicht bei weniger als 24 GB freiem Speicher, nie zweimal
@@ -420,7 +424,10 @@ def main():
             uu = [u for u in uu if (DUMPS / f"{u}.json").is_file()]
         X, y, rec, geladen, metas = lade(uu, schritt, "training" if t == "training" else lab)
         teile[t] = {"X": X, "y": y, "rec": rec, "uuids": geladen, "meta": metas,
-                    "schritt": schritt}
+                    "schritt": schritt,
+                    # absolute Sekunde je Zeile (Zeile j einer Aufnahme = Sekunde j*schritt)
+                    "sek": np.concatenate([np.arange(int((rec == i).sum())) * schritt
+                                           for i in range(len(geladen))]).astype(np.int64)}
         print(f"{t}: {len(geladen)} Aufnahmen, {len(X)} Zeilen", flush=True)
     namen = baue_k(teile)
     ev = teile["eval"]
@@ -435,7 +442,7 @@ def main():
     def ktx(t):
         d = teile[t]
         k = {"teil": t, "uuids": d["uuids"], "rec": d["rec"], "meta": d["meta"],
-             "schritt": d["schritt"], "spalten_namen": namen}
+             "schritt": d["schritt"], "spalten_namen": namen, "sek": d["sek"]}
         if t == "training":
             k["y"] = d["y"]
         return k

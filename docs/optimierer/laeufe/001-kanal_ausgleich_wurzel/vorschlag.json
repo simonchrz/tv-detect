@@ -5,5 +5,7 @@
  "begruendung": "Fehlerposten: Kinder-Sender und Abbild-Luecke. Laut README liegt die gepaarte Luecke K gegen Produktion (-0.009) fast ganz bei toggo und nick. Gemessen auf dem Trainingsteil (nur Metadaten, read-only): nick 7.8 h = 1.2 %, disney-channel 3.1 %, sixx 0.9 %, comedy-central 0.9 %, sat-1 0.5 %. Gegen vox 26.7 %, kabel-eins 18.6 % und prosieben 18.3 %. Der Entwicklungssatz ist nur grob nach Sender ausgezaehlt, Labels wurden nicht angesehen. Dort stammt etwa ein Viertel der Aufnahmen aus diesen seltenen Sendern. Die Verteilung im Training passt also nicht zu der in der Bewertung, und iou_mittel zaehlt jede Aufnahme gleich. Der Arm nimmt nur Gewichte aus dem Senderanteil im Training und schneidet nichts auf einzelne Entwicklungs-Aufnahmen zu. Effektive Anteile nachher: vox 0.18, nick 0.039, sat-1 0.025. Der Deckel (4x Median) greift dabei nicht. Kein Friedhof-Eintrag: O17/O18 gewichteten nach Herkunft des Labels (which/merged), nicht nach Sender. Die Kohorten-Multiplikation in train-head.py steuert nur das Active-Learning-Budget, kein Trainingsgewicht. Kapazitaet, Kontextspalten, Anker und Zielglaettung werden nicht beruehrt. Der Formtest mit synthetischen Arrays ist bestanden: Laenge stimmt, alle Gewichte >= 0, Mittel 1. Datei: /Users/simon/src/tv-detect/scripts/optimierer/arme/kanal_ausgleich_wurzel.py",
  "regel": "gewinn",
  "code": "4a14d77241b4",
- "beschreibung": "Kanal-Ausgleich: Zeilengewicht ~ 1/sqrt(Senderanteil im Training), Deckel 4x Median, Mittel 1"
+ "beschreibung": "Kanal-Ausgleich: Zeilengewicht ~ 1/sqrt(Senderanteil im Training), Deckel 4x Median, Mittel 1",
+ "klasse": "training",
+ "klasse_nachgetragen": "2026-10-16"
 }

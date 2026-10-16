@@ -36,6 +36,32 @@ VERBOTEN = [
 ERLAUBT = {"BESCHREIBUNG", "HYPER", "spalten", "gewichte", "ziel", "modell", "nachbearbeiten"}
 
 
+def nur_code(text):
+    """Quelltext ohne Kommentare und Docstrings: die Verbotsliste soll Code
+    pruefen, nicht die Begruendung (16.10.: ein Arm scheiterte am Wort
+    „Entwicklung“ in seinem Docstring). String-Literale im Code bleiben drin
+    — ein Pfad wie '.../messsatz-…json' muss weiter auffallen."""
+    import ast
+    import io
+    import tokenize
+    baum = ast.parse(text)
+    doc = set()
+    for knoten in ast.walk(baum):
+        if isinstance(knoten, (ast.Module, ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef)):
+            if knoten.body and isinstance(knoten.body[0], ast.Expr) and \
+                    isinstance(getattr(knoten.body[0], "value", None), ast.Constant) and \
+                    isinstance(knoten.body[0].value.value, str):
+                doc.add((knoten.body[0].lineno, knoten.body[0].col_offset))
+    aus = []
+    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+        if tok.type == tokenize.COMMENT:
+            continue
+        if tok.type == tokenize.STRING and tok.start in doc:
+            continue
+        aus.append(tok.string)
+    return " ".join(aus)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -58,7 +84,7 @@ def main():
            and json.loads((d / "vorschlag.json").read_text())["arm"] == a.arm
            for d in LAEUFE.glob("*")):
         sys.exit(f"Arm {a.arm} ist schon registriert — eine Variante braucht einen neuen Namen.")
-    code = datei.read_text()
+    code = nur_code(datei.read_text())
     for muster, warum in VERBOTEN:
         if re.search(muster, code, re.I):
             sys.exit(f"verboten im Arm ({warum}): Muster {muster!r}")

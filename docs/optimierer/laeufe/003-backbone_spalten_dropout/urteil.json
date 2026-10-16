@@ -1,0 +1,36 @@
+{
+ "entwicklung": {
+  "erfuellt": false,
+  "teile": [
+   false,
+   false,
+   true
+  ],
+  "median_delta": -0.0005,
+  "deltas": [
+   0.0008,
+   -0.0005,
+   -0.0018,
+   -0.0018,
+   0.001
+  ],
+  "k_mittel": 0.9301,
+  "grosse_verluste": [],
+  "groesste_gewinne": [
+   [
+    "dvr-nick-1782930900",
+    0.154
+   ],
+   [
+    "dvr-rtl-1781113200",
+    0.009
+   ],
+   [
+    "dvr-rtlzwei-1778523300",
+    0.008
+   ]
+  ],
+  "sekunden": 242
+ },
+ "status": "verworfen"
+}

@@ -187,3 +187,14 @@ def spalten(teil, X, ktx):
                           for n in _ZUSTAND["netze"]], 0).astype(np.float32)
     return np.concatenate([stufe1[:, None], _klein(X, namen)], 1)
 ```
+
+## Gegenprobe (16.10., Simon) — NICHT übertragen
+
+Zwei Läufe mit anderen Stufe-1-Seeds und anderer Falten-Zuteilung (007, 008):
+Median Δ je **+0.0027** (5/5 positiv), knapp unter der Schwelle. Der Effekt
+ist echt, aber halb so groß wie in 006 (dort Glück der ersten Seeds) und
+getragen von drei South-Park-Aufnahmen (+0.07 bis +0.24). Der Median über
+die Aufnahmen SINKT dabei (Arm 0.967–0.972 gegen K 0.972–0.975): viele
+kleine Verluste gegen wenige große Gewinne; in 008 verliert Super RTL
+1781581800 −0.159. Das Nachtgate zählt Aufnahmen besser/schlechter und würde
+das eher ablehnen. Die L5-Übertragung lohnt so nicht.

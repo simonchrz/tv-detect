@@ -39,6 +39,12 @@ def main():
         zeilen.append(z)
     print(f"{len(zeilen)} Laeufe, Entwicklung {n_entw}x befragt, Bestaetigung {n_best}x.")
     print("\n".join(zeilen[-a.letzte:]) or "(noch keine)")
+    ab = sorted((LAEUFE.parent / "abgelehnt").glob("*.befund.md"))
+    if ab:
+        print(f"\nAbgelehnt vor der Messung ({len(ab)}), Befunde unter docs/optimierer/abgelehnt/:")
+        for f in ab[-10:]:
+            kern = next((l.strip() for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")), "")
+            print(f"  {f.name.replace('.befund.md', '')}: {kern[:200]}")
 
 
 if __name__ == "__main__":

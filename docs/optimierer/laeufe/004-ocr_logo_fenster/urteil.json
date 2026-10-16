@@ -35,7 +35,58 @@
     0.049
    ]
   ],
-  "sekunden": 199
+  "sekunden": 199,
+  "je_sender": {
+   "comedy-central": {
+    "n": 4,
+    "delta": 0.0491
+   },
+   "disney-channel": {
+    "n": 4,
+    "delta": -0.0049
+   },
+   "kabel-eins": {
+    "n": 9,
+    "delta": 0.0045
+   },
+   "nick": {
+    "n": 7,
+    "delta": 0.0293
+   },
+   "prosieben": {
+    "n": 15,
+    "delta": -0.0005
+   },
+   "rtl": {
+    "n": 6,
+    "delta": -0.0171
+   },
+   "rtlzwei": {
+    "n": 15,
+    "delta": -0.0019
+   },
+   "sat-1": {
+    "n": 2,
+    "delta": -0.0209
+   },
+   "sat-1-gold": {
+    "n": 1,
+    "delta": 0.0
+   },
+   "sixx": {
+    "n": 5,
+    "delta": -0.0009
+   },
+   "super-rtl": {
+    "n": 1,
+    "delta": -0.3981
+   },
+   "vox": {
+    "n": 7,
+    "delta": 0.0002
+   }
+  },
+  "delta_aufnahme_median": -0.0035
  },
  "status": "verworfen"
 }

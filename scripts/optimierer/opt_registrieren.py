@@ -82,7 +82,13 @@ def main():
          "regel": a.regel, "code": abdruck,
          "beschreibung": getattr(m, "BESCHREIBUNG", "")}
     (ld / "vorschlag.json").write_text(json.dumps(v, indent=1, ensure_ascii=False) + "\n")
-    subprocess.run(["git", "-C", str(REPO), "add", str(datei), str(ld / "vorschlag.json")], check=True)
+    neu = [str(datei), str(ld / "vorschlag.json")]
+    befund = HIER / "arme" / f"{a.arm}.befund.md"
+    if befund.is_file():
+        (ld / "befund.md").write_text(befund.read_text())
+        neu.append(str(ld / "befund.md"))
+        befund.unlink()
+    subprocess.run(["git", "-C", str(REPO), "add"] + neu, check=True)
     subprocess.run(["git", "-C", str(REPO), "commit", "-q", "-m",
                     f"Optimierer {nr:03d} registriert: {a.arm} ({a.regel})\n\n{a.hypothese}\n\n"
                     "Claude-Session: https://claude.ai/code/session_011Hzo2LXp3b9pNNwwFazY4p"],

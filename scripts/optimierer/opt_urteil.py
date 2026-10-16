@@ -90,9 +90,18 @@ def main():
         d, je, k_mittel, dmed = deltas(erg, v["arm"])
         ok, teile, med, gross = pruefe(d, je, v["regel"], satz, dmed)
         beste = sorted(je.items(), key=lambda x: -x[1])[:3]
+        # Muster nach Sender, ohne Einzelaufnahmen: der naechste Planer soll
+        # sehen, WO ein Arm wirkt, ohne Arme auf Aufnahmen zuzuschneiden.
+        sender = {}
+        for uu, x in je.items():
+            if np.isfinite(x):
+                sender.setdefault(uu[4:].rsplit("-", 1)[0], []).append(x)
+        je_sender = {k: {"n": len(v), "delta": round(float(np.mean(v)), 4)}
+                     for k, v in sorted(sender.items())}
         urteil[satz] = {"erfuellt": ok, "teile": teile, "median_delta": round(med, 4),
                         "deltas": [round(float(x), 4) for x in d], "k_mittel": round(k_mittel, 4),
                         "delta_aufnahme_median": round(dmed, 4),
+                        "je_sender": je_sender,
                         "grosse_verluste": [(u, round(x, 3)) for x, u in gross],
                         "groesste_gewinne": [(u, round(x, 3)) for u, x in beste],
                         "sekunden": erg.get("sekunden")}

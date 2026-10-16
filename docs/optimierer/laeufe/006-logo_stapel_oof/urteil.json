@@ -30,7 +30,58 @@
     0.076
    ]
   ],
-  "sekunden": 181
+  "sekunden": 181,
+  "je_sender": {
+   "comedy-central": {
+    "n": 4,
+    "delta": 0.062
+   },
+   "disney-channel": {
+    "n": 4,
+    "delta": -0.0071
+   },
+   "kabel-eins": {
+    "n": 9,
+    "delta": -0.0033
+   },
+   "nick": {
+    "n": 7,
+    "delta": 0.04
+   },
+   "prosieben": {
+    "n": 15,
+    "delta": -0.001
+   },
+   "rtl": {
+    "n": 6,
+    "delta": -0.0028
+   },
+   "rtlzwei": {
+    "n": 15,
+    "delta": -0.0008
+   },
+   "sat-1": {
+    "n": 2,
+    "delta": -0.0085
+   },
+   "sat-1-gold": {
+    "n": 1,
+    "delta": 0.0
+   },
+   "sixx": {
+    "n": 5,
+    "delta": 0.0
+   },
+   "super-rtl": {
+    "n": 1,
+    "delta": 0.0202
+   },
+   "vox": {
+    "n": 7,
+    "delta": -0.0034
+   }
+  },
+  "delta_aufnahme_median": -0.0025
  },
  "status": "kandidat",
  "bestaetigung": {
@@ -63,6 +114,53 @@
     0.013
    ]
   ],
-  "sekunden": 119
+  "sekunden": 119,
+  "je_sender": {
+   "comedy-central": {
+    "n": 1,
+    "delta": 0.0012
+   },
+   "disney-channel": {
+    "n": 1,
+    "delta": 0.0076
+   },
+   "kabel-eins": {
+    "n": 1,
+    "delta": -0.0028
+   },
+   "nick": {
+    "n": 2,
+    "delta": 0.0324
+   },
+   "prosieben": {
+    "n": 6,
+    "delta": 0.0044
+   },
+   "rtl": {
+    "n": 1,
+    "delta": -0.002
+   },
+   "rtlzwei": {
+    "n": 3,
+    "delta": -0.0039
+   },
+   "sat-1": {
+    "n": 2,
+    "delta": 0.0039
+   },
+   "sixx": {
+    "n": 2,
+    "delta": 0.0001
+   },
+   "toggo-plus": {
+    "n": 1,
+    "delta": 0.042
+   },
+   "vox": {
+    "n": 2,
+    "delta": 0.0009
+   }
+  },
+  "delta_aufnahme_median": -0.0007
  }
 }

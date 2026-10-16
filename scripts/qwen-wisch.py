@@ -139,6 +139,15 @@ def main():
     ap.add_argument("--trocken", action="store_true", help="entscheiden und berichten, nichts schicken")
     a = ap.parse_args()
     t0 = time.time()
+    # Dieselben Schutzregeln und DIESELBE Sperre wie der Optimierer: nicht im
+    # Nachtfenster, nicht neben train-head, genug Speicher, nie gleichzeitig
+    # mit einem opt_lauf (Qwen belegt ~17 GB, ein Lauf ~16 GB).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "opt_lauf_schutz", Path(__file__).resolve().parent / "optimierer/opt_lauf.py")
+    ol = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ol)
+    sperre = ol.schutz()  # noqa: F841 — haelt die Sperre bis Prozessende
     m = Modell()
 
     sicher, falsch = eichtor(m, a.schwelle, a.eich_min)

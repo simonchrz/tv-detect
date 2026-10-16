@@ -1,0 +1,36 @@
+{
+ "entwicklung": {
+  "erfuellt": false,
+  "teile": [
+   false,
+   false,
+   true
+  ],
+  "median_delta": 0.0005,
+  "deltas": [
+   0.0016,
+   -0.0008,
+   0.0006,
+   -0.0009,
+   0.0005
+  ],
+  "k_mittel": 0.9301,
+  "grosse_verluste": [],
+  "groesste_gewinne": [
+   [
+    "dvr-nick-1778578800",
+    0.033
+   ],
+   [
+    "dvr-comedy-central-1778837700",
+    0.011
+   ],
+   [
+    "dvr-nick-1778775300",
+    0.009
+   ]
+  ],
+  "sekunden": 197
+ },
+ "status": "verworfen"
+}

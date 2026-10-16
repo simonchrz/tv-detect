@@ -78,7 +78,8 @@ $PY scripts/optimierer/opt_urteil.py --lauf NNN-<name>
 ```
 
 Schwellen (fest in `opt_urteil.py`): Gewinn = Median Δ ≥ +0.003, ≥ 4/5
-Wiederholungen positiv, höchstens eine Aufnahme mit Δ < −0.10.
+Wiederholungen positiv, höchstens eine Aufnahme mit Δ < −0.10, und (seit
+16.10.) der Median der Aufnahme-IoU darf nicht sinken.
 Bestätigung: Median Δ > 0 und ≥ 4/5 positiv. Nichts davon ist verhandelbar;
 eine Variante eines verworfenen Arms ist ein **neuer** Arm mit neuem Namen
 und zählt als weiterer Versuch (Journal zählt mit).
@@ -133,3 +134,17 @@ Kapazitätsvarianten.** Jeder Arm greift eine BENANNTE Schwäche an:
 
 Diagnose vorher auf dem Trainingsteil: zeigen, dass die Schwäche dort
 messbar ist und der Arm sie adressiert (eine Zahl in `--begruendung`).
+
+## Lehre aus 006–008 (16.10.)
+
+Gestapelter Kopf (Stufe 1 out-of-fold, Stufe 2 mit Logo/Audio/OCR): 006
++0.0052, Gegenproben mit anderen Seeds je +0.0027. Echt, aber getragen von
+drei South-Park-Aufnahmen (+0.07 bis +0.24), während der Median der
+Aufnahmen SANK. Befund daraus: der Kopf nutzt das Logo außerhalb seiner
+Trainingsdaten zu wenig (Logo ≥ 0.8 und p ≥ 0.8: nur 53 % Werbung). Ein Arm,
+der das gezielt nutzt, ohne die typische Aufnahme zu verschlechtern, ist
+willkommen. Keine weitere Seed-/Falten-Variante des Stapels.
+Jeder Arm mit Zufall in der Merkmalsbildung zieht diesen Zufall aus dem
+Wiederholungs-Seed (ktx enthält ihn nicht — dann eine feste Liste von
+Seeds je Aufruf benutzen und das in der Begründung sagen), sonst misst die
+Streuung nur einen Teil.

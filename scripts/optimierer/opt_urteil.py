@@ -12,6 +12,10 @@ ENTWICKLUNG, Regel "gewinn":
   [2] mindestens 4 von 5 Delta_r > 0
   [3] hoechstens 1 Aufnahme mit mittlerem Delta < -0.10 (kein Tausch
       grosser Einzelverluste gegen viele kleine Gewinne)
+  [4] (seit 16.10., nach 006-008) der Median der Aufnahme-IoU sinkt nicht:
+      Median_r(IoU-Median Arm) - Median_r(IoU-Median K) >= 0. Sonst tragen
+      wenige grosse Gewinne viele kleine Verluste — das Nachtgate zaehlt
+      Aufnahmen besser/schlechter und lehnt so etwas ab.
 ENTWICKLUNG, Regel "nicht_schlechter" (Vereinfachungen):
   [1] Median Delta_r >= -0.001   [2] hoechstens 1 Delta_r < -0.003   [3] wie oben
 BESTAETIGUNG (22 test-Aufnahmen, einmal):
@@ -41,19 +45,20 @@ def deltas(erg, arm):
     A = {r["seed"]: r for r in erg["laeufe"][arm]}
     seeds = sorted(set(K) & set(A))
     d = np.array([A[s]["iou_mittel"] - K[s]["iou_mittel"] for s in seeds])
+    dmed = float(np.median([A[s]["iou_median"] for s in seeds]) - np.median([K[s]["iou_median"] for s in seeds]))
     je = {}
     for u in K[seeds[0]]["je_aufnahme"]:
         v = [A[s]["je_aufnahme"].get(u, np.nan) - K[s]["je_aufnahme"].get(u, np.nan) for s in seeds]
         je[u] = float(np.nanmean(v))
-    return d, je, float(np.mean([K[s]["iou_mittel"] for s in seeds]))
+    return d, je, float(np.mean([K[s]["iou_mittel"] for s in seeds])), dmed
 
 
-def pruefe(d, je, regel, satz):
+def pruefe(d, je, regel, satz, dmed=0.0):
     gross = sorted((v, u) for u, v in je.items() if v < -0.10)
     med = float(np.median(d))
     if satz == "entwicklung":
         if regel == "gewinn":
-            r = [med >= 0.003, int((d > 0).sum()) >= 4, len(gross) <= 1]
+            r = [med >= 0.003, int((d > 0).sum()) >= 4, len(gross) <= 1, dmed >= 0]
         else:
             r = [med >= -0.001, int((d < -0.003).sum()) <= 1, len(gross) <= 1]
     else:
@@ -82,11 +87,12 @@ def main():
         erg = json.loads(e.read_text())
         if erg["code"] != v["code"]:
             sys.exit(f"{satz}: Code-Abdruck {erg['code']} != registriert {v['code']} — ungueltig")
-        d, je, k_mittel = deltas(erg, v["arm"])
-        ok, teile, med, gross = pruefe(d, je, v["regel"], satz)
+        d, je, k_mittel, dmed = deltas(erg, v["arm"])
+        ok, teile, med, gross = pruefe(d, je, v["regel"], satz, dmed)
         beste = sorted(je.items(), key=lambda x: -x[1])[:3]
         urteil[satz] = {"erfuellt": ok, "teile": teile, "median_delta": round(med, 4),
                         "deltas": [round(float(x), 4) for x in d], "k_mittel": round(k_mittel, 4),
+                        "delta_aufnahme_median": round(dmed, 4),
                         "grosse_verluste": [(u, round(x, 3)) for x, u in gross],
                         "groesste_gewinne": [(u, round(x, 3)) for u, x in beste],
                         "sekunden": erg.get("sekunden")}

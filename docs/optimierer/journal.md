@@ -10,3 +10,4 @@ Eine Zeile je Urteil, neueste unten. Zaehlt mit, wie oft der Entwicklungs- und d
 - **006-logo_stapel_oof** (gewinn) entwicklung: ERFUELLT (Median Delta +0.0052, [0.007, 0.0053, 0.0052, 0.0039, 0.0051], Teile [True, True, True]) → Status `bestaetigung_faellig` [Entwicklung befragt: 6, Bestaetigung: 0]
 - **006-logo_stapel_oof** (gewinn) bestaetigung: ERFUELLT (Median Delta +0.0061, [0.0061, 0.0064, 0.0065, 0.0058, 0.0059], Teile [True, True]) → Status `kandidat` [Entwicklung befragt: 6, Bestaetigung: 1]
 - **007-logo_stapel_oof_g2** (gewinn) entwicklung: NICHT ERFUELLT (Median Delta +0.0027, [0.0052, 0.0033, 0.0027, 0.0017, 0.0013], Teile [False, True, True]) → Status `verworfen` [Entwicklung befragt: 7, Bestaetigung: 1]
+- **008-logo_stapel_oof_g3** (gewinn) entwicklung: NICHT ERFUELLT (Median Delta +0.0027, [0.0046, 0.0027, 0.0023, 0.0026, 0.0027], Teile [False, True, True]) → Status `verworfen` [Entwicklung befragt: 8, Bestaetigung: 1]

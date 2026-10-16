@@ -99,6 +99,8 @@ def main():
     else:
         sys.exit("noch kein Ergebnis")
     u_pfad.write_text(json.dumps(urteil, indent=1, ensure_ascii=False) + "\n")
+    if urteil["status"] == "kandidat" and not (ld / "kandidat.md").exists():
+        subprocess.run([sys.executable, str(HIER / "opt_kandidat.py"), "--lauf", a.lauf], check=True)
 
     if zeilen:
         JOURNAL.parent.mkdir(parents=True, exist_ok=True)

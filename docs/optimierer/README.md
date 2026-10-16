@@ -110,3 +110,26 @@ Gegenteil-Label tragen (13 % der Sekunden, 45 % der Fehler).
 
 Erfolgreich und schon in Produktion: OCR-Spalten (O26), SigLIP-64 (O28),
 Inselsperre 90 s im Dekoder (O33), Seed-Ensemble.
+
+## Vorgabe ab Durchgang 2 (Simon, 16.10.)
+
+Durchgang 1 hat allgemeines Umgewichten abgehakt: Sender-Ausgleich (001,
++0.0003), Kanten-Saum (002, +0.0005), Backbone-Dropout (003, −0.0005) —
+alles Rauschen. **Keine weiteren globalen Gewichts-, Regularisierungs- oder
+Kapazitätsvarianten.** Jeder Arm greift eine BENANNTE Schwäche an:
+
+1. **Trailer mit Sendetermin-Einblendung** („Montag 20:15 joyn“, „Mo–Fr
+   19:05“): Kopf gab Trailern 0.586 (§3aa); Menschen verwechseln sie auch.
+   Träger: `ocr_hinweis`, SigLIP, Logo (Sender-Logo fehlt oft im Trailer).
+2. **Countdown-Einzelspots** („Werbung – Jetzt geht's weiter GALILEO“, §3ax):
+   Logo fehlt, `ocr_werbung` hoch, NN 0.06–0.26. Seit 16.10. sind 36
+   Galileo-Kanten im Archiv korrigiert — der Trainingsteil enthält die Form
+   jetzt als Werbung.
+3. **Verwechslungszonen**: 13 % der Sekunden, deren Backbone-Nachbarn das
+   Gegenteil-Label tragen, tragen 45 % der Fehler
+   (`scripts/backbone-sonde.py`, Memory fehler_sitzen_in_der_repraesentation).
+   Ansatz z. B. Merkmale, die dort trennen (OCR, Logo-Verlauf, Zeitkontext
+   über Nachbarzeilen), nicht mehr Gewicht.
+
+Diagnose vorher auf dem Trainingsteil: zeigen, dass die Schwäche dort
+messbar ist und der Arm sie adressiert (eine Zahl in `--begruendung`).

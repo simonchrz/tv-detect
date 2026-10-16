@@ -46,6 +46,64 @@ LOG = Path.home() / ".cache/tvd-qwen-wisch/laeufe.jsonl"
 # Geholte Karten sind 6 h fuer uns reserviert (wischKartenTTL). Bricht ein Lauf
 # ab, holt der naechste sie hier wieder ab, statt sie bis zum Ablauf zu sperren.
 OFFEN = Path.home() / ".cache/tvd-qwen-wisch/offene-karten.json"
+ZM_STAND = Path.home() / ".cache/tvd-qwen-wisch/zweitmeinung-stand.json"
+PROTOKOLL = "/mnt/tv/hls/.tvd-models/wisch-protokoll.jsonl"
+ZM_DATEI = "/mnt/tv/hls/.tvd-models/zweitmeinung.txt"
+
+
+def binaer(w):
+    return "sendung" if w == "sendung" else "werbung"
+
+
+def zweitmeinung(m, schwelle, tmp):
+    """Simons neue Wisch-Antworten gegenlesen: wo Qwen in BEIDEN Durchgaengen
+    sicher anders urteilt (Werbung gegen Sendung), kommt die Stelle nach
+    zweitmeinung.txt — die App zeigt sie Simon zuerst noch einmal. Aendert
+    keine Antwort und kein Label."""
+    stand = json.loads(ZM_STAND.read_text()) if ZM_STAND.is_file() else {"bis_ts": int(time.time()) - 3 * 86400}
+    roh = subprocess.run(["ssh", "raspberrypi5lan", f"cat {PROTOKOLL}"], capture_output=True,
+                         timeout=120).stdout.decode()
+    je, korrigiert = {}, set()
+    for z in roh.splitlines():
+        try:
+            r = json.loads(z)
+        except ValueError:
+            continue
+        if r.get("anlass") == "korrektur":   # schon geklaert (z. B. 16.10.)
+            korrigiert.add((r.get("uuid"), int(round(float(r.get("t", 0))))))
+        if (r.get("ts", 0) <= stand["bis_ts"] or r.get("von") or r.get("kontrolle")
+                or r.get("anlass") == "korrektur" or r.get("urteil") not in ("werbung", "sendung", "trailer")
+                or float(r.get("t", 0)) < 60):
+            continue
+        je[(r["uuid"], int(round(float(r["t"]))))] = r
+    je = {k: v for k, v in je.items() if k not in korrigiert}
+    if not je:
+        return {"gelesen": 0, "markiert": 0}
+    karten = [{"uuid": u, "t": t} for (u, t) in je]
+    ziehe_480(karten, tmp)
+    neu, markiert = [], []
+    for (u, t), r in je.items():
+        A = [tmp / f"{u}_{t + o:05d}.jpg" for o in OFFS]
+        if not all(p.is_file() for p in A):
+            continue
+        B = []
+        for p in A:
+            im = Image.open(p)
+            q = tmp / f"zmB_{p.name}"
+            im.resize((320, round(im.height * 320 / im.width))).save(q, quality=80)
+            B.append(q)
+        sender = u[4:].rsplit("-", 1)[0]
+        wa, ca = antwort(m.frage(A, sender, None))
+        wb, cb = antwort(m.frage(B, sender, None))
+        if wa == wb and min(ca, cb) >= schwelle and binaer(wa) != binaer(r["urteil"]):
+            # Titel neutral: Simon soll unbeeinflusst neu urteilen.
+            neu.append(f"{u}\t{t}\t{int(time.time())}\tnoch einmal ansehen")
+            markiert.append((u, t, r["urteil"], wa))
+    if neu:
+        subprocess.run(["ssh", "raspberrypi5lan", f"cat >> {ZM_DATEI}"],
+                       input=("\n".join(neu) + "\n").encode(), check=True, timeout=60)
+    ZM_STAND.write_text(json.dumps({"bis_ts": max(r["ts"] for r in je.values())}))
+    return {"gelesen": len(je), "markiert": len(markiert), "stellen": markiert}
 WOERTER = ("WERBUNG", "TRAILER", "SENDUNG")
 
 
@@ -137,6 +195,7 @@ def main():
     ap.add_argument("--eich-min", type=int, default=25)
     ap.add_argument("--max", type=int, default=150)
     ap.add_argument("--trocken", action="store_true", help="entscheiden und berichten, nichts schicken")
+    ap.add_argument("--ohne-zweitmeinung", action="store_true")
     a = ap.parse_args()
     t0 = time.time()
     # Dieselben Schutzregeln und DIESELBE Sperre wie der Optimierer: nicht im
@@ -171,10 +230,9 @@ def main():
     OFFEN.parent.mkdir(parents=True, exist_ok=True)
     OFFEN.write_text(json.dumps({"ts": time.time(), "karten": karten}))
     print(f"{len(karten)} Karten geholt (reserviert 6 h)")
-    if not karten:
-        return 0
     tmp = Path(tempfile.mkdtemp(prefix="qwen-wisch-"))
-    ziehe_480(karten, tmp)
+    if karten:
+        ziehe_480(karten, tmp)
 
     entscheid = []
     for k in karten:
@@ -213,8 +271,17 @@ def main():
                 else:
                     bericht["abbruch"] = f"Kontrolle falsch: {k['uuid']}@{k['t']} {w}, erwartet {r.get('erwartet')}"
                     break
+    # Liegen gelassene (oder im Trockenlauf alle) Karten sofort an die App
+    # zurueckgeben, statt sie 6 h zu sperren.
+    frei = [k["id"] for k, w, _ in entscheid if a.trocken or not w]
+    if bericht["abbruch"]:
+        frei = [k["id"] for k, _, _ in entscheid]
+    if frei:
+        bericht["freigegeben"] = json.loads(http(f"{API}/freigeben", {"ids": frei})).get("freigegeben")
     if not a.trocken:
         OFFEN.unlink(missing_ok=True)   # beantwortet oder liegen gelassen: nichts mehr offen
+    if not a.trocken and not a.ohne_zweitmeinung and not bericht["abbruch"]:
+        bericht["zweitmeinung"] = zweitmeinung(m, a.schwelle, tmp)
     bericht["sekunden"] = round(time.time() - t0)
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a") as fh:

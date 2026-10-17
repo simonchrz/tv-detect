@@ -216,7 +216,7 @@ def urteil(a):
     spec.loader.exec_module(qw)
     from PIL import Image
 
-    fassung = hashlib.sha1(qw.FRAGE.encode()).hexdigest()[:8]
+    fassung = hashlib.sha1((qw.FRAGE + qw.MODELL).encode()).hexdigest()[:8]
     ergs = [json.loads(Path(p).read_text()) for p in a.bloecke]
     alle = [punkte(e, a.abstand, a.max) for e in ergs]
     cache = lade_cache(fassung)

@@ -39,7 +39,7 @@ from PIL import Image
 sys.path.insert(0, str(Path.home() / "ml/vlm-exp"))
 from vlm_wisch import FRAGE, OFFS  # noqa: E402
 
-MODELL = "mlx-community/Qwen3.8-27B-4bit"
+MODELL = "mlx-community/Qwen3.8-27B-oQ6"  # Bench 17.10.: nie schlechter als 4bit, Gipfel 23.7 GB
 API = "http://raspberrypi5lan:9984/api/review/wisch"
 EICH = Path.home() / ".cache/tvd-qwen-wisch/eichsatz"   # Bilder + eich.json
 LOG = Path.home() / ".cache/tvd-qwen-wisch/laeufe.jsonl"

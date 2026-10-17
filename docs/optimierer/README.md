@@ -201,7 +201,7 @@ Rand 6 s, höchstens 40 je Aufnahme, sicher = beide Durchgänge gleich und
 ≥ 0.95). Geeicht an den Armen 015–022 auf dem Entwicklungssatz, 320
 verschiedene Punkte, 4.5 s je Punkt.
 
-* Sicher sind nur 37 % der Punkte; Uneinigkeitsstellen sind schwere Stellen.
+* Sicher sind nur 43 % der Punkte (139 von 320); Uneinigkeitsstellen sind schwere Stellen.
 * Gegen die Menschenlabels stimmen 101 von 139 sicheren Punkten (73 %).
   Die Abweichungen sind fast nur Konventionsfälle, im Bild geprüft:
   * 23 Punkte Split-Screen bei Let's Dance (`dvr-rtl-1780078500`, ab

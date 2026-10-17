@@ -14,7 +14,8 @@ SAETZE (fest, nicht vom Arm waehlbar)
   bestaetigung  Messsatz-Aufnahmen im test-Eimer (22). EINMAL je Lauf, nur
                 nach erfuelltem Entwicklungs-Urteil (opt_urteil.py).
   kalibrierung  40 train-Aufnahmen, fest per Hash gewaehlt: nur Platt.
-  training      train-Eimer minus die drei oben.
+  training      train-Eimer minus die drei oben, ohne die 90 O25-Aufnahmen
+                (docs/archiv-ausschluss-o25.json, wie die Produktion).
 Golden und versiegelter Satz kommen nicht vor. Der Arm sieht von
 Entwicklung/Bestaetigung nur Merkmale, nie Labels.
 
@@ -64,6 +65,7 @@ C = Path.home() / ".cache"
 ARCH = C / "tvd-train-archive"
 LEDGER = ARCH / "split-ledger.json"
 MESSSATZ = ARCH / "messsatz-2026-09-07.json"
+AUSSCHLUSS = REPO / "docs/archiv-ausschluss-o25.json"
 DUMPS = C / "tv-detect-daemon/emit-signals-neu"
 CACHE = C / "tvd-optimierer"
 BIN = Path.home() / ".local/bin/tv-detect"
@@ -119,7 +121,12 @@ def saetze():
     rest = sorted((u for u, v in led.items() if v == "train" and u not in set(ms)),
                   key=lambda u: hashlib.sha1(u.encode()).hexdigest())
     kalib = sorted(rest[:N_KALIB])
-    train = sorted(rest[N_KALIB:])
+    # Wie die Produktion seit 24.09. (--archiv-ausschluss): die 90 O25-Aufnahmen
+    # nicht im Fit. Lauf 014 hat das als Arm gemessen (Kandidat, nicht
+    # schlechter) -- seit 17.10. gehoert es zu K. Die Kalibrierung bleibt
+    # unberuehrt, damit K genau dem gemessenen Arm entspricht.
+    raus = set(json.loads(AUSSCHLUSS.read_text())["uuids"])
+    train = sorted(u for u in rest[N_KALIB:] if u not in raus)
     return {"training": train, "kalibrierung": kalib,
             "entwicklung": entw, "bestaetigung": best}
 

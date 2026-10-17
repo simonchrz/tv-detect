@@ -192,3 +192,45 @@ Sekunde je Zeile; im Trainingsteil liegt in `meta[uuid]` u. a. `ads`,
 `which`, `title`, `slug`, `start_ts`, `label_korrektur`.
 Achtung Entwicklungssatz: dessen Aufnahmen stehen nicht im Trainingsteil —
 ein Label-Arm wirkt nur über das, was der Kopf aus den ANDEREN Aufnahmen lernt.
+
+## Schiedsrichter Qwen — Eichung 17.10. (`scripts/optimierer/opt_schiedsrichter.py`)
+
+Ziel: Arme ohne Menschenlabels beurteilen. Qwen3.8-27B urteilt nur an den
+Sekunden, an denen Kontrolle und Arm verschieden entscheiden (Raster 12 s,
+Rand 6 s, höchstens 40 je Aufnahme, sicher = beide Durchgänge gleich und
+≥ 0.95). Geeicht an den Armen 015–022 auf dem Entwicklungssatz, 320
+verschiedene Punkte, 4.5 s je Punkt.
+
+* Sicher sind nur 37 % der Punkte; Uneinigkeitsstellen sind schwere Stellen.
+* Gegen die Menschenlabels stimmen 101 von 139 sicheren Punkten (73 %).
+  Die Abweichungen sind fast nur Konventionsfälle, im Bild geprüft:
+  * 23 Punkte Split-Screen bei Let's Dance (`dvr-rtl-1780078500`, ab
+    14364 s): Spot groß mit „Werbung“, Show im kleinen Fenster. Label sagt
+    Sendung, Qwen Werbung. Konvention offen.
+  * Gewinnspiel am Blockrand (`dvr-prosieben-1781095127` @864/876,
+    `dvr-kabel-eins-1779292601` @1500) und Trailer am Blockrand
+    (disney, nick, super-rtl): Konvention sagt Werbung, das Label beginnt
+    erst danach. Hier liegt Qwen richtig, das Label daneben.
+  * Ohne die Split-Screen-Aufnahme 87 % (0.95) bzw. 79 % (Schwelle 0.5,
+    dann 240 statt 116 Punkte).
+* Urteil je Arm (Median über 5 Seeds, Sekunden Arm besser als K):
+
+| Arm | Qwen | Mensch gleiche Punkte | Mensch voll |
+|---|---|---|---|
+| 015 bildwechsel_dichte | −276 | +216 | +250 |
+| 016 logo_blind_aufnahmen_gewicht | −24 | +24 | −5 |
+| 017 logit_weichkappe | −36 | −168 | −163 |
+| 018 klammer_wiederkehr | +60 | +156 | +109 |
+| 019 werbe_dubletten_gewicht | +48 | −132 | −118 |
+| 020 aufnahme_pegel_stapel | −468 | −720 | −716 |
+| 021 klammer_kette | 0 | +120 | +104 |
+| 022 siglip_text_fenster | −48 | −132 | −145 |
+
+  Gleiches Vorzeichen bei 5 von 8. Die beiden Gegenläufer erklären sich
+  ganz aus den Konventionsfällen: 015 hängt an der Split-Screen-Aufnahme
+  (Qwen −1008, Mensch +1380; ohne sie beide negativ), 019 am Gewinnspiel
+  in `dvr-prosieben-1781095127` (Qwen +120, Mensch −120, Qwen hat recht).
+* Folgerung: Qwen taugt als Schiedsrichter, wenn die Split-Screen-
+  Konvention entschieden ist. Noch nicht im Kreislauf; offen sind die
+  Konvention und die geringe Abdeckung (Schwelle senken kostet ~8 Punkte
+  Trefferquote).

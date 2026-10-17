@@ -1,0 +1,64 @@
+{
+ "lauf": "046-ton_dynamik_paritaet",
+ "satz": "0e62ac1e1275",
+ "aufnahmen": 76,
+ "punkte": 543,
+ "sicher": 281,
+ "delta_qwen_s": [
+  -60.0,
+  816.0,
+  1092.0,
+  -84.0,
+  -96.0
+ ],
+ "qwen_s_je_aufnahme": [
+  -0.79,
+  10.74,
+  14.37,
+  -1.11,
+  -1.26
+ ],
+ "ohne_beste_s_je_aufnahme": [
+  -1.11,
+  4.11,
+  4.11,
+  -1.26,
+  -1.58
+ ],
+ "aufnahmen_plus_minus": [
+  [
+   2,
+   3
+  ],
+  [
+   8,
+   5
+  ],
+  [
+   12,
+   22
+  ],
+  [
+   1,
+   3
+  ],
+  [
+   2,
+   4
+  ]
+ ],
+ "k_ausreisser": [
+  false,
+  true,
+  true,
+  false,
+  false
+ ],
+ "gewinn": false,
+ "median_s_je_aufnahme": -1.11,
+ "median_ohne_beste": -1.26,
+ "gezaehlte_seeds": 3,
+ "positive_seeds": 0,
+ "bestaetigung_mensch_median": -0.0006,
+ "status": "nicht_bestaetigt"
+}

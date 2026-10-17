@@ -240,7 +240,7 @@ verschiedene Punkte, 4.5 s je Punkt.
 Simon: Split-Screen-Werbung ist Werbung, Ausnahme Let's Dance (dort ist der Split-Screen Teil der Sendung, die Labels bleiben). Steht in der Qwen-Frage (
 `~/ml/vlm-exp/vlm_wisch.py`, Sicherung `.vor-splitscreen-20261017`).
 
-* **Schiedsrichter-Satz** `~/.cache/tvd-train-archive/schiri-satz-2026-10-17.json`:
+* **Schiedsrichter-Satz** `~/.cache/tvd-train-archive/schiri-satz-2026-10-17b.json`: 60 Trainingsaufnahmen mit Quelle ohne Menschenlabel (fallen im Schiedsrichter-Modus aus dem Training von K und Arm) plus
   Ledger test, nicht im Messsatz, mit Features, ohne Menschenlabel (119;
   davon nur die mit Quelle bekommen einen Dump unter
   `~/.cache/tv-detect-daemon/emit-signals-schiri`). Nie im Training des

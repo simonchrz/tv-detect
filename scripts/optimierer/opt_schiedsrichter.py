@@ -62,7 +62,10 @@ sys.path.insert(0, str(HIER))
 import opt_lauf as L  # noqa: E402
 
 CACHE_Q = L.CACHE / "schiedsrichter-qwen.jsonl"
-SCHIRI_SATZ = L.ARCH / "schiri-satz-2026-10-17.json"
+# 119 Testaufnahmen ohne Menschenlabel (nur ~20 haben noch eine Quelle fuer
+# den Dump) + 60 Trainingsaufnahmen ohne Menschenlabel ("aus_training"), die
+# im Schiedsrichter-Modus aus dem Training von K UND Arm fallen.
+SCHIRI_SATZ = L.ARCH / "schiri-satz-2026-10-17b.json"
 SCHIRI_DUMPS = L.C / "tv-detect-daemon/emit-signals-schiri"
 PY_TORCH = "/Users/simon/ml/tv-classifier/.venv/bin/python"
 PY_MLX = str(Path.home() / "ml/vlm-exp/.venv/bin/python")
@@ -105,11 +108,13 @@ def bloecke(a):
     L.bewerte, L.replay = bewerte, replay
     satz = a.satz
     if schiri:
-        uu = json.loads(SCHIRI_SATZ.read_text())["uuids"]
+        ss = json.loads(SCHIRI_SATZ.read_text())
+        uu, raus = ss["uuids"], set(ss["aus_training"])
         orig_saetze = L.saetze
 
         def saetze():
             S = orig_saetze()
+            S["training"] = [u for u in S["training"] if u not in raus]
             assert not set(uu) & (set(S["training"]) | set(S["kalibrierung"]))
             S["entwicklung"] = uu
             return S

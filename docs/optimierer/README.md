@@ -253,3 +253,20 @@ Simon: Split-Screen-Werbung ist Werbung, Ausnahme Let's Dance (dort ist der Spli
   4/5 Seeds vorn sieht, Median ≥ +0.5 s je Aufnahme, und die menschliche
   Bestätigung nicht unter −0.002 liegt. Kandidat heißt weiter nur:
   Simon entscheidet, das Nachtgate bleibt menschlich.
+* **Erster Durchgang 17.10. abends (oQ6, 76 Aufnahmen):** 018, 021, 025
+  kamen nach der vorläufigen Regel alle als Kandidat heraus, mit fast
+  gleichen Zahlen. Zwei Ursachen, beide jetzt in der Regel:
+  1. K ist auf diesem Satz in Seed 1 und 2 instabil (196/211 statt ~165
+     Blöcke, 1.3–1.8 h mehr Werbung); dort gewinnt jeder Arm um
+     1300–1900 s. Gegenprobe K gegen K über stabile Seeds: höchstens
+     0.32 s je Aufnahme. **K-Seeds mit > 3 % Abweichung der Werbezeit vom
+     K-Median zählen nicht.**
+  2. In den stabilen Seeds hängt der Gewinn an 1–2 Aufnahmen, vor allem
+     `dvr-super-rtl-1781112000` (gestörte Quelle; K erfindet in jedem Seed
+     einen 15-min-Block über einer Toggo-Serie, Bild geprüft, Qwen hat
+     recht). **Der Gewinn muss auch ohne die 2 besten Aufnahmen je Seed
+     tragen.**
+  Danach: alle drei `nicht_bestaetigt` (Median ohne beste −0.16 / 0.47 /
+  −0.16 s). Auffällig bleibt: Qwen ist an Stellen, wo der Arm Werbung
+  ergänzt, meist unsicher; sicher urteilt es fast nur dort, wo der Arm
+  Werbung wegnimmt. Die Regel sieht Zugaben also schlechter als Wegnahmen.

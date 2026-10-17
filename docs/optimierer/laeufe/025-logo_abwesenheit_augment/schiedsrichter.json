@@ -1,0 +1,66 @@
+{
+ "lauf": "025-logo_abwesenheit_augment",
+ "satz": "0e62ac1e1275",
+ "aufnahmen": 76,
+ "punkte": 399,
+ "sicher": 228,
+ "delta_qwen_s": [
+  336.0,
+  1308.0,
+  1884.0,
+  120.0,
+  324.0
+ ],
+ "qwen_s_je_aufnahme": [
+  4.42,
+  17.21,
+  24.79,
+  1.58,
+  4.26
+ ],
+ "gewinn": false,
+ "median_s_je_aufnahme": 4.26,
+ "positive_seeds": 3,
+ "bestaetigung_mensch_median": -0.0001,
+ "status": "nicht_bestaetigt",
+ "ohne_beste_s_je_aufnahme": [
+  -0.16,
+  8.84,
+  14.53,
+  -1.42,
+  0.63
+ ],
+ "aufnahmen_plus_minus": [
+  [
+   4,
+   1
+  ],
+  [
+   8,
+   2
+  ],
+  [
+   11,
+   7
+  ],
+  [
+   5,
+   2
+  ],
+  [
+   6,
+   2
+  ]
+ ],
+ "status_alt_17_10": "kandidat",
+ "median_ohne_beste": -0.16,
+ "regel": "ab 17.10. abends: K-Ausreisser-Seeds zaehlen nicht; Gewinn muss auch ohne die 2 besten Aufnahmen je Seed tragen",
+ "k_ausreisser": [
+  false,
+  true,
+  true,
+  false,
+  false
+ ],
+ "gezaehlte_seeds": 3
+}

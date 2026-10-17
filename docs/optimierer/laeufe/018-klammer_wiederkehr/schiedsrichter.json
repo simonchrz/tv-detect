@@ -1,0 +1,66 @@
+{
+ "lauf": "018-klammer_wiederkehr",
+ "satz": "0e62ac1e1275",
+ "aufnahmen": 76,
+ "punkte": 405,
+ "sicher": 228,
+ "delta_qwen_s": [
+  336.0,
+  1344.0,
+  1752.0,
+  216.0,
+  252.0
+ ],
+ "qwen_s_je_aufnahme": [
+  4.42,
+  17.68,
+  23.05,
+  2.84,
+  3.32
+ ],
+ "gewinn": false,
+ "median_s_je_aufnahme": 3.32,
+ "positive_seeds": 3,
+ "bestaetigung_mensch_median": 0.0013,
+ "status": "nicht_bestaetigt",
+ "ohne_beste_s_je_aufnahme": [
+  -0.16,
+  8.68,
+  13.11,
+  -0.47,
+  -0.16
+ ],
+ "aufnahmen_plus_minus": [
+  [
+   4,
+   3
+  ],
+  [
+   8,
+   5
+  ],
+  [
+   11,
+   9
+  ],
+  [
+   5,
+   4
+  ],
+  [
+   4,
+   3
+  ]
+ ],
+ "status_alt_17_10": "kandidat",
+ "median_ohne_beste": -0.16,
+ "regel": "ab 17.10. abends: K-Ausreisser-Seeds zaehlen nicht; Gewinn muss auch ohne die 2 besten Aufnahmen je Seed tragen",
+ "k_ausreisser": [
+  false,
+  true,
+  true,
+  false,
+  false
+ ],
+ "gezaehlte_seeds": 3
+}

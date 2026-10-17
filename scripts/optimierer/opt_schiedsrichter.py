@@ -74,6 +74,8 @@ PY_MLX = str(Path.home() / "ml/vlm-exp/.venv/bin/python")
 # Mensch; 018 (Entwicklung +0.0034) las +0.8 s je Aufnahme.
 GEWINN_S_JE_AUFNAHME = 0.5
 GEWINN_SEEDS = 4
+K_AUSREISSER = 0.03  # K-Seed mit >3 % mehr/weniger Werbezeit als der K-Median zaehlt nicht
+OHNE_BESTE = 2  # Gewinn muss auch ohne die 2 besten Aufnahmen je Seed tragen
 BEST_MENSCH_MIN = -0.002  # menschliche Bestaetigung darf nicht klar schlechter sein
 OFFS = (-6, -3, 0, 3, 6)
 RAND = 6  # nur so weit vom Rand, dass alle 5 Bilder (t-6..t+6) existieren
@@ -310,6 +312,7 @@ def auswerten(e, pk, cache, a):
                 stat["qwen_gleich_mensch"] += int(q == mw)
     for i, (bk, ba) in enumerate(zip(e["bloecke"][k], e["bloecke"][arm])):
         dq = dm = 0.0
+        je_auf = {}
         for u, ts in pk.items():
             if u not in bk or u not in ba:
                 continue
@@ -322,19 +325,30 @@ def auswerten(e, pk, cache, a):
                 q = qwen_binaer(cache[(u, t)], a.schwelle)
                 if q is not None:
                     w = q == "werbung"
-                    dq += (int(ma[t] == w) - int(mk[t] == w)) * a.abstand
+                    d = (int(ma[t] == w) - int(mk[t] == w)) * a.abstand
+                    dq += d
+                    je_auf[u] = je_auf.get(u, 0) + d
                 if mm is not None:
                     dm += (int(ma[t] == mm[t]) - int(mk[t] == mm[t])) * a.abstand
-        je_seed.append({"seed": e["seeds"][i], "delta_qwen_s": dq, "delta_mensch_s": dm})
+        beste = sorted((x for x in je_auf.values() if x > 0), reverse=True)[:OHNE_BESTE]
+        je_seed.append({"seed": e["seeds"][i], "delta_qwen_s": dq, "delta_mensch_s": dm,
+                        "ohne_beste_s": dq - sum(beste),
+                        "aufnahmen_plus": sum(x > 0 for x in je_auf.values()),
+                        "aufnahmen_minus": sum(x < 0 for x in je_auf.values())})
     # Menschliche Gesamtrechnung ueber ALLE Sekunden aus dem Lauf selbst (Fehlersekunden).
     voll = []
     for rk, ra in zip(e["laeufe"][k], e["laeufe"][arm]):
         voll.append(sum(rk["ursachen"].values()) - sum(ra["ursachen"].values()))
     n_auf = len(e["dauer"])
-    return {"arm": arm, "satz": e.get("satz"), "aufnahmen": n_auf, **stat,
+    kw = [sum(b - a_ for bl in bk.values() for a_, b in bl) for bk in e["bloecke"][k]]
+    kmed = float(np.median(kw))
+    k_aus = [bool(abs(x - kmed) > K_AUSREISSER * kmed) for x in kw]
+    return {"k_ausreisser": k_aus,"arm": arm, "satz": e.get("satz"), "aufnahmen": n_auf, **stat,
             "qwen_s_je_aufnahme": [round(s["delta_qwen_s"] / n_auf, 2) for s in je_seed],
             "qwen_trefferquote": round(stat["qwen_gleich_mensch"] / max(1, stat["mit_mensch"]), 3),
             "delta_qwen_s": [s["delta_qwen_s"] for s in je_seed],
+            "ohne_beste_s_je_aufnahme": [round(s["ohne_beste_s"] / n_auf, 2) for s in je_seed],
+            "aufnahmen_plus_minus": [[s["aufnahmen_plus"], s["aufnahmen_minus"]] for s in je_seed],
             "delta_mensch_punkte_s": [s["delta_mensch_s"] for s in je_seed],
             "delta_mensch_voll_s": voll,
             "iou_delta": [round(ra["iou_mittel"] - rk["iou_mittel"], 4)
@@ -345,13 +359,25 @@ def auswerten(e, pk, cache, a):
 def urteil_schiri(b, best_mensch):
     """Gewinn: in >= GEWINN_SEEDS von 5 Seeds hat der Arm an den sicheren
     Qwen-Stellen mehr recht als K, und der Median liegt bei mindestens
-    GEWINN_S_JE_AUFNAHME. Kandidat, wenn dazu die menschliche Bestaetigung
-    (falls gemessen) nicht klar schlechter ist."""
-    je = b["qwen_s_je_aufnahme"]
-    gewinn = (sum(x > 0 for x in je) >= GEWINN_SEEDS
-              and float(np.median(je)) >= GEWINN_S_JE_AUFNAHME)
+    GEWINN_S_JE_AUFNAHME -- auch nach Abzug der OHNE_BESTE besten Aufnahmen
+    je Seed (17.10.: 018/021/025 gewannen fast nur an EINER Aufnahme, in der K
+    einen 15-min-Phantomblock erfindet). Kandidat, wenn dazu die menschliche
+    Bestaetigung (falls gemessen) nicht klar schlechter ist."""
+    # Seeds, in denen K selbst ausreisst (17.10.: K-Seeds 1+2 mit 1.3-1.8 h
+    # Phantomwerbung), zaehlen nicht -- dort gewinnt jeder Arm.
+    gut = [not x for x in b.get("k_ausreisser", [False] * len(b["qwen_s_je_aufnahme"]))]
+    je = [x for x, g in zip(b["qwen_s_je_aufnahme"], gut) if g]
+    ob = [x for x, g in zip(b.get("ohne_beste_s_je_aufnahme", b["qwen_s_je_aufnahme"]), gut) if g]
+    noetig = max(1, len(je) - (len(gut) - GEWINN_SEEDS))  # hoechstens so viele Nieten wie bei 5 Seeds
+    gewinn = (len(je) >= 3
+              and sum(x > 0 for x in je) >= noetig
+              and float(np.median(je)) >= GEWINN_S_JE_AUFNAHME
+              and sum(x > 0 for x in ob) >= noetig
+              and float(np.median(ob)) >= GEWINN_S_JE_AUFNAHME)
     mensch_ok = best_mensch is None or best_mensch >= BEST_MENSCH_MIN
-    return {"gewinn": bool(gewinn), "median_s_je_aufnahme": float(np.median(je)),
+    return {"gewinn": bool(gewinn), "median_s_je_aufnahme": float(np.median(je)) if je else None,
+            "median_ohne_beste": float(np.median(ob)) if ob else None,
+            "gezaehlte_seeds": int(sum(gut)),
             "positive_seeds": int(sum(x > 0 for x in je)),
             "bestaetigung_mensch_median": best_mensch,
             "status": "kandidat" if gewinn and mensch_ok else "nicht_bestaetigt"}
@@ -394,7 +420,9 @@ def lauf(a):
     b = json.loads(U.read_text())[0]
     best = u.get("bestaetigung", {}).get("median_delta")
     erg = {"lauf": a.lauf, "satz": json.loads(SCHIRI_SATZ.read_text())["hash"],
-           **{k: b[k] for k in ("aufnahmen", "punkte", "sicher", "delta_qwen_s", "qwen_s_je_aufnahme")},
+           **{k: b[k] for k in ("aufnahmen", "punkte", "sicher", "delta_qwen_s", "qwen_s_je_aufnahme",
+                               "ohne_beste_s_je_aufnahme", "aufnahmen_plus_minus",
+                               "k_ausreisser")},
            **urteil_schiri(b, best)}
     ziel.write_text(json.dumps(erg, indent=1))
     print(json.dumps(erg, ensure_ascii=False))

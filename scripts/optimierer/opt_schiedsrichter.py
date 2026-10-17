@@ -368,6 +368,11 @@ def lauf(a):
         sys.exit("Schiedsrichter nur nach erfuelltem Entwicklungs-Urteil.")
     if L.code_abdruck(L.arm_laden(v["arm"])) != v["code"]:
         sys.exit("Code geaendert seit der Registrierung -- neu registrieren.")
+    if (SCHIRI_DUMPS / ".laeuft").exists():
+        # Halber Satz waere ein anderer Satz -- dann lieber spaeter nachholen.
+        print("VERSCHOBEN: Dump-Kampagne fuer den Schiedsrichter-Satz laeuft noch; "
+              "der Status aus der Bestaetigung gilt, Nachholen von Hand.")
+        sys.exit(5)
     B = L.CACHE / "schiri" / f"lauf-{a.lauf}.json"
     U = B.with_suffix(".urteil.json")
     B.parent.mkdir(parents=True, exist_ok=True)

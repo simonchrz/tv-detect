@@ -1,0 +1,10 @@
+{
+ "nr": 50,
+ "arm": "ocr_hinweis_eigentitel",
+ "hypothese": "Die Spalte ocr_hinweis wirft zwei entgegengesetzt gelabelte Formen zusammen. Eine Programmhinweis-Karte auf eine FREMDE Sendung ist ein Trailer im Werbeblock. Eine Karte auf die EIGENE Sendung (ein Titelwort der Aufnahme steht im OCR-Text) ist eine Bauchbinde oder Eigenwerbung in der laufenden Sendung. Der Arm trennt beides: ocr_hinweis zaehlt nur noch fremde Titel, und eine neue Spalte hinweis_eigen markiert Hinweise auf die eigene Sendung, mit demselben +-10-s-Fenster wie ocr_spalten.py. Das soll die erfundene Werbung an Eigenwerbungs-Bauchbinden senken, ohne die Trailer-Evidenz (Schwaeche 1) zu verduennen.",
+ "begruendung": "Fehlerposten: NN erfindet / Trailer und Programmhinweise (README Schwaeche 1). Gemessen auf dem Trainingsteil (191 von 665 Aufnahmen mit gueltiger OCR-Spur), Werbeanteil je OCR-Fund: Hinweis mit fremdem Titel 0.93 (n=7708), Hinweis mit eigenem Titel 0.21 (n=505). Werbemarker bleibt unangetastet, weil Countdown-Spots mit Sendungsname Werbung sind. Im OOF-Proxy (K-Spalten, MLP 96, 3er-Ensemble, Haelften nach sha1, 2 Seeds) sinken die Zeilenfehler in der Nur-eigen-Zone von 97 auf 45 bzw. von 95 auf 38 (falsche Werbung 95 auf 24 bzw. 94 auf 25), gesamt -411 bzw. -126 Zeilenfehler. Nicht im Friedhof: 004 ocr_logo_fenster nutzte gerichtete OCR- und Logo-Fenster (-0.0023), und 022/039-041 werteten SigLIP-Text bzw. Whisper aus. Den OCR-Text gegen den Titel der Aufnahme hat noch kein Arm genutzt. Der Titel ist im Eval erlaubt und vorhanden, kein Label wird verwendet und kein Zufall. Ein gerichtetes Fremd-Fenster habe ich neu geprueft und weggelassen (logo >= 0.5 nur 0.22 Werbung, das waere eine Wiederholung von 004). Klasse merkmale laut Bandit (Zug 0.48). Arm unter /Users/simon/src/tv-detect/scripts/optimierer/arme/ocr_hinweis_eigentitel.py, Befund daneben in ocr_hinweis_eigentitel.befund.md.",
+ "regel": "gewinn",
+ "klasse": "merkmale",
+ "code": "cc1e85cf0881",
+ "beschreibung": "OCR-Hinweis nach Titel getrennt: ocr_hinweis nur fuer fremde Titel, neue Spalte hinweis_eigen fuer Hinweise auf die eigene Sendung"
+}

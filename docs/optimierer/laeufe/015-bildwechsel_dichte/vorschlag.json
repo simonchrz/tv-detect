@@ -1,0 +1,10 @@
+{
+ "nr": 15,
+ "arm": "bildwechsel_dichte",
+ "hypothese": "Der Kopf sieht jede Sekunde einzeln. Wie schnell sich das Bild in der Umgebung verändert, sieht er nicht: Werbung schneidet schnell, Sendung verweilt. Zwei Spalten aus dem Backbone (Mittel von 1-cos zu t-4 s über ±30 s und Anteil stiller Sekunden im selben Fenster) sollen die Verwechslungszonen entschärfen, in denen ein Einzelbild wie Sendung aussieht.",
+ "begruendung": "Fehlerposten: Verwechslungszonen (13 % der Sekunden, 45 % der Fehler, Memory fehler_sitzen_in_der_repraesentation). Befund des abgelehnten Arms (docs/optimierer/abgelehnt/bildwechsel_dichte.befund.md): Fenster-Mittel trennt allein mit AUC 0.868; im Proxy sinkt der Fehler in den Zonen um ein Drittel, und der Gewinn bleibt nach Glättung der Vorhersage über ±32 s fast voll, ist also keine verkappte Dekoder-Glättung. Abgelehnt wurde er damals nur wegen der Nähe zu den temporalen Spalten. Abgrenzung: O8/O8b waren Spalten aus dem NN-Signal bzw. der Position, 004 Fenster über OCR-Karten und Logo; hier ist es eine Größe aus dem Bildinhalt. Vorprüfung 17.10. nur auf dem Trainingsteil: roher Backbone trennt besser als zentrierter (AUC 0.917/0.934 gegen 0.874 global, 0.702 je Aufnahme); Still-Schwelle 0.1 (AUC 0.77, Korrelation zum Fenster-Mittel -0.72). Erste Messung gegen das neue K (ohne O25). Risiko: Fenster verschmiert Kanten (im Proxy Kantenfehler unverändert), 004 verlor mit einem Fenster-Merkmal.",
+ "regel": "gewinn",
+ "klasse": "merkmale",
+ "code": "28d00a071ff1",
+ "beschreibung": "Merkmale: Bilddynamik (1-cos Backbone zu t-4 s) als Mittel und Still-Anteil ueber +-30 s (2 Spalten)"
+}

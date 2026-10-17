@@ -69,13 +69,26 @@ def zweitmeinung(m, schwelle, tmp):
             r = json.loads(z)
         except ValueError:
             continue
-        if r.get("anlass") == "korrektur":   # schon geklaert (z. B. 16.10.)
+        # Geklaert ist eine Stelle, wenn sie korrigiert wurde (z. B. 16.10.) oder
+        # Simon die Zweitmeinungskarte schon beantwortet hat -- egal wie. Sonst
+        # liest der naechste Lauf seine Bestaetigung als neue Antwort und
+        # markiert dieselbe Stelle wieder (17.10.: prosieben 1781344194@1023
+        # zweimal bestaetigt, zweimal neu markiert).
+        if r.get("anlass") in ("korrektur", "zweitmeinung"):
             korrigiert.add((r.get("uuid"), int(round(float(r.get("t", 0))))))
         if (r.get("ts", 0) <= stand["bis_ts"] or r.get("von") or r.get("kontrolle")
-                or r.get("anlass") == "korrektur" or r.get("urteil") not in ("werbung", "sendung", "trailer")
+                or r.get("anlass") in ("korrektur", "zweitmeinung")
+                or r.get("urteil") not in ("werbung", "sendung", "trailer")
                 or float(r.get("t", 0)) < 60):
             continue
         je[(r["uuid"], int(round(float(r["t"]))))] = r
+    # Schon in zweitmeinung.txt eingetragene Stellen nicht doppelt anhaengen.
+    offen = subprocess.run(["ssh", "raspberrypi5lan", f"cat {ZM_DATEI} 2>/dev/null"],
+                           capture_output=True, timeout=60).stdout.decode()
+    for z in offen.splitlines():
+        f = z.split("\t")
+        if len(f) >= 2 and f[1].strip().isdigit():
+            korrigiert.add((f[0], int(f[1])))
     je = {k: v for k, v in je.items() if k not in korrigiert}
     if not je:
         return {"gelesen": 0, "markiert": 0}

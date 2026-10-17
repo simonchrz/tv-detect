@@ -1,0 +1,115 @@
+{
+ "entwicklung": {
+  "erfuellt": false,
+  "teile": [
+   false,
+   false,
+   true,
+   true
+  ],
+  "median_delta": 0.0,
+  "deltas": [
+   -0.0008,
+   0.0,
+   0.0043,
+   0.0048,
+   -0.0006
+  ],
+  "k_mittel": 0.9341,
+  "delta_aufnahme_median": 0.0003,
+  "je_sender": {
+   "comedy-central": {
+    "n": 4,
+    "delta": 0.0358
+   },
+   "disney-channel": {
+    "n": 4,
+    "delta": -0.0021
+   },
+   "kabel-eins": {
+    "n": 9,
+    "delta": 0.0036
+   },
+   "nick": {
+    "n": 7,
+    "delta": 0.0151
+   },
+   "prosieben": {
+    "n": 15,
+    "delta": -0.0007
+   },
+   "rtl": {
+    "n": 6,
+    "delta": -0.0077
+   },
+   "rtlzwei": {
+    "n": 15,
+    "delta": 0.0002
+   },
+   "sat-1": {
+    "n": 2,
+    "delta": 0.0038
+   },
+   "sat-1-gold": {
+    "n": 1,
+    "delta": -0.001
+   },
+   "sixx": {
+    "n": 5,
+    "delta": -0.0008
+   },
+   "super-rtl": {
+    "n": 1,
+    "delta": -0.1102
+   },
+   "vox": {
+    "n": 7,
+    "delta": 0.0007
+   }
+  },
+  "ursachen_sekunden": {
+   "kante": {
+    "kontrolle": 1589,
+    "delta": -2
+   },
+   "nn_erfindet": {
+    "kontrolle": 1262,
+    "delta": 152
+   },
+   "dekoder_erfindet": {
+    "kontrolle": 185,
+    "delta": -13
+   },
+   "nn_verpasst": {
+    "kontrolle": 1099,
+    "delta": -50
+   },
+   "dekoder_verpasst": {
+    "kontrolle": 62,
+    "delta": -17
+   }
+  },
+  "grosse_verluste": [
+   [
+    "dvr-super-rtl-1781581800",
+    -0.11
+   ]
+  ],
+  "groesste_gewinne": [
+   [
+    "dvr-nick-1782930900",
+    0.117
+   ],
+   [
+    "dvr-comedy-central-1781026800",
+    0.091
+   ],
+   [
+    "dvr-comedy-central-1778764500",
+    0.041
+   ]
+  ],
+  "sekunden": 188
+ },
+ "status": "verworfen"
+}

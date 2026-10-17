@@ -40,7 +40,8 @@ Beide Teile halten die Optimierer-Sperre (opt_lauf.schutz) -- Qwen und
 Kopf-Training liegen nie gleichzeitig im Speicher.
 
 Konvention (Simon 17.10.): Split-Screen-Werbung (Spot gross, Sendung im
-kleinen Fenster) ist Werbung. Steht in der Qwen-Frage (vlm_wisch.FRAGE); der
+kleinen Fenster) ist Werbung, ausser bei Let's Dance (dort Teil der Sendung).
+Steht in der Qwen-Frage (vlm_wisch.FRAGE); der
 Zwischenspeicher gilt nur fuer dieselbe Fassung der Frage.
 """
 import hashlib

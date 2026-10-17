@@ -237,7 +237,7 @@ verschiedene Punkte, 4.5 s je Punkt.
 
 ### Seit 17.10.: Schiedsrichter im Kreislauf
 
-Simon: Split-Screen-Werbung ist Werbung (steht jetzt in der Qwen-Frage,
+Simon: Split-Screen-Werbung ist Werbung, Ausnahme Let's Dance (dort ist der Split-Screen Teil der Sendung, die Labels bleiben). Steht in der Qwen-Frage (
 `~/ml/vlm-exp/vlm_wisch.py`, Sicherung `.vor-splitscreen-20261017`).
 
 * **Schiedsrichter-Satz** `~/.cache/tvd-train-archive/schiri-satz-2026-10-17.json`:

@@ -234,3 +234,22 @@ verschiedene Punkte, 4.5 s je Punkt.
   Konvention entschieden ist. Noch nicht im Kreislauf; offen sind die
   Konvention und die geringe Abdeckung (Schwelle senken kostet ~8 Punkte
   Trefferquote).
+
+### Seit 17.10.: Schiedsrichter im Kreislauf
+
+Simon: Split-Screen-Werbung ist Werbung (steht jetzt in der Qwen-Frage,
+`~/ml/vlm-exp/vlm_wisch.py`, Sicherung `.vor-splitscreen-20261017`).
+
+* **Schiedsrichter-Satz** `~/.cache/tvd-train-archive/schiri-satz-2026-10-17.json`:
+  Ledger test, nicht im Messsatz, mit Features, ohne Menschenlabel (119;
+  davon nur die mit Quelle bekommen einen Dump unter
+  `~/.cache/tv-detect-daemon/emit-signals-schiri`). Nie im Training des
+  Optimierers, nie im Golden.
+* **Ablauf:** Nach erfüllter Entwicklung misst der Läufer wie bisher die
+  menschliche Bestätigung (22) und dann `opt_schiedsrichter.py lauf NNN`
+  (fortsetzbar, Rückgabe 3 = erneut aufrufen). Ergebnis
+  `laeufe/NNN/schiedsrichter.json`, sein `status` ist das Endurteil.
+* **Regel (vorläufig, aus der Eichung):** Kandidat, wenn Qwen den Arm in
+  4/5 Seeds vorn sieht, Median ≥ +0.5 s je Aufnahme, und die menschliche
+  Bestätigung nicht unter −0.002 liegt. Kandidat heißt weiter nur:
+  Simon entscheidet, das Nachtgate bleibt menschlich.

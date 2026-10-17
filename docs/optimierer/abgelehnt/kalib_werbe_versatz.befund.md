@@ -1,0 +1,21 @@
+Vor dem HSMM verschiebt nur der Versatz der Kalibrierung die Block-IoU, Temperatur und Form nicht. Der Gewinn kommt nur im Tausch: rund 2.5 Sekunden zusätzlich geschnittene Sendung je wiedergefundener Werbesekunde. Ein Pareto-Hebel ist das nicht.
+
+Klasse daten gezogen (Zug 0.50). Sie ist ausgeschöpft, siehe 034, leer_aufnahmen_ersatz und produktions_gewichte_abbild, und Gewichte können den Platt-Achsenabschnitt ohnehin nicht verschieben. Daher nachbearbeitung (zweithöchster Zug 0.39), wie im Sitzungshinweis "Kalibrierung/Temperatur vor dem HSMM".
+Proxy: Scratchpad px.npz (Logit-Mittel aus 3 Köpfen, out-of-fold, K-Spalten). 134 Trainingsaufnahmen mit Signal-Dump, K auf den übrigen trainiert, opt_lauf.platt, Produktions-HSMM, IoU gegen meta-ads, 2 Seeds. Skripte: Scratchpad kal/k1..k8.py.
+Δ IoU-Mittel Seed0 | Seed1 (Median, Fehlersekunden FP/FN nach dem Dekoder; Basis 0.9330/0.9326, FP 7088/6475, FN 5574/5732):
+* Temperatur nach Platt x2: −0.0017 | −0.0008; x0.5: −0.0005 | −0.0028. Die Skala ist also schon gut.
+* Spreizung sign·C·(|z|/C)^g vor Platt: g 1.3 +0.0007 | −0.0008 (FP −10..−16 %, FN +1..+6 %, Median −0.0005 | −0.0034); g 1.6 und 2.0 negativ. g 0.7 ≈ 017: neutral.
+* Medianfilter 5/9/21 s: +0.0008..+0.0013 | −0.0004..0.0000. Einseitige Skala (nur Show-Seite / k): neutral bis −0.001.
+* Bias nach Platt +1 Logit: +0.0041 | +0.0063 (Median +0.0067 | +0.0034, 34/21 besser/schlechter). +2: −0.0025 | +0.0002. −1: −0.032.
+* Kalibrier-Logits um δ verschoben (= dieser Arm): δ 0.5 +0.0018 | +0.0029 (FP +20 %, FN −13 %); δ 1.0 +0.0045 | +0.0042 (Median +0.0069 | +0.0037, 34/14 und 30/13, min −0.12, FP 10919/10295 statt 7088/6475, FN 4331/4574 statt 5574/5732); δ 1.5 bis 3 kein Zugewinn, mehr Streuung.
+* Kombination aus Spreizung und Versatz: kein Punkt mit FP ≤ Basis und IoU-Gewinn. Jeder IoU-Gewinn kostet FP.
+Ursache: block_iou wird je Wahrheitsblock gemittelt. Phantomblöcke kosten fast nichts, ein zu kurzer oder verpasster Block kostet voll. Die Logloss-Schwelle von Platt (z0 ≈ +1.7 roh, Klassengewichte ausgeglichen) ist für diese Metrik zu sendungsfreundlich.
+Platt-Falle für spätere Arme: Ein Nachbearbeiten, das |z| über ~13.8 treibt (z^g ohne Normierung, z + Fenstermittel), lässt opt_lauf.platt divergieren. Die Ausgabe wird dann binär ±13.8, und der Proxy zeigt Scheingewinne von bis zu +0.007.
+Friedhof O9 (Ad-Bias, 14.08., +0.0004): Gemessen wurde damals mit dem August-Kopf, vor OCR/SigLIP/MLP7 und vor O33 (inner-show 90 s), auf 22 Aufnahmen. Der Proxy zeigt jetzt das Zehnfache.
+Lesart für Simon: Erfüllt der Arm die Entwicklung, belohnt das Urteil einen Schwellen-Tausch. ursachen_sekunden muss dann ein deutliches Plus bei nn_erfindet zeigen. Der Arm ist kein Kopf-Kandidat, sondern eine Frage an die Konvention ("im Zweifel Sendung", AdBiasLP-Kommentar) und an die Metrik.
+
+## Abgelehnt
+
+- Technisch sauber: Keine Lecks (nutzt nur teil und p, keine Labels, meta, uuids oder Titel). Kein Schreiben, kein Prozess, kein Netz, kein globaler Zustand. Der Eval-Teil bleibt unverändert, ein Train/Serve-Bruch kann nicht entstehen, und schritt spielt keine Rolle. Ein Import mit synthetischen Arrays der Länge 1350 lief ohne Fehler: Ausgabe endlich, Form und dtype stimmen, Eval und Training sind identisch zur Eingabe. Gegen opt_lauf.platt mit sauberen synthetischen Daten verschiebt der Arm die Eval-Logits um 0.742 bei Streuung 3.6e-15. Das ist ein reiner Achsenabschnitt von a*DELTA, wie behauptet. Regeltyp gewinn passt. Daran scheitert der Arm nicht.
+- Aber er ist inhaltlich ein Dekoder-Sweep und ein Wiedergänger von O9. Ein globaler Versatz Richtung Werbung ist dasselbe wie --hsmm-ad-bias (Ledger §3z, +0.0004 bei 6 besser gegen 11 schlechter). README 'Schon entschieden' nennt ausdrücklich 'Dekoder-Sweeps'. Die Begründung erklärt zwar, warum die alte Zahl veraltet ist (August-Kopf, vor MLP7 und O33, 22 Aufnahmen). Sie zeigt aber nicht, dass der Hebel etwas anderes misst als O9. Es ist derselbe Regler, nur über Platt statt über den Dekoder eingespeist.
+- Die Hypothese setzt auf den Tausch, den das README verbietet: 'Ein Arm, der eine Zeile senkt und eine andere hebt, verschiebt Fehler, statt sie zu beheben.' Im eigenen Befund: FP-Sekunden 7088 → 10919 (+54 %), FN 5574 → 4331, rund 2.5 s zusätzlich geschnittene Sendung je wiedergefundener Werbesekunde. Der Befund nennt es selbst.

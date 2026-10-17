@@ -30,9 +30,20 @@ ABLAUF
       Qwen-Antworten werden je (Aufnahme, Sekunde) zwischengespeichert, so
       teilen sich Arme die Kosten.
 
+  lauf     NNN-name   (venv tv-classifier; ruft beide Teile als Prozesse)
+      Schiedsrichter-Bestaetigung eines registrierten Laufs auf dem
+      SCHIEDSRICHTER-SATZ (Ledger test, nicht im Messsatz, ohne Menschenlabel,
+      eigene Signal-Dumps). Schreibt laeufe/NNN/schiedsrichter.json, genau
+      einmal. Regel siehe urteil_schiri().
+
 Beide Teile halten die Optimierer-Sperre (opt_lauf.schutz) -- Qwen und
 Kopf-Training liegen nie gleichzeitig im Speicher.
+
+Konvention (Simon 17.10.): Split-Screen-Werbung (Spot gross, Sendung im
+kleinen Fenster) ist Werbung. Steht in der Qwen-Frage (vlm_wisch.FRAGE); der
+Zwischenspeicher gilt nur fuer dieselbe Fassung der Frage.
 """
+import hashlib
 import argparse
 import io
 import json
@@ -50,6 +61,16 @@ sys.path.insert(0, str(HIER))
 import opt_lauf as L  # noqa: E402
 
 CACHE_Q = L.CACHE / "schiedsrichter-qwen.jsonl"
+SCHIRI_SATZ = L.ARCH / "schiri-satz-2026-10-17.json"
+SCHIRI_DUMPS = L.C / "tv-detect-daemon/emit-signals-schiri"
+PY_TORCH = "/Users/simon/ml/tv-classifier/.venv/bin/python"
+PY_MLX = str(Path.home() / "ml/vlm-exp/.venv/bin/python")
+# Vorlaeufige Regel aus der Eichung 17.10. (README): Qwen ist nur an ~40 %
+# der Uneinigkeitsstellen sicher und zaehlt deshalb weniger Sekunden als der
+# Mensch; 018 (Entwicklung +0.0034) las +0.8 s je Aufnahme.
+GEWINN_S_JE_AUFNAHME = 0.5
+GEWINN_SEEDS = 4
+BEST_MENSCH_MIN = -0.002  # menschliche Bestaetigung darf nicht klar schlechter sein
 OFFS = (-6, -3, 0, 3, 6)
 RAND = 6  # nur so weit vom Rand, dass alle 5 Bilder (t-6..t+6) existieren
 
@@ -60,10 +81,19 @@ def bloecke(a):
     aufgerufen, erst fuer K, dann fuer den Arm; replay() liefert die Bloecke."""
     aufrufe = []
     orig_bewerte, orig_replay = L.bewerte, L.replay
+    schiri = a.satz == "schiedsrichter"
 
-    def bewerte(*x, **k):
+    def bewerte(p_eval, ev, truth, tmp, ursachen_aus=None):
         aufrufe.append({})
-        return orig_bewerte(*x, **k)
+        if not schiri:
+            return orig_bewerte(p_eval, ev, truth, tmp, ursachen_aus)
+        # Ohne Menschenlabel gibt es keine IoU; nur die Bloecke zaehlen.
+        import concurrent.futures as cf
+        with cf.ThreadPoolExecutor(8) as ex:
+            for f in [ex.submit(replay, u, p_eval[ev["rec"] == i], tmp)
+                      for i, u in enumerate(ev["uuids"])]:
+                f.result()
+        return {}
 
     def replay(u, p, tmp):
         bl = orig_replay(u, p, tmp)
@@ -72,11 +102,24 @@ def bloecke(a):
         return bl
 
     L.bewerte, L.replay = bewerte, replay
+    satz = a.satz
+    if schiri:
+        uu = json.loads(SCHIRI_SATZ.read_text())["uuids"]
+        orig_saetze = L.saetze
+
+        def saetze():
+            S = orig_saetze()
+            assert not set(uu) & (set(S["training"]) | set(S["kalibrierung"]))
+            S["entwicklung"] = uu
+            return S
+        L.saetze, L.DUMPS, L.wahrheit = saetze, SCHIRI_DUMPS, lambda x: {}
+        satz = "entwicklung"
     roh = Path(a.out).with_suffix(".lauf.json")
-    sys.argv = ["opt_lauf.py", "--arm", a.arm, "--satz", a.satz, "--seeds", str(a.seeds),
+    sys.argv = ["opt_lauf.py", "--arm", a.arm, "--satz", satz, "--seeds", str(a.seeds),
                 "--json", str(roh)]
     L.main()
     erg = json.loads(roh.read_text())
+    erg["satz"] = a.satz
     n = len(erg["seeds"])
     namen = list(erg["laeufe"])
     erg["bloecke"] = {nm: aufrufe[i * n:(i + 1) * n] for i, nm in enumerate(namen)}
@@ -114,12 +157,13 @@ def punkte(erg, abstand, hoechstens):
     return aus
 
 
-def lade_cache():
+def lade_cache(fassung):
     c = {}
     if CACHE_Q.is_file():
         for z in CACHE_Q.read_text().splitlines():
             r = json.loads(z)
-            c[(r["uuid"], r["t"])] = r
+            if r.get("frage") == fassung:
+                c[(r["uuid"], r["t"])] = r
     return c
 
 
@@ -166,9 +210,10 @@ def urteil(a):
     spec.loader.exec_module(qw)
     from PIL import Image
 
+    fassung = hashlib.sha1(qw.FRAGE.encode()).hexdigest()[:8]
     ergs = [json.loads(Path(p).read_text()) for p in a.bloecke]
     alle = [punkte(e, a.abstand, a.max) for e in ergs]
-    cache = lade_cache()
+    cache = lade_cache(fassung)
     offen = {}
     for pk in alle:
         for u, ts in pk.items():
@@ -177,6 +222,18 @@ def urteil(a):
                     offen.setdefault(u, set()).add(t)
     n_offen = sum(len(v) for v in offen.values())
     print(f"{sum(len(t) for pk in alle for t in pk.values())} Punkte, davon {n_offen} neu fuer Qwen", flush=True)
+    if a.zeit and n_offen > a.zeit // 6:
+        # Nur ein Teil in diesem Aufruf (Bilder ~1 s + Qwen ~4.5 s je Punkt);
+        # Rueckgabe 3 heisst: erneut aufrufen, der Zwischenspeicher haelt den Rest.
+        rest, offen = a.zeit // 6, {}
+        for pk in alle:
+            for u, ts in pk.items():
+                for t in ts:
+                    if rest and (u, t) not in cache and t not in offen.get(u, set()):
+                        offen.setdefault(u, set()).add(t)
+                        rest -= 1
+        print(f"  davon jetzt {sum(len(v) for v in offen.values())} (--zeit {a.zeit})", flush=True)
+        a.teil = True
     if n_offen:
         tmp = Path(tempfile.mkdtemp(prefix="schiri-"))
         bedarf = {u: {t + o for t in ts for o in OFFS} for u, ts in offen.items()}
@@ -192,7 +249,7 @@ def urteil(a):
                 for t in sorted(ts):
                     A = [tmp / f"{u}_{t + o:05d}.jpg" for o in OFFS]
                     if not all(p.is_file() for p in A):
-                        r = {"uuid": u, "t": t, "fehlt": True}
+                        r = {"uuid": u, "t": t, "fehlt": True, "frage": fassung}
                     else:
                         B = []
                         for p in A:
@@ -203,7 +260,8 @@ def urteil(a):
                             B.append(q)
                         wa, ca = qw.antwort(m.frage(A, sender, titel.get(u)))
                         wb, cb = qw.antwort(m.frage(B, sender, titel.get(u)))
-                        r = {"uuid": u, "t": t, "a": wa, "ca": round(ca, 4), "b": wb, "cb": round(cb, 4)}
+                        r = {"uuid": u, "t": t, "a": wa, "ca": round(ca, 4), "b": wb, "cb": round(cb, 4),
+                             "frage": fassung}
                     fh.write(json.dumps(r) + "\n")
                     fh.flush()
                     cache[(u, t)] = r
@@ -211,6 +269,8 @@ def urteil(a):
                     if i % 50 == 0:
                         print(f"  {i}/{n_offen}  {(time.time() - t0) / i:.1f} s/Punkt", flush=True)
 
+    if getattr(a, "teil", False):
+        sys.exit(3)
     bericht = []
     for pfad, e, pk in zip(a.bloecke, ergs, alle):
         bericht.append(auswerten(e, pk, cache, a))
@@ -264,7 +324,9 @@ def auswerten(e, pk, cache, a):
     voll = []
     for rk, ra in zip(e["laeufe"][k], e["laeufe"][arm]):
         voll.append(sum(rk["ursachen"].values()) - sum(ra["ursachen"].values()))
-    return {"arm": arm, **stat,
+    n_auf = len(e["dauer"])
+    return {"arm": arm, "satz": e.get("satz"), "aufnahmen": n_auf, **stat,
+            "qwen_s_je_aufnahme": [round(s["delta_qwen_s"] / n_auf, 2) for s in je_seed],
             "qwen_trefferquote": round(stat["qwen_gleich_mensch"] / max(1, stat["mit_mensch"]), 3),
             "delta_qwen_s": [s["delta_qwen_s"] for s in je_seed],
             "delta_mensch_punkte_s": [s["delta_mensch_s"] for s in je_seed],
@@ -274,6 +336,59 @@ def auswerten(e, pk, cache, a):
             "je_seed": je_seed}
 
 
+def urteil_schiri(b, best_mensch):
+    """Gewinn: in >= GEWINN_SEEDS von 5 Seeds hat der Arm an den sicheren
+    Qwen-Stellen mehr recht als K, und der Median liegt bei mindestens
+    GEWINN_S_JE_AUFNAHME. Kandidat, wenn dazu die menschliche Bestaetigung
+    (falls gemessen) nicht klar schlechter ist."""
+    je = b["qwen_s_je_aufnahme"]
+    gewinn = (sum(x > 0 for x in je) >= GEWINN_SEEDS
+              and float(np.median(je)) >= GEWINN_S_JE_AUFNAHME)
+    mensch_ok = best_mensch is None or best_mensch >= BEST_MENSCH_MIN
+    return {"gewinn": bool(gewinn), "median_s_je_aufnahme": float(np.median(je)),
+            "positive_seeds": int(sum(x > 0 for x in je)),
+            "bestaetigung_mensch_median": best_mensch,
+            "status": "kandidat" if gewinn and mensch_ok else "nicht_bestaetigt"}
+
+
+def lauf(a):
+    ld = L.REPO / "docs/optimierer/laeufe" / a.lauf
+    ziel = ld / "schiedsrichter.json"
+    if ziel.exists():
+        sys.exit(f"{ziel} existiert schon -- jeder Lauf wird genau einmal geschiedsrichtert.")
+    v = json.loads((ld / "vorschlag.json").read_text())
+    u = json.loads((ld / "urteil.json").read_text())
+    if not u.get("entwicklung", {}).get("erfuellt"):
+        sys.exit("Schiedsrichter nur nach erfuelltem Entwicklungs-Urteil.")
+    if L.code_abdruck(L.arm_laden(v["arm"])) != v["code"]:
+        sys.exit("Code geaendert seit der Registrierung -- neu registrieren.")
+    B = L.CACHE / "schiri" / f"lauf-{a.lauf}.json"
+    U = B.with_suffix(".urteil.json")
+    B.parent.mkdir(parents=True, exist_ok=True)
+    # In Schritten unter 10 min: erst die Bloecke, dann Qwen in Teilen.
+    # Rueckgabe 3 = noch nicht fertig, denselben Befehl erneut aufrufen.
+    if not B.is_file():
+        r = subprocess.run([PY_TORCH, __file__, "bloecke", v["arm"], "--satz", "schiedsrichter",
+                            "--out", str(B)])
+        if r.returncode != 0:
+            sys.exit(f"bloecke gescheitert, Rueckgabe {r.returncode}")
+        print("WEITER: Bloecke fertig, denselben Befehl erneut aufrufen")
+        sys.exit(3)
+    r = subprocess.run([PY_MLX, __file__, "urteil", str(B), "--out", str(U), "--zeit", "420"])
+    if r.returncode == 3:
+        print("WEITER: Qwen noch nicht fertig, denselben Befehl erneut aufrufen")
+        sys.exit(3)
+    if r.returncode != 0:
+        sys.exit(f"urteil gescheitert, Rueckgabe {r.returncode}")
+    b = json.loads(U.read_text())[0]
+    best = u.get("bestaetigung", {}).get("median_delta")
+    erg = {"lauf": a.lauf, "satz": json.loads(SCHIRI_SATZ.read_text())["hash"],
+           **{k: b[k] for k in ("aufnahmen", "punkte", "sicher", "delta_qwen_s", "qwen_s_je_aufnahme")},
+           **urteil_schiri(b, best)}
+    ziel.write_text(json.dumps(erg, indent=1))
+    print(json.dumps(erg, ensure_ascii=False))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -281,7 +396,8 @@ def main():
     b = sp.add_parser("bloecke")
     b.add_argument("arm")
     b.add_argument("--out", required=True)
-    b.add_argument("--satz", default="entwicklung", choices=["entwicklung", "bestaetigung"])
+    b.add_argument("--satz", default="entwicklung",
+                   choices=["entwicklung", "bestaetigung", "schiedsrichter"])
     b.add_argument("--seeds", type=int, default=5)
     u = sp.add_parser("urteil")
     u.add_argument("bloecke", nargs="+")
@@ -289,8 +405,12 @@ def main():
     u.add_argument("--abstand", type=int, default=12, help="Raster der Punkte in s (Vielfaches von 3)")
     u.add_argument("--max", type=int, default=40, help="hoechstens so viele Punkte je Aufnahme")
     u.add_argument("--schwelle", type=float, default=0.95)
+    u.add_argument("--zeit", type=int, default=0,
+                   help="nur so viele Sekunden Qwen-Arbeit, dann Rueckgabe 3 (fortsetzbar)")
+    w = sp.add_parser("lauf")
+    w.add_argument("lauf", help="registrierter Lauf NNN-name")
     a = ap.parse_args()
-    bloecke(a) if a.cmd == "bloecke" else urteil(a)
+    {"bloecke": bloecke, "urteil": urteil, "lauf": lauf}[a.cmd](a)
 
 
 if __name__ == "__main__":

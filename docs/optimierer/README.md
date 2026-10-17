@@ -21,8 +21,17 @@ bestätigter Arm ist ein **Kandidat für Simon**, die Übertragung in
   Produktion 0.979 (gepaart −0.009, fast ganz aus toggo plus 1780640400 und
   nick 1781550300); Mediane 0.990 gegen 0.992. K fehlen die Gewichtungen
   der Produktion (Alter, Herkunft, Anker, Hygiene) und 25 % der Daten.
-* **Rauschen** (A/A): eine Wiederholung sd ~0.001; drei Sätze à 5
-  Wiederholungen im Median 0.9294 / 0.9304 / 0.9306.
+* **Seit 17.10. ohne O25:** K trainiert wie die Produktion ohne die 90
+  Aufnahmen aus `docs/archiv-ausschluss-o25.json` (Lauf 014 = Kandidat,
+  nicht schlechter). Kalibrierteil unverändert. Läufe bis 014 maßen gegen
+  das alte K; ihre Deltas gelten, die absoluten Werte sind nicht mit
+  späteren vergleichbar.
+* **Rauschen** (A/A, Entwicklungssatz, Seeds 0/50/100 je 5 Wiederholungen):
+  * K ohne O25 (17.10.): Mediane 0.9340 / 0.9340 / 0.9335, eine
+    Wiederholung sd 0.0012–0.0026.
+  * altes K (16.10.): 0.9304 / 0.9306 / 0.9294, sd ~0.001.
+  Das neue K liegt +0.0036 höher, streut je Wiederholung aber etwa doppelt
+  so stark; die Mediane der drei Sätze liegen weiterhin innerhalb 0.0005.
 
 ## Sätze — fest, kein Arm wählt sie
 

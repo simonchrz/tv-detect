@@ -1,0 +1,10 @@
+{
+ "nr": 32,
+ "arm": "werbe_dubletten_entzerrung",
+ "hypothese": "Gleiche Spots stehen im Training dutzend- bis hundertfach im Gradienten: 52 % der Werbezeilen haben ein Nahezu-Duplikat (Backbone-Kosinus > 0.9) in einer anderen Aufnahme, 5 % mehr als 20 Treffer. Der Kopf lernt diese Spots auswendig und verpasst einmalige Werbung: out-of-fold 14-15 % verpasst gegen 0.5 % bei häufig wiederholten. Der Arm wertet Werbezeilen mit (1+n_dup)^-0.5 ab, die Summe der Werbegewichte bleibt gleich. So bekommt die seltene Werbeform (Trailer, neue Spots, Countdown-Spots) mehr Anteil, und nn_verpasst und Kante sinken.",
+ "begruendung": "Gezogen wurde labels (Zug 0.63). Neu geprüft habe ich Decode-Störungen als Label-Frage: isolierte Backbone-Spitzen machen 0.28 % der Zeilen aus, davon sind 18.8 % Werbung (gesamt 23.8 %). Die Störungen sind also sauber als Sendung gelabelt, dort gibt es keinen Hebel. Dazu kommen neun frühere Prüfungen ohne Befund. Deshalb weiche ich auf daten aus (zweithöchster Zug 0.45). Fehlerposten sind NN verpasst und Kante. Beleg: Lauf 019 hat die Gegenrichtung (Duplikate aufwerten mit (1+n)^+0.5) im Messgerät gemessen. Ergebnis -0.0039, 5/5 Wiederholungen negativ, fast ganz über nn_verpasst +32 und Kante +44. Der Proxy hatte damals das Gegenteil vorhergesagt. Die Achse hat im Messgerät also eine klare, vorzeichenfeste Steigung, und die Abwertung wurde nie im Messgerät gemessen, nur im unzuverlässigen Proxy. Das ist keine Variante eines verworfenen Arms in derselben Richtung. Es sind keine Alters- oder Aufnahmegewichte, sondern Zeilengewichte nach Bild-Wiederholung. Es gibt keinen Zufall. Die Zählung nutzt nur Backbone und Labels des Trainingsteils. Befund: /Users/simon/src/tv-detect/scripts/optimierer/arme/werbe_dubletten_entzerrung.befund.md",
+ "regel": "gewinn",
+ "klasse": "daten",
+ "code": "1358f7307fa3",
+ "beschreibung": "Daten: Werbezeilen mit Nahezu-Duplikaten in anderen Trainingsaufnahmen abwerten ((1+n)^-0.5, Klassensumme gleich)"
+}

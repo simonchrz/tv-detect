@@ -6612,3 +6612,16 @@ behalten den alten Wert (gemischt, bewusst nicht ausgeschlossen).
 **Prüfung:** nächste Nächte — Gate-Ergebnis, Golden (L1 unverändert), und ob
 neue Comedy-Central-/Disney-Merkmale (jetzt ~0.9 in der Sendung statt ~0.3)
 den Kopf auf diesen Sendern verschieben.
+
+**Nachtrag 18.10. — Train/Serve-Abgleich über alle Sender (Befund: kein
+zweiter Bruch).** Kopf-Ausgabe der Produktion (Signal-Dumps mit dem Kopf vom
+15.10.) gegen den Nachbau aus den Trainingsmerkmalen (`corpus-label-audit`
+`build_X`/`head_prob`), je Sekunde. 38 Aufnahmen, 11 Sender (28 vorhandene
+Dumps + 10 frische über `dumps-erneuern.py --messsatz`, nur Dump, Ziel
+`emit-signals-trainserve`): Korrelation 0.953–0.998, Seitenwechsel um 0.5
+auf 0–2 % der Sekunden. Der Logo-Fix wirkt sichtbar: Comedy Central mit den
+alten Merkmalen 0.954–0.970 (Seitenwechsel 1.3–2.5 %), mit den neuen
+0.986–0.991 (0.5–1.1 %). Direkter Logo-Vergleich nur für Sender ohne
+Logo-Netz aussagekräftig (der Dump trägt dort den Netzwert, der Kopf den
+Vorlagenwert); der verbleibende Abstand voll/halb ist O27 (bekannt,
+bewusst nicht gebaut). Skript: Scratchpad `trainserve/abgleich.py`.

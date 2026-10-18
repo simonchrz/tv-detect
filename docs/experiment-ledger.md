@@ -6577,3 +6577,38 @@ Trenner (0.45–0.88, zwei X-Plorer), 1791911133 und 1791479120 (leben, kein
 **Prüfung:** nn im Countdown-Spot der nächsten Galileo-Folgen nach der
 nächsten Auslieferung (Auffrischung frühestens 22.10.); Golden-Mitglied
 1784567122 (0.796). Offen: der tägliche Nachschub über die Auto-Bestätigung.
+
+## §3ay. Logo-Spalte im Training an falscher Stelle gemessen (2026-10-18)
+
+*Befund + Fix, kein Experiment.* Audit aller Sender-Vorlagen (Trennschärfe
+Spalte 1280 gegen Labels, AUC je Aufnahme). Zwei Fehler:
+
+1. **Vorlage nicht auf die Bildgröße umgerechnet.** `train-head.py`
+   (`extract_logo_per_second`) dekodiert in Originalgröße und legte die
+   Vorlage roh auf. Die Produktion war nie betroffen: der Daemon dekodiert
+   auf picWidth×0.5 der umgerechneten Vorlage. Also ein Train/Serve-Bruch,
+   nur im Training. Betroffen: Mediathek-Fassungen (1046/1040/784 px) aller
+   Sender und alle Aufnahmen von Sendern mit picWidth ≠ 720 (Comedy Central,
+   Disney, MTV 1024; toggo plus 768). Fix tv-detect 0cd0202
+   (`internal/signals/logo.go`, Paritätstest `logo_skalierung_test.go`: bei
+   gleicher Größe bitgleich). Installiert 18.10. (alte Fassung
+   `~/.local/bin/tv-detect.vor-logo-skalierung-20261018`). In der Produktion
+   ist der Faktor 1 — keine Änderung.
+2. **Nick-Vorlage seit 08.06. eine volle Blockmaske** (Verbreiterung für das
+   Logo-Netz; der Kopf liest aber immer die Vorlage, nie das Netz). Neue Maske
+   mit beiden Logos (Nick oben rechts, Comedy Central+1 oben links, gleicher
+   Rahmen) auf dem Pi; alte als `nick.logo.txt.vor-zwei-logos-20261018`.
+
+**Merkmale neu geschrieben (Simon „ja"):** Spalte 1280 in 51 Einträgen mit
+lokaler Quelle, wie das Training (Letterbox-Versatz, Pi-Vorlagen), mtime
+erhalten. Sicherungen `~/.cache/tvd-optimierer/sicherung-logo-skalierung-20261018/`
+und `…/sicherung-logo-nick-20261018/`. AUC vorher → nachher, Auswahl: Sat.1 1046
+0.49–0.58 → 0.99; ProSieben 1046 0.33/0.50 → 1.00/0.94; RTLZWEI 0.59 → 1.00;
+Sat.1 Gold 0.62–0.81 → 0.98–1.00; Comedy Central 720 0.81–0.88 → 0.92–0.99;
+Nick 0.38 → 0.97 (1046). Schlechter: rtl-1782090300 0.78 → 0.72 (Let's Dance),
+nick-1782930900 0.82 → 0.81. Mindestens ~50 weitere Einträge ohne Quelle
+behalten den alten Wert (gemischt, bewusst nicht ausgeschlossen).
+
+**Prüfung:** nächste Nächte — Gate-Ergebnis, Golden (L1 unverändert), und ob
+neue Comedy-Central-/Disney-Merkmale (jetzt ~0.9 in der Sendung statt ~0.3)
+den Kopf auf diesen Sendern verschieben.

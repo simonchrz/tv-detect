@@ -6625,3 +6625,11 @@ alten Merkmalen 0.954–0.970 (Seitenwechsel 1.3–2.5 %), mit den neuen
 Logo-Netz aussagekräftig (der Dump trägt dort den Netzwert, der Kopf den
 Vorlagenwert); der verbleibende Abstand voll/halb ist O27 (bekannt,
 bewusst nicht gebaut). Skript: Scratchpad `trainserve/abgleich.py`.
+
+**Nachtrag 18.10. zu §3ax — Nachschub gestoppt.** tv-recorder 4b97215: Sperrliste
+`.tvd-models/auto-confirm-sperre.json` (Titel + Sender), die Auto-Bestätigung
+überspringt Galileo/ProSieben. Erster Durchlauf 13:08: 3 Folgen übersprungen.
+Live trainieren die Folgen weiter mit den Auto-Blöcken (unvermeidbar ohne
+Label-Änderung), aber nichts wird mehr archiv-dauerhaft. **Eintrag entfernen**,
+sobald ein ausgelieferter Kopf im Countdown-Spot Werbung sieht (nn dort
+deutlich über 0.5 statt 0.06–0.26).

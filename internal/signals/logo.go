@@ -2,6 +2,7 @@ package signals
 
 import (
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/simonchrz/tv-detect/pkg/logotemplate"
@@ -27,6 +28,7 @@ const defaultEdgeThresh = 80
 // trimmed/cropped frame just under-counts gracefully.
 type LogoDetector struct {
 	tmpl    *logotemplate.Template
+	pts     []logoPt // mask cells in frame coordinates (scaled, without yOffset)
 	frameW  int
 	frameH  int
 	edgeTh  int
@@ -45,7 +47,8 @@ func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yO
 	// Hard requirement: bbox X must fit in frame width — there's no
 	// equivalent x-offset compensation, so an X-overflow really is a
 	// configuration error worth failing on.
-	if tmpl.MaxX > frameW {
+	maxX, maxY := scaledBBoxMax(tmpl, frameW, frameH)
+	if maxX > frameW {
 		return nil, fmt.Errorf(
 			"logo bbox (%d,%d)-(%d,%d) MaxX > frameW %d",
 			tmpl.MinX, tmpl.MinY, tmpl.MaxX, tmpl.MaxY, frameW)
@@ -61,10 +64,10 @@ func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yO
 	// pipeline. Pre-2026-05-04 this returned an error, which combined
 	// with the daemon's no-retry-clear policy stalled the entire
 	// re-detect queue on the first rtlzwei recording in a batch.
-	if tmpl.MaxY+yOffset > frameH {
+	if maxY+yOffset > frameH {
 		fmt.Fprintf(os.Stderr,
 			"logo: y-offset %d would push bbox bottom (%d) past frameH (%d) — clamping to 0 (logo template likely bottom-positioned, letterbox compensation N/A)\n",
-			yOffset, tmpl.MaxY+yOffset, frameH)
+			yOffset, maxY+yOffset, frameH)
 		yOffset = 0
 	}
 	if edgeThresh <= 0 {
@@ -72,6 +75,7 @@ func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yO
 	}
 	return &LogoDetector{
 		tmpl:    tmpl,
+		pts:     scaledMaskPoints(tmpl, frameW, frameH),
 		frameW:  frameW,
 		frameH:  frameH,
 		edgeTh:  edgeThresh,
@@ -84,29 +88,75 @@ func NewLogoDetector(tmpl *logotemplate.Template, frameW, frameH, edgeThresh, yO
 // template that have a Sobel edge in this frame's ROI (range 0..1).
 // pixels is row-major rgb24, length 3*frameW*frameH.
 func (d *LogoDetector) Confidence(pixels []byte) float64 {
-	w, h := d.tmpl.Width(), d.tmpl.Height()
-	x0, y0 := d.tmpl.MinX, d.tmpl.MinY
 	matches := 0
-	for ry := range h {
-		fy := y0 + ry + d.yOffset
+	for _, p := range d.pts {
+		fy := p.y + d.yOffset
 		if fy <= 0 || fy >= d.frameH-1 {
 			continue // need fy-1 and fy+1 for the Sobel kernel
 		}
-		row := d.tmpl.Mask[ry]
+		if p.x <= 0 || p.x >= d.frameW-1 {
+			continue
+		}
+		if sobelMag(pixels, d.stride, p.x, fy) > d.edgeTh {
+			matches++
+		}
+	}
+	return float64(matches) / float64(d.tmpl.EdgePositions)
+}
+
+type logoPt struct{ x, y int }
+
+// templateScale returns the factors that map template coordinates onto a
+// frameW x frameH frame. The template stores the frame size it was
+// trained on (picWidth/picHeight). Mediathek versions of a recording come
+// as 1046x576 or 1040x576 square pixels instead of the broadcast 720x576,
+// and before 2026-10-18 the template was laid on them unscaled — the logo
+// was searched in the wrong place and the head's logo column was noise
+// for every such recording. Same size (or no size in the header) → 1.
+func templateScale(t *logotemplate.Template, frameW, frameH int) (float64, float64) {
+	sx, sy := 1.0, 1.0
+	if t.PicWidth > 0 && t.PicWidth != frameW {
+		sx = float64(frameW) / float64(t.PicWidth)
+	}
+	if t.PicHeight > 0 && t.PicHeight != frameH {
+		sy = float64(frameH) / float64(t.PicHeight)
+	}
+	return sx, sy
+}
+
+func scaledBBoxMax(t *logotemplate.Template, frameW, frameH int) (int, int) {
+	sx, sy := templateScale(t, frameW, frameH)
+	if sx == 1 && sy == 1 {
+		return t.MaxX, t.MaxY
+	}
+	return int(math.Round(float64(t.MaxX) * sx)), int(math.Round(float64(t.MaxY) * sy))
+}
+
+// scaledMaskPoints lists the template's edge cells in frame coordinates.
+// Each cell keeps its own position (no resampling of the mask), so the
+// denominator EdgePositions stays the template's own count. At scale 1
+// this is exactly the old (MinX+rx, MinY+ry) walk.
+func scaledMaskPoints(t *logotemplate.Template, frameW, frameH int) []logoPt {
+	sx, sy := templateScale(t, frameW, frameH)
+	w, h := t.Width(), t.Height()
+	pts := make([]logoPt, 0, t.EdgePositions)
+	for ry := range h {
+		row := t.Mask[ry]
 		for rx := range w {
 			if !row[rx] {
 				continue
 			}
-			fx := x0 + rx
-			if fx <= 0 || fx >= d.frameW-1 {
-				continue
+			x, y := t.MinX+rx, t.MinY+ry
+			if sx != 1 {
+				x = int(math.Round(float64(x) * sx))
 			}
-			if sobelMag(pixels, d.stride, fx, fy) > d.edgeTh {
-				matches++
+			if sy != 1 {
+				y = int(math.Round(float64(y) * sy))
 			}
+			pts = append(pts, logoPt{x, y})
 		}
 	}
-	return float64(matches) / float64(d.tmpl.EdgePositions)
+	return pts
 }
 
 // sobelMag returns |Gx| + |Gy| of BT.601 luma for the 3x3 neighbourhood

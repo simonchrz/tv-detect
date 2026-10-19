@@ -6646,3 +6646,22 @@ Produktion (immer richtige Spalte) lag vermutlich näher an 0.827. Disney im
 Mittel +0.005, Nick +0.001 (Kandidat gegen Champion). Der Gewinn sitzt fast
 ganz im Trainingsteil (Comedy Central 1/14 im Test), die Gewinnpflicht sieht
 ihn kaum.
+
+## O35 — alte Logo-Werte im Training neutralisieren (registriert 2026-10-19)
+
+**Frage:** Lernt der Kopf auf Comedy Central/Disney besser, wenn die Logo-Spalte
+der 65 nicht neu berechneten Einträge (§3ay, alte unskalierte Vorlage, keine
+lokale Quelle) auf den Platzhalter 0.5 gesetzt wird, statt den zu tiefen alten
+Wert zu tragen? Die alten Werte liegen im Niveau klar unter den richtigen
+(Sendung Comedy Central 0.30 statt 0.85, Disney 0.43 statt 0.67), die
+Produktion misst immer richtig.
+
+**Messung:** Optimierer-Arm `logo_alt_neutral` (Klasse daten, Regel gewinn,
+feste Schwellen aus opt_urteil.py). Betroffen: 41 Aufnahmen im Trainingsteil
+(fast alle Disney), 3 im Kalibrierteil, keine in Entwicklung/Bestätigung. Dort
+liegen 4 Comedy-Central- und 4 Disney-Aufnahmen mit richtiger Spalte.
+
+**Vorhersage:** Gewinn getragen von Comedy Central/Disney im Entwicklungssatz,
+übrige Sender unverändert. Verfehlt der Arm die Schwelle, sind die alten Werte
+für den Kopf harmlos genug und bleiben; dann kein Archiv-Eingriff.
+**Übertragung nur mit Simons OK** (die Regel änderte die Trainingsdaten der Nacht).

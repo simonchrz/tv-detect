@@ -6633,3 +6633,16 @@ Live trainieren die Folgen weiter mit den Auto-Blöcken (unvermeidbar ohne
 Label-Änderung), aber nichts wird mehr archiv-dauerhaft. **Eintrag entfernen**,
 sobald ein ausgelieferter Kopf im Countdown-Spot Werbung sieht (nn dort
 deutlich über 0.5 statt 0.06–0.26).
+
+**Nachtrag 19.10. — erste Nacht mit den neuen Logo-Merkmalen.** Gate:
+REJECTED (netto +1, Pflicht ≥3; Kippzahl 0 von 148). Kandidat Golden-Median
+0.969 (Boden 0.9635, bisher höchster Kandidatenwert; eine Nacht, Seed-Rauschen
+~0.008 → noch kein Beleg). Der Champion (Kopf 15.10.) verschiebt sich mit den
+neuen Merkmalen auf 5 von 148 Testaufnahmen; groß nur Comedy Central
+(South Park, golden): 0.917 → **0.827**, der Kandidat 0.881. Lesart: der
+Champion hat gelernt, der falsch gemessenen Logo-Spalte auf 1024er-Sendern zu
+misstrauen; seine alten 0.917 waren auf den falschen Merkmalen gemessen, die
+Produktion (immer richtige Spalte) lag vermutlich näher an 0.827. Disney im
+Mittel +0.005, Nick +0.001 (Kandidat gegen Champion). Der Gewinn sitzt fast
+ganz im Trainingsteil (Comedy Central 1/14 im Test), die Gewinnpflicht sieht
+ihn kaum.

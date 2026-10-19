@@ -6656,7 +6656,7 @@ Wert zu tragen? Die alten Werte liegen im Niveau klar unter den richtigen
 (Sendung Comedy Central 0.30 statt 0.85, Disney 0.43 statt 0.67), die
 Produktion misst immer richtig.
 
-**Messung:** Optimierer-Arm `logo_alt_neutral` (Klasse daten, Regel gewinn,
+**Messung:** Optimierer-Arm `logo_alt_neutral` (Klasse merkmale, Regel gewinn,
 feste Schwellen aus opt_urteil.py). Betroffen: 41 Aufnahmen im Trainingsteil
 (fast alle Disney), 3 im Kalibrierteil, keine in Entwicklung/Bestätigung. Dort
 liegen 4 Comedy-Central- und 4 Disney-Aufnahmen mit richtiger Spalte.

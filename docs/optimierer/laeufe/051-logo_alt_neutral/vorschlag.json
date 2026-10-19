@@ -1,0 +1,10 @@
+{
+ "nr": 51,
+ "arm": "logo_alt_neutral",
+ "hypothese": "O35: Logo-Spalte der 65 nicht neu berechneten Eintraege (alte unskalierte Vorlage) auf 0.5 hebt Comedy Central/Disney im Entwicklungssatz, Rest unveraendert",
+ "begruendung": "Ledger §3ay/O35: alte Werte zu tief (CC Sendung 0.30 statt 0.85, Disney 0.43 statt 0.67); 41 im Training (fast alle Disney), Entwicklung hat 4 CC + 4 Disney mit richtiger Spalte. Champion fiel auf South Park mit richtigen Merkmalen 0.917->0.827. Nicht im Friedhof: 027 sender_logo_massstab mass auf den alten falschen Werten.",
+ "regel": "gewinn",
+ "klasse": "merkmale",
+ "code": "f42cb1e7e2ce",
+ "beschreibung": "Logo-Spalte der 65 nicht neu berechneten Eintraege (alte, unskalierte Vorlage, Audit 18.10.) auf Platzhalter 0.5"
+}

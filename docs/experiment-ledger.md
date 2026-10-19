@@ -3008,6 +3008,7 @@ Grund, der DIESE Serie entwertet, nicht nur die alte.
 | Gate-Boden auf die belegte Golden-Teilmenge umstellen | **NICHT ERFÜLLT** | 2026-09-23 (O23) | Abstand belegt−alle über 10 Nächte konstant (−0.028 → −0.030, Δ −0.0019, Schwelle 0.010): kein Drift, nur Versatz. Wiedervorlage nur, wenn der belegte Kern durch Review wächst — nicht erneut über dieselben 22. |
 | Backbone durch SigLIP ersetzen / mehr als 64 SigLIP-Komponenten | **NICHT ERFÜLLT** | 2026-09-30 (O30) | Ohne Backbone −0.0055 (2 Seeds unter −0.010), SigLIP-128 −0.052, -256 −0.027, ohne Backbone mit 256 −0.039. Mehr Komponenten schaden nach Standardisierung. Backbone und PCA-64 bleiben. Details: `o30-backbone-ersatz-preregistration.md`. |
 | Weiches Stabilitäts-Ziel zum Champion (λ 0.3/0.5) gegen das nächtliche Hin und Her | **NICHT ERFÜLLT** | 2026-10-01 (O31) | Kippen nur −13 % (registriert ≥ −30 %), F1 unverändert. Das sichtbare Hin und Her entsteht im Decoder, nicht im Kopf — Wiedervorlage nur als eigene, am Decoder/der Blockbildung gemessene Frage. Schutz bleibt die Gewinnpflicht im Gate (285879e). Details: `o31-stabilitaet-preregistration.md`. |
+| Alte (unskalierte) Logo-Werte im Training auf 0.5 neutralisieren | **NICHT ERFÜLLT** | 2026-10-19 (O35, Lauf 051) | Median Δ −0.0018 (5/5 Seeds ≤ 0), CC +0.0002, Disney −0.0007. Der Kopf kommt mit dem zu tiefen alten Niveau zurecht; kein Archiv-Eingriff. |
 
 ## 5. Leitplanken
 

@@ -6665,3 +6665,13 @@ liegen 4 Comedy-Central- und 4 Disney-Aufnahmen mit richtiger Spalte.
 übrige Sender unverändert. Verfehlt der Arm die Schwelle, sind die alten Werte
 für den Kopf harmlos genug und bleiben; dann kein Archiv-Eingriff.
 **Übertragung nur mit Simons OK** (die Regel änderte die Trainingsdaten der Nacht).
+
+**Ergebnis O35: VERFEHLT (2026-10-19), Lauf 051 verworfen.** Median Δ −0.0018
+(5 Seeds: −0.002, −0.003, −0.0018, −0.0006, −0.0004), Aufnahme-Median −0.0005.
+Je Sender: Comedy Central +0.0002 (n=4), Disney −0.0007 (n=4), Nick −0.0014;
+super-rtl −0.09 ist die bekannte instabile Aufnahme 1781581800. Die Vorhersage
+(Gewinn auf CC/Disney) trifft nicht: der Kopf kommt mit dem zu tiefen alten
+Niveau zurecht, der Platzhalter nimmt ihm eher etwas weg. **Kein Archiv-Eingriff.**
+Der South-Park-Einbruch des Champions bleibt ein Champion-Problem (gelernt auf
+den falschen Werten der 8 inzwischen korrigierten Aufnahmen); jeder neue Kopf
+trainiert schon auf den richtigen Werten.

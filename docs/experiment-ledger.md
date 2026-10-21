@@ -6676,3 +6676,32 @@ Niveau zurecht, der Platzhalter nimmt ihm eher etwas weg. **Kein Archiv-Eingriff
 Der South-Park-Einbruch des Champions bleibt ein Champion-Problem (gelernt auf
 den falschen Werten der 8 inzwischen korrigierten Aufnahmen); jeder neue Kopf
 trainiert schon auf den richtigen Werten.
+
+## §3az. Golden-Schwanz: fünf tote Mitglieder auf Logo-Wechsel korrigiert (2026-10-21)
+
+Drei Aufnahmen standen 14 von 14 Nächten im Golden-Schwanz, drei weitere 7 von 14.
+Nachgerechnet aus dem Archiv (Kopf + hsmm ohne Decode-Spur): kein fehlender, kein
+erfundener Block, nur Kanten. Alle sechs sind tot (kein `.ts`, kein VOD), die
+kabel-eins/RTLZWEI-Labels sind Juli-Maschinenlabels (`auto_confirmed_via_anchors`).
+
+**Eichung:** 12 lebende Geschwister derselben Sendungen mit am Bild geprüften
+Labels: Label, Modell und Logo-Wechsel auf ±1–15 s einig; Blockende = Logo-Rückkehr.
+Die toten Labels liefen 50–104 s über die Logo-Rückkehr hinaus.
+
+**Geschrieben (Simon OK, ohne Bild):** nur Archiv (`labels` + `meta.ads`),
+Sicherung `.npz.vor-schwanz-20261021`:
+- kabel-eins-1784303804: Endblock 60:56–61:27 gelöscht (Logo durchgehend, NN 0) —
+  er allein deckelte die Note auf 0.67.
+- kabel-eins-1784559472: Enden 34:03→32:19, 53:51→52:46.
+- rtlzwei-1784139300: Enden 25:23→24:16, 52:43→51:50, 89:46→88:38; Start 80:49→81:45.
+- prosieben-1784567122: letzter Block 68:55–70:46 → 68:22–71:47.
+- prosieben-1784135122: Ende 71:25→71:53 (Werbung bis Aufnahmeende).
+
+Rekonstruierte IoU danach 0.94–0.97 (vorher 0.86–0.93).
+
+**Nicht angefasst:** Starts 30–80 s vor dem Logo-Abgang (ProSieben/kabel eins,
+alle Starts in 1785003290) — passt zur Konvention Gewinnspiel-Ident/Trenner =
+Werbung, ohne Bild nicht entscheidbar.
+
+**Folge:** `golden_label_hash` ändert sich → gewollter Messbruch ab Nacht 22.10.
+Mitgliedschaft unverändert (L1). Skripte: Scratchpad `schwanz/` (nicht im Repo).

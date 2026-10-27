@@ -109,6 +109,20 @@ func NewLogoCNNDetector(onnxPath string, frameW, frameH int,
 		return nil, fmt.Errorf("logo-cnn: session opts: %w", err)
 	}
 	defer opts.Destroy()
+	// Threads begrenzen wie beim Backbone (nn.go). Ohne Grenze nimmt jede
+	// Session alle Kerne, und die N parallelen Chunk-Worker bremsen sich
+	// gegenseitig aus. Mit onnxruntime 1.31 (2026-10-27) kostete das den
+	// Logo-Teil ~3x (30 → 86–96 s Summe auf einer kabel-eins-Aufnahme).
+	if err := opts.SetIntraOpNumThreads(1); err != nil {
+		in.Destroy()
+		out.Destroy()
+		return nil, fmt.Errorf("logo-cnn: intra-op threads: %w", err)
+	}
+	if err := opts.SetInterOpNumThreads(1); err != nil {
+		in.Destroy()
+		out.Destroy()
+		return nil, fmt.Errorf("logo-cnn: inter-op threads: %w", err)
+	}
 	sess, err := ort.NewAdvancedSession(onnxPath,
 		[]string{"frame"}, []string{"logit"},
 		[]ort.Value{in}, []ort.Value{out}, opts)
